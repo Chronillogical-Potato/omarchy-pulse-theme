@@ -1,0 +1,21 @@
+# WAN download as a big number with a sparkline
+[[source]]
+name = "unifi-wan"
+title = "wan"
+# order = 1                      # a panel that does not fit its column is hidden: a low order puts it first
+icon = "󰇚"
+every = 10
+slot = "left"
+# Pulse runs as a systemd user service and does not see your shell env.
+# Set the variables inline in the command (or Environment= in the unit):
+command = '''UNIFI_URL=https://192.168.1.1 UNIFI_KEY_FILE=~/.config/pulse-unifi/key pulse-unifi'''
+
+# Busiest clients. private: hidden while you share the screen (device names are often people's names)
+[[source]]
+name = "unifi-clients"
+title = "clients"
+icon = "󰛳"
+every = 30
+slot = "right"
+private = true
+command = '''UNIFI_URL=https://192.168.1.1 UNIFI_KEY_FILE=~/.config/pulse-unifi/key pulse-unifi clients'''
