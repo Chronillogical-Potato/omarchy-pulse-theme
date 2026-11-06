@@ -132,7 +132,16 @@ class LanTests(unittest.TestCase):
             hub = self.run_once(base, d)
             self.assertEqual([x['name'] for x in hub.lan['devices']], ['router', 'nas'])
             self.assertEqual(list(hub.alerts), [])
-            hub = self.run_once(base + [{'dst': '192.168.1.77', 'lladdr': 'bb:bb:bb:bb:bb:77', 'state': ['REACHABLE']}], d)
+            more = base + [{'dst': '192.168.1.77', 'lladdr': 'bb:bb:bb:bb:bb:77', 'state': ['REACHABLE']}]
+            hub = self.run_once(more[:2] + [{'dst': '192.168.1.60', 'lladdr': 'cc:cc:cc:cc:cc:60', 'state': ['STALE']}], d)
+            self.assertEqual(list(hub.alerts), [])      # still learning (the first 10 minutes)
+            f = Path(d) / 'lan.json'
+            known = json.loads(f.read_text())
+            for m in known['_meta'].values():
+                m['first'] -= 3600
+            f.write_text(json.dumps(known))
+            hub = self.run_once(more, d)
+            self.assertEqual(len(hub.alerts), 1)
             self.assertEqual(hub.alerts[-1]['title'], 'new device on your network')
             self.assertTrue(next(x for x in hub.lan['devices'] if x['ip'] == '192.168.1.77')['new'])
             self.assertFalse(next(x for x in hub.lan['devices'] if x['ip'] == '192.168.1.5')['new'])

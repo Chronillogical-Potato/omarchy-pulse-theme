@@ -41,7 +41,7 @@ notify = true                    # the digest also as a desktop notification
 enabled = true                   # every device on your network is a car on the grid; a new one is an alert
 cars = true
 scan = "auto"                    # with fping installed, look for every device every 5 minutes ("off": only those
-                                 # your PC already talks to). The first look at a network is learnt, no alerts.
+                                 # your PC already talks to). The first 10 minutes on a network are learnt, no alerts.
 alert_new = true
 # names = { "192.168.1.5" = "nas", "aa:bb:cc:dd:ee:ff" = "tv" }   # by IP or MAC; else the name your router gives
 

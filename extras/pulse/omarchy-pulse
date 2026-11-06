@@ -675,18 +675,23 @@ class Hub:
                         self.lan = {"devices": [], "net": ""}
                     time.sleep(30)
                     continue
-                if (self.conf("lan", "scan", default="auto") not in (False, "off") and shutil.which("fping")
-                        and route["prefix"] >= 22 and now - last_scan > 300):
+                can_scan = (self.conf("lan", "scan", default="auto") not in (False, "off") and bool(shutil.which("fping"))
+                            and route["prefix"] >= 22)
+                scanned = False
+                if can_scan and now - last_scan > 300:
                     last_scan = now
                     subprocess.run(["fping", "-a", "-q", "-r", "0", "-t", "150", "-g", route["cidr"]],
                                    capture_output=True, timeout=60)
+                    scanned = True
                 neigh = json.loads(subprocess.run(["ip", "-j", "-4", "neigh", "show", "dev", route["dev"]],
                                                   capture_output=True, timeout=5).stdout or b"[]")
                 cfg_names = {str(k).lower(): str(v)[:20] for k, v in (self.conf("lan", "names", default={}) or {}).items()}
                 gw_mac = next((n.get("lladdr", "") for n in neigh if n.get("dst") == route["gw"]), "")
                 net = gw_mac or route["gw"]
-                first_time = net not in known
                 seen = known.setdefault(net, {})
+                # learning: the first 10 minutes on a network, and its first full scan, are the baseline (no alerts)
+                meta = known.setdefault("_meta", {}).setdefault(net, {"first": now, "scanned": False})
+                learning = now - meta["first"] < 600 or (can_scan and not meta["scanned"])
                 devices, new = [], []
                 for n in neigh:
                     ip, mac = n.get("dst", ""), str(n.get("lladdr", "")).lower()
@@ -701,7 +706,9 @@ class Hub:
                     d = seen.get(mac)
                     if d is None:
                         d = seen[mac] = {"first": now}
-                        if not first_time:
+                        if learning:
+                            d["base"] = True
+                        else:
                             new.append(ip)
                     d.update(last=now, ip=ip)
                     if ip not in names and ip != route["gw"]:
@@ -710,9 +717,8 @@ class Hub:
                     name = cfg_names.get(mac) or cfg_names.get(ip) or ("router" if ip == route["gw"] else names.get(ip, ""))
                     devices.append({"ip": ip, "name": name, "new": now - d["first"] < 900 and not d.get("base"),
                                     "id": zlib.crc32(mac.encode()) % 100000})
-                if first_time:
-                    for d in seen.values():
-                        d["base"] = True   # the first look at a network is the baseline: no alerts for it
+                if scanned:
+                    meta["scanned"] = True
                 if len(seen) > 400:   # forget the oldest
                     for k in sorted(seen, key=lambda k: seen[k].get("last", 0))[:len(seen) - 400]:
                         del seen[k]

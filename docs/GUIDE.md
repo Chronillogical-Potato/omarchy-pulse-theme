@@ -651,8 +651,8 @@ away. Named devices carry their name; a **new** device (never seen on this netwo
 address, raises an alert (INCOMING) and a notification.
 
 Pulse reads the devices your PC knows (`ip neigh`, no root); with `fping` installed (`sudo pacman -S fping`) it also
-looks for every device on the network every 5 minutes. The first time it sees a network it only learns it: no alerts
-for the devices already there. Only private networks, and nothing leaves the PC; the MAC addresses stay in
+looks for every device on the network every 5 minutes. On a network it has never seen it first learns: for 10 minutes
+(and until its first full scan, with fping) the devices already there raise no alerts. Only private networks, and nothing leaves the PC; the MAC addresses stay in
 `~/.local/state/omarchy-pulse/lan.json` and never reach the page.
 
 ```toml
