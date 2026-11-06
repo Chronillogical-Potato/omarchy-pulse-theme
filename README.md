@@ -35,6 +35,21 @@ the theme is **pulse**. Run it from a terminal on the PC itself, not over SSH.
 **The full guide** (every source, the AI brief, cameras, a cookbook for Zabbix, Home Assistant, Proxmox, GitHub
 Actions, MQTT and more, privacy, tuning, troubleshooting): [docs/GUIDE.md](docs/GUIDE.md).
 
+## Scenes and wallpapers
+
+Three live scenes: **skyline** (the city of your CPU cores, the default), **orbit** (the cores become moons around a
+larger core) and **calm** (a still grid, lighter on the PC). Pick one with `scene` in
+`~/.config/omarchy-pulse/pulse.toml`, or in one line:
+
+```
+sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # skyline | orbit | calm
+```
+
+The wallpaper switches within about 3 seconds (`omarchy-pulse reload` to do it now).
+
+The theme also has two still wallpapers, `01-pulse-skyline` and `02-pulse-orbit`, switched with Omarchy's
+next-background key. You see them while Pulse is off or starting; they do not change the live scene.
+
 ## Put anything on your wallpaper
 
 Edit `~/.config/omarchy-pulse/pulse.toml`; when you save, the wallpaper picks it up in a few seconds. Each
