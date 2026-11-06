@@ -22,7 +22,7 @@ system = true
 network = true
 weather = true
 media = true                     # now playing (playerctl)
-notifications = true             # the last desktop notifications (mako); private
+notifications = true             # the last desktop notifications (Omarchy 4.5 or mako); private
 github = ["basecamp/omarchy"]    # repos to follow: latest release and commits ([] to hide)
 github_notifications = true      # your GitHub notifications, when `gh auth login` is done
 
