@@ -208,6 +208,51 @@ def dig(obj, path: str):
     return obj
 
 
+# ---------------------------------------------------------------- monitor visibility
+
+def monitor_covered(mon: dict, clients: list) -> bool:
+    """Approximate coverage of the usable monitor area; unknown state stays visible."""
+    if mon.get("dpmsStatus") is False:
+        return True
+    try:
+        x, y = float(mon["x"]), float(mon["y"])
+        scale = float(mon["scale"])
+        width, height = float(mon["width"]) / scale, float(mon["height"]) / scale
+        if int(mon.get("transform", 0)) in (1, 3, 5, 7):
+            width, height = height, width
+        left, top, right, bottom = mon.get("reserved", [0, 0, 0, 0])
+        x1, y1, x2, y2 = x + left, y + top, x + width - right, y + height - bottom
+        area = (x2 - x1) * (y2 - y1)
+        if area <= 0 or scale <= 0:
+            return False
+        active = mon["activeWorkspace"]["id"]
+        special = (mon.get("specialWorkspace") or {}).get("id")
+        rects = []
+        for client in clients:
+            if not isinstance(client, dict) or not client.get("mapped") or client.get("hidden"):
+                continue
+            ws = (client.get("workspace") or {}).get("id")
+            if ws != active and not (special and ws == special) and not client.get("pinned"):
+                continue
+            px, py = client["at"]
+            w, h = client["size"]
+            rect = (max(x1, px), max(y1, py), min(x2, px + w), min(y2, py + h))
+            if rect[2] > rect[0] and rect[3] > rect[1]:
+                rects.append(rect)
+        # Sum the union, so overlapping floating windows cannot inflate coverage.
+        edges = sorted({v for r in rects for v in (r[0], r[2])})
+        covered = 0.0
+        for a, b in zip(edges, edges[1:]):
+            intervals = sorted((r[1], r[3]) for r in rects if r[0] < b and r[2] > a)
+            end = y1
+            for low, high in intervals:
+                covered += (b - a) * max(0, high - max(low, end))
+                end = max(end, high)
+        return covered / area >= 0.95  # ordinary tiled gaps do not keep an obscured scene running
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return False
+
+
 # ---------------------------------------------------------------- the hub
 
 class Hub:
@@ -775,7 +820,7 @@ class Hub:
                 log(f"reload: {e}")
             time.sleep(3)
 
-    # -- Hyprland: windows on each monitor's workspace (the wallpaper calms down) and screen sharing (privacy)
+    # -- Hyprland: window coverage on each monitor and screen sharing (privacy)
     def loop_hypr(self) -> None:
         threading.Thread(target=self.loop_hypr_refresh, daemon=True).start()
         while True:
@@ -816,20 +861,28 @@ class Hub:
             time.sleep(0.25)
             self.hypr_dirty.clear()
             try:
-                mons = json.loads(subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, timeout=3,
-                                                 env=hypr_env()).stdout or b"[]")
-                wss = {w["id"]: w for w in json.loads(subprocess.run(["hyprctl", "-j", "workspaces"], capture_output=True,
-                                                                     timeout=3, env=hypr_env()).stdout or b"[]")}
+                def query(what):
+                    result = subprocess.run(["hyprctl", "-j", what], capture_output=True, timeout=3,
+                                            env=hypr_env(), check=True)
+                    data = json.loads(result.stdout)
+                    if not isinstance(data, list):
+                        raise ValueError("invalid Hyprland response")
+                    return data
+                mons = query("monitors")
+                wss = {w["id"]: w for w in query("workspaces")}
+                clients = query("clients")
                 out = {}
                 for m in mons:
                     w = wss.get((m.get("activeWorkspace") or {}).get("id"), {})
                     sp = (m.get("specialWorkspace") or {}).get("id")
                     out[f"{m.get('x', 0)},{m.get('y', 0)}"] = {"name": m.get("name"), "windows": w.get("windows", 0),
-                                                              "fullscreen": bool(w.get("hasfullscreen")) or bool(sp)}
+                        "fullscreen": bool(w.get("hasfullscreen")) or bool(sp),
+                        "covered": monitor_covered(m, clients)}
                 with self.lock:
                     self.mons = out
-            except Exception:   # noqa: BLE001
-                pass
+            except Exception:   # noqa: BLE001 - fail open if the compositor state is unavailable
+                with self.lock:
+                    self.mons = {}
 
     # -- privacy
     def privacy(self) -> bool:
@@ -851,6 +904,7 @@ class Hub:
                     "widgets": ws, "alerts": list(self.alerts), "privacy": self.privacy(), "screencast": self.screencast,
                     "mons": self.mons, "theme": self.theme,
                     "ui": {"fps": self.conf("pulse", "fps", default=20), "clock": self.conf("pulse", "clock", default="24h"),
+                           "pause_when_covered": self.conf("pulse", "pause_when_covered", default=True),
                            "scene": self.conf("pulse", "scene", default="skyline"),
                            "font": self.conf("pulse", "font", default=""),
                            "title": self.conf("pulse", "title", default=""),
@@ -1085,6 +1139,14 @@ def make_handler(hub: Hub, tok: str, port: int):
             u = urllib.parse.urlsplit(self.path)
             q = dict(urllib.parse.parse_qsl(u.query))
             path = u.path
+            if path == "/api/visibility":
+                if self._authed(q):
+                    with hub.lock:
+                        data = {"mons": hub.mons,
+                                "pause_when_covered": hub.conf("pulse", "pause_when_covered", default=True)}
+                        body = json.dumps(data, separators=(",", ":")).encode()
+                    self._send(200, body)
+                return
             if path == "/api/state":
                 if self._authed(q):
                     self._send(200, json.dumps(hub.state(), separators=(",", ":")).encode())
