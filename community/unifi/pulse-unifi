@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Read-only UniFi gateway data for Omarchy Pulse. Needs: python3, a UniFi API key.
+
+  pulse-unifi            WAN download in Mbit/s (stat with sparkline), upload and ISP in the note
+  pulse-unifi clients    busiest clients as a name -> rates table, client count in the note
+
+Env: UNIFI_URL (https://192.168.1.1), UNIFI_KEY_FILE or UNIFI_KEY, optional UNIFI_SITE (default),
+UNIFI_LIMIT (8), UNIFI_HIDE_NAMES=1, UNIFI_VERIFY_TLS=1.
+"""
+from __future__ import annotations
+
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.request
+
+TIMEOUT = float(os.environ.get("PULSE_TIMEOUT", "10"))
+
+
+def env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def load_key() -> str:
+    key = env("UNIFI_KEY")
+    path = env("UNIFI_KEY_FILE")
+    if not key and path:
+        with open(os.path.expanduser(path)) as f:
+            key = f.read().strip()
+    if not key:
+        raise SystemExit("set UNIFI_KEY_FILE (or UNIFI_KEY) to a UniFi API key")
+    return key
+
+
+def context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    if env("UNIFI_VERIFY_TLS") != "1":
+        # Gateways serve a self-signed certificate on the LAN.
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+class Api:
+    def __init__(self) -> None:
+        self.base = env("UNIFI_URL").rstrip("/")
+        if not self.base:
+            raise SystemExit("set UNIFI_URL, e.g. https://192.168.1.1")
+        self.site = env("UNIFI_SITE", "default")
+        self.key = load_key()
+        self.ctx = context()
+
+    def get(self, path: str):
+        req = urllib.request.Request(
+            f"{self.base}/proxy/network{path.format(site=self.site)}",
+            headers={"X-API-KEY": self.key, "Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, context=self.ctx, timeout=TIMEOUT) as r:
+                data = json.load(r)
+        except urllib.error.HTTPError as e:
+            raise SystemExit(f"unifi: HTTP {e.code} on {path.format(site=self.site)}") from None
+        return data["data"] if isinstance(data, dict) and "data" in data else data
+
+
+def mbit(bytes_per_s: float) -> str:
+    return f"{bytes_per_s * 8 / 1e6:.1f}"
+
+
+def human(bytes_per_s: float) -> str:
+    bits = (bytes_per_s or 0) * 8
+    if bits < 1e6:
+        return f"{bits / 1e3:.0f} kbit/s"
+    return f"{bits / 1e6:.1f} Mbit/s"
+
+
+def wan(api: Api) -> dict:
+    health = {s.get("subsystem"): s for s in api.get("/api/s/{site}/stat/health")}
+    return health.get("wan", {})
+
+
+def rate(api: Api) -> dict:
+    w = wan(api)
+    if w.get("status") != "ok":
+        return {"value": 0, "unit": "Mbit/s", "note": f"wan {w.get('status', '?')}", "level": "crit"}
+    return {
+        "value": float(mbit(w.get("rx_bytes-r", 0))),
+        "unit": "Mbit/s",
+        "note": f"↑ {human(w.get('tx_bytes-r', 0))} · {w.get('isp_name') or 'wan'}",
+    }
+
+
+def clients(api: Api) -> dict:
+    limit = int(env("UNIFI_LIMIT", "8") or 8)
+    hide = env("UNIFI_HIDE_NAMES") == "1"
+    active = api.get("/v2/api/site/{site}/clients/active")
+    # Client rates are from the gateway's side: tx is what the client downloads.
+    active.sort(key=lambda c: -((c.get("rx_bytes-r") or 0) + (c.get("tx_bytes-r") or 0)))
+    rows = []
+    for n, c in enumerate(active[:limit], 1):
+        name = f"device {n}" if hide else (c.get("display_name") or c.get("name") or c.get("hostname") or c.get("mac", "?"))
+        rows.append([name, f"↓ {human(c.get('tx_bytes-r'))} ↑ {human(c.get('rx_bytes-r'))}"])
+    return {"rows": rows, "note": f"{len(active)} online"}
+
+
+def main(argv: list[str]) -> int:
+    mode = argv[1] if len(argv) > 1 else "rate"
+    modes = {"rate": rate, "clients": clients}
+    if mode not in modes:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    try:
+        print(json.dumps(modes[mode](Api()), ensure_ascii=False))
+    except (OSError, ValueError) as e:
+        print(f"unifi: {getattr(e, 'reason', None) or e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
