@@ -1,0 +1,10 @@
+[[source]]
+name = "ci"
+title = "ci"
+icon = "󰊢"
+type = "status"
+every = 120
+slot = "right"
+# Pulse runs as a systemd user service and does not see your shell env.
+# Set the variables inline in the command (or Environment= in the unit):
+command = '''GITHUB_REPO=owner/repo pulse-github-actions'''

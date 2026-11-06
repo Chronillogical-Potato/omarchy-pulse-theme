@@ -1,0 +1,11 @@
+[[source]]
+name = "zabbix"
+title = "zabbix"
+icon = "󰒋"
+type = "status"
+every = 30
+slot = "right"
+notify = true
+# Pulse runs as a systemd user service and does not see your shell env.
+# Set the variables inline in the command (or Environment= in the unit):
+command = '''ZABBIX_URL=https://zabbix.example.lan ZABBIX_TOKEN=YOUR_TOKEN pulse-zabbix'''

@@ -1,0 +1,10 @@
+[[source]]
+name = "proxmox"
+title = "proxmox"
+icon = "󰒋"
+type = "status"
+every = 60
+slot = "right"
+# Pulse runs as a systemd user service and does not see your shell env.
+# Set the variables inline in the command (or Environment= in the unit):
+command = '''PROXMOX_SSH=root@pve pulse-proxmox'''
