@@ -11,6 +11,7 @@ Drop-in scripts that turn any service into a Pulse panel. Each folder is one sou
 | [github-actions](github-actions/) | Recent GitHub Actions runs as status tiles | `gh`, `jq`, `gh auth login` |
 | [hn-rss](hn-rss/) | Hacker News frontpage headlines (ticker) | `curl`, `python3` |
 | [docker](docker/) | Running containers as a name → status table | `docker`, `python3` |
+| [unifi](unifi/) | UniFi WAN rate (stat) and the busiest clients (private table) | `python3`, a UniFi OS API key |
 
 ## Install (any source)
 
@@ -25,7 +26,6 @@ Then paste that folder's `source.toml` into `~/.config/omarchy-pulse/pulse.toml`
 
 Sources we would love as PRs (see [CONTRIBUTING.md](../CONTRIBUTING.md)):
 
-- UniFi
 - Pi-hole
 - OctoPrint / Klipper
 - Uptime Kuma

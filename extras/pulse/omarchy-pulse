@@ -7,6 +7,16 @@
   omarchy-pulse push NAME VALUE [--title T] [--type T] [--level ok|info|warn|crit] [--slot left|right|center|ticker]
                                  send anything to the wallpaper from a script, a cron job, a git hook...
   omarchy-pulse privacy on|off|auto|toggle
+  omarchy-pulse agent NAME STATE [TEXT]   an AI agent (or any job) as a drone over the city:
+                                 STATE = working | waiting | done | failed | idle | gone
+  omarchy-pulse watch NAME -- COMMAND...  a drone while COMMAND runs; lands green or red with its exit code
+  omarchy-pulse hook claude|codex         for the hooks of Claude Code / Codex CLI (reads what they send)
+  omarchy-pulse fireworks [TEXT]          fireworks over the city
+  omarchy-pulse focus MINUTES [LABEL]     focus mode: the desktop calms down, a countdown, fireworks at the end
+  omarchy-pulse focus off
+  omarchy-pulse away | back      you left / you are back (hypridle can call these): the face sleeps, then a digest
+                                 of what happened while you were away (locking the screen does it by itself)
+  omarchy-pulse say TEXT         speak a line with the voice (piper, or espeak-ng)
   omarchy-pulse reload           re-read pulse.toml now (it is also re-read by itself when you save it)
   omarchy-pulse doctor           check dependencies, config and sources
 
@@ -27,6 +37,8 @@ a JSON list -> list; any object may also set "title", "level" (ok/info/warn/crit
 from __future__ import annotations
 
 import collections
+import ipaddress
+import queue
 import json
 import os
 import re
@@ -41,10 +53,11 @@ import time
 import tomllib
 import urllib.parse
 import urllib.request
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -56,6 +69,40 @@ DEFAULT_PORT = 47800
 LEVELS = ("ok", "info", "warn", "crit")
 BUILTIN_IDS = {"sys", "net", "weather", "media", "notifications", "github"}
 HIST = 90   # points kept for sparklines
+AGENT_STATES = ("idle", "working", "waiting", "done", "failed")
+# [colors] preset = "..." (or "theme", the default: the colours of the Omarchy theme in use)
+PRESETS = {
+    "synthwave": {"bg": "#070a12", "fg": "#c9d6f2", "accent": "#39e1ff", "accent2": "#ff3fb4", "ok": "#6ff0a8",
+                  "warn": "#ffbd4a", "crit": "#ff4d6a", "dim": "#4b5a78"},
+    "matrix": {"bg": "#020803", "fg": "#b8f5c4", "accent": "#3dff6e", "accent2": "#00c853", "ok": "#3dff6e",
+               "warn": "#d7ff3d", "crit": "#ff5c4d", "dim": "#2c5a37"},
+    "amber": {"bg": "#0b0703", "fg": "#ffd9a0", "accent": "#ffb000", "accent2": "#ff6a00", "ok": "#c8e06a",
+              "warn": "#ffd23d", "crit": "#ff4a2e", "dim": "#6b4a22"},
+    "ice": {"bg": "#050a10", "fg": "#d8ecff", "accent": "#8fd8ff", "accent2": "#b8a6ff", "ok": "#7fe8c8",
+            "warn": "#ffd38a", "crit": "#ff7a9a", "dim": "#4a5d78"},
+    "vapor": {"bg": "#0d0618", "fg": "#f3dcff", "accent": "#ff71ce", "accent2": "#01cdfe", "ok": "#05ffa1",
+              "warn": "#fffb96", "crit": "#ff4d6d", "dim": "#6a4d8a"},
+    "inferno": {"bg": "#0a0404", "fg": "#ffe0d0", "accent": "#ff5a1f", "accent2": "#ffd000", "ok": "#9be15d",
+                "warn": "#ffd000", "crit": "#ff2a55", "dim": "#6a3a30"},
+}
+COLOR_KEYS = {"bg": "background", "fg": "foreground", "accent": "accent", "accent2": "color5", "ok": "color2",
+              "warn": "color3", "crit": "color1", "dim": "color8"}
+CAVA_CONF = """[general]
+bars = {bars}
+framerate = 30
+autosens = 1
+[input]
+method = {method}
+source = auto
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = ascii
+ascii_max_range = 100
+bar_delimiter = 59
+frame_delimiter = 10
+channels = mono
+"""
 
 
 def log(msg: str) -> None:
@@ -276,6 +323,21 @@ class Hub:
         self.procs: list = []
         self.hypr_dirty = threading.Event()
         self.started = time.time()
+        self.agents: dict[str, dict] = {}      # AI agents and jobs: drones over the city
+        self.fx: collections.deque = collections.deque(maxlen=30)   # fireworks and other effects, by seq
+        self.fx_seq = 0
+        self.focus: dict | None = None
+        self.audio: list = []                  # cava bars 0-100, when music is playing
+        self.audio_t = 0.0
+        self.cursor: list | None = None        # the pointer in layout pixels (Hyprland): the face's eyes follow it
+        self.cursor_t = 0.0
+        self.live_clients = 0
+        self.away: dict | None = None          # you are away: what happens is kept for the digest
+        self.digest: dict | None = None        # "while you were away", shown when you are back
+        self.digest_seq = 0
+        self.locked = False
+        self.lan: dict = {"devices": [], "net": ""}   # devices on your network: cars on the grid
+        self.voice_q: queue.Queue = queue.Queue(maxsize=6)
 
     # -- config
     def conf(self, *keys, default=None):
@@ -350,6 +412,8 @@ class Hub:
                 if rules:
                     w["level"] = lv or "ok"
             new = w.get("level")
+            if old in ("warn", "crit") and new == "ok" and self.conf("pulse", "celebrate", default=True) is not False:
+                self.add_fx("burst", f"{w.get('title', wid)} · ok", small=True)   # back to green: a small burst
             if new in ("warn", "crit") and new != old:
                 self.alert_seq += 1
                 txt = ""
@@ -364,12 +428,336 @@ class Hub:
                     txt = d["note"]
                 self.alerts.append({"seq": self.alert_seq, "id": wid, "title": w.get("title", wid), "text": txt,
                                     "level": new, "t": time.time()})
+                self.note("alert", f"{w.get('title', wid)}" + (f" · {txt}" if txt else ""), new, bool(w.get("private")))
+                if not w.get("private"):
+                    self.say(f"Alert. {w.get('title', wid)}. {txt}", "alerts")
                 if w.get("_notify"):
                     notify = (w.get("title", wid), txt, new)
             self.widgets[wid] = w
         if notify and shutil.which("notify-send"):
             subprocess.Popen(["notify-send", "-u", "critical" if notify[2] == "crit" else "normal",
                               "Pulse · " + notify[0], notify[1]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def raise_alert(self, wid: str, title: str, text: str, level: str, speak: bool = True) -> None:
+        with self.lock:
+            self.alert_seq += 1
+            self.alerts.append({"seq": self.alert_seq, "id": wid, "title": title, "text": text, "level": level,
+                                "t": time.time()})
+        self.note("alert", f"{title}" + (f" · {text}" if text else ""), level)
+        if speak:
+            self.say(f"{title}. {text}", "alerts")
+
+    def note(self, kind: str, text: str, level: str = "info", private: bool = False) -> None:
+        """While you are away, remember what happened for the digest."""
+        with self.lock:
+            a = self.away
+            if not a:
+                return
+            ev = a["events"]
+            if any(e["text"] == text for e in ev[-6:]):
+                return
+            if len(ev) < 40:
+                ev.append({"kind": kind, "text": str(text)[:90], "level": level, "t": time.time(), "private": private})
+
+    # -- effects, agents, focus
+    def add_fx(self, kind: str, text: str = "", small: bool = False) -> None:
+        with self.lock:
+            self.fx_seq += 1
+            self.fx.append({"seq": self.fx_seq, "kind": kind, "text": str(text or "")[:60], "small": small,
+                            "t": time.time()})
+
+    def set_agent(self, name: str, state: str, text: str = "") -> None:
+        name = re.sub(r"[^\w.:@\- ·]", "", str(name or ""))[:32].strip() or "agent"
+        st = str(state or "").lower()
+        st = {"thinking": "working", "busy": "working", "run": "working", "running": "working", "start": "working",
+              "started": "working", "input": "waiting", "ask": "waiting", "permission": "waiting", "blocked": "waiting",
+              "ok": "done", "success": "done", "finished": "done", "complete": "done", "error": "failed",
+              "fail": "failed", "stop": "gone", "end": "gone", "exit": "gone", "remove": "gone"}.get(st, st)
+        now = time.time()
+        with self.lock:
+            if st == "gone":
+                self.agents.pop(name, None)
+                return
+            if st not in AGENT_STATES:
+                st = "working"
+            a = self.agents.get(name) or {"name": name, "since": now}
+            prev = a.get("state")
+            if st == "working" and prev != "working":
+                a["since"] = now
+            a.update(state=st, text=str(text or "")[:80], t=now)
+            self.agents[name] = a
+        if st == prev:
+            return
+        spoken = name.replace("·", ",")
+        if st == "done":
+            self.note("agent", f"{name} finished", "ok")
+            self.say(f"{spoken} finished.", "agents")
+            if self.conf("pulse", "celebrate", default=True) is not False:
+                self.add_fx("fireworks", f"{name} · done", small=True)
+        elif st == "waiting":
+            self.say(f"{spoken} needs you.", "agents")
+        elif st == "failed":
+            self.raise_alert("agent:" + name, f"{name} failed", text or "the agent stopped with an error", "warn",
+                             speak=False)
+            self.say(f"{spoken} failed.", "agents")
+
+    def expire_agents(self) -> None:
+        now = time.time()
+        with self.lock:
+            for n, a in list(self.agents.items()):
+                age = now - a.get("t", now)
+                if (a["state"] in ("done", "failed") and age > 90) or (a["state"] == "idle" and age > 600) or age > 3600:
+                    del self.agents[n]
+
+    def set_focus(self, minutes: float, label: str = "") -> None:
+        with self.lock:
+            if minutes <= 0:
+                self.focus = None
+                return
+            now = time.time()
+            self.focus = {"start": now, "until": now + minutes * 60, "label": str(label or "focus")[:40]}
+
+    def check_focus(self) -> None:
+        f = self.focus
+        if f and time.time() >= f["until"]:
+            self.focus = None
+            self.add_fx("fireworks", f"{f['label']} · done")
+            self.say(f"Focus done: {f['label']}.", "focus")
+            if shutil.which("notify-send"):
+                subprocess.Popen(["notify-send", "Pulse", f"{f['label']}: done"], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+
+    def click(self, wid: str) -> bool:
+        src = next((s for s in self.cfg.get("source", []) if isinstance(s, dict) and s.get("name") == wid), None)
+        cmd = (src or {}).get("click")
+        if not cmd:
+            return False
+        subprocess.Popen(["bash", "-c", cmd], env=self.src_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        return True
+
+    # -- music: cava listens while something plays, the scene dances
+    def loop_music(self) -> None:
+        p = None
+        while True:
+            try:
+                want = self.conf("music", "enabled", default="auto")
+                playing = ((self.widgets.get("media") or {}).get("data") or {}).get("status") == "Playing"
+                run = bool(shutil.which("cava")) and want not in (False, "off") and (playing or want in (True, "always"))
+                if p is not None and p.poll() is not None:
+                    p = None
+                if run and p is None:
+                    STATE_DIR.mkdir(parents=True, exist_ok=True)
+                    cf = STATE_DIR / "cava.conf"
+                    cf.write_text(CAVA_CONF.format(bars=int(self.conf("music", "bars", default=24)),
+                                                   method=str(self.conf("music", "input", default="pulse"))))
+                    p = subprocess.Popen(["cava", "-p", str(cf)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                         start_new_session=True)
+                    threading.Thread(target=self.read_cava, args=(p,), daemon=True).start()
+                elif not run and p is not None:
+                    p.terminate()
+                    p = None
+                    self.audio = []
+            except Exception as e:   # noqa: BLE001
+                log(f"music: {e}")
+            time.sleep(2)
+
+    def read_cava(self, p) -> None:
+        for line in p.stdout:
+            try:
+                vals = [int(v) for v in line.decode("ascii", "ignore").strip().strip(";").split(";") if v]
+            except ValueError:
+                continue
+            if vals:
+                self.audio = vals
+                self.audio_t = time.time()
+
+    # -- presence: the face follows your pointer, sleeps when you leave, tells you what you missed
+    def set_away(self, on: bool, why: str = "") -> None:
+        with self.lock:
+            if on:
+                if not self.away:
+                    self.away = {"since": time.time(), "why": why or "away", "events": []}
+                    log(f"away ({why or 'away'})")
+                return
+            if not self.away:
+                return
+            a, self.away = self.away, None
+        log("back")
+        self.make_digest(a)
+
+    def make_digest(self, a: dict) -> None:
+        now = time.time()
+        mins = (now - a["since"]) / 60
+        if self.demo:   # the demo video shows a longer absence than it records
+            mins += float(os.environ.get("PULSE_DEMO_AWAY", "0") or 0)
+        if mins < float(self.conf("presence", "digest_after", default=2) or 0):
+            return
+        lines = [{"text": e["text"], "level": e["level"], "kind": e["kind"], "private": e.get("private", False)}
+                 for e in a["events"]]
+        with self.lock:
+            news = (self.widgets.get("news") or {}).get("data") or {}
+            fresh = [i for i in news.get("items") or [] if isinstance(i, dict) and (i.get("t") or 0) > a["since"]]
+            notes = (self.widgets.get("notifications") or {}).get("data") or {}
+            nn = [i for i in notes.get("items") or [] if isinstance(i, dict) and (i.get("t") or 0) > a["since"]]
+        if fresh:
+            lines.append({"kind": "news", "level": "info", "text": f"{len(fresh)} new post{'s' * (len(fresh) > 1)} · "
+                          + str(fresh[0].get("title", ""))[:60]})
+        if nn:
+            lines.append({"kind": "notifications", "level": "info", "private": True,
+                          "text": f"{len(nn)} notification{'s' * (len(nn) > 1)}"})
+        with self.lock:
+            self.digest_seq += 1
+            self.digest = {"seq": self.digest_seq, "since": a["since"], "until": now, "mins": round(mins),
+                           "lines": lines[:8], "more": max(0, len(lines) - 8)}
+        h, m = divmod(round(mins), 60)
+        dur = (f"{h} hour{'s' * (h > 1)} " if h else "") + (f"{m} minute{'s' * (m != 1)}" if m or not h else "")
+        if lines:
+            said = "; ".join((x["text"].split(" · ")[0] if x["kind"] == "alert" else x["text"].replace("·", ","))
+                             for x in lines[:4] if not x.get("private"))   # alerts: only their title, aloud
+            self.say(f"Welcome back. While you were away, {dur}: {said or 'some notifications'}.", "digest")
+            if self.conf("presence", "notify", default=True) is not False and shutil.which("notify-send"):
+                subprocess.Popen(["notify-send", f"Pulse · while you were away ({dur})",
+                                  "\n".join(x["text"] for x in lines[:6])],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            self.say(f"Welcome back. All quiet for {dur}.", "digest")
+
+    def loop_presence(self) -> None:
+        """The pointer (for the eyes, a few times a second while a wallpaper listens) and the lock screen."""
+        last_lock = 0.0
+        while True:
+            try:
+                now = time.time()
+                if now - last_lock > 4:
+                    last_lock = now
+                    locked = process_running(("hyprlock", "swaylock", "gtklock"))
+                    if locked != self.locked:
+                        self.locked = locked
+                        if self.conf("presence", "lock", default=True) is not False:
+                            if locked:
+                                self.set_away(True, "locked")
+                            elif self.away and self.away.get("why") in ("locked", "screensaver"):
+                                self.set_away(False)
+                face = self.conf("pulse", "face", default="agents") != "off"
+                if self.live_clients and face and self.conf("presence", "eyes", default=True) is not False:
+                    c = hypr_cursor()
+                    if c and c != self.cursor:
+                        self.cursor, self.cursor_t = c, now
+                    time.sleep(0.2)
+                else:
+                    time.sleep(1)
+            except Exception as e:   # noqa: BLE001
+                log(f"presence: {e}")
+                time.sleep(5)
+
+    # -- your network: every device is a car on the grid; a new one is an alert
+    def loop_lan(self) -> None:
+        state_file = STATE_DIR / "lan.json"
+        try:
+            known = json.loads(state_file.read_text())
+        except Exception:   # noqa: BLE001
+            known = {}
+        names: dict = {}
+        last_scan = 0.0
+        while True:
+            want = self.conf("lan", "enabled", default=True)
+            if want in (False, "off") or not shutil.which("ip"):
+                with self.lock:
+                    self.lan = {"devices": [], "net": ""}
+                time.sleep(30)
+                continue
+            try:
+                now = time.time()
+                route = lan_route()
+                if not route:
+                    with self.lock:
+                        self.lan = {"devices": [], "net": ""}
+                    time.sleep(30)
+                    continue
+                if (self.conf("lan", "scan", default="auto") not in (False, "off") and shutil.which("fping")
+                        and route["prefix"] >= 22 and now - last_scan > 300):
+                    last_scan = now
+                    subprocess.run(["fping", "-a", "-q", "-r", "0", "-t", "150", "-g", route["cidr"]],
+                                   capture_output=True, timeout=60)
+                neigh = json.loads(subprocess.run(["ip", "-j", "-4", "neigh", "show", "dev", route["dev"]],
+                                                  capture_output=True, timeout=5).stdout or b"[]")
+                cfg_names = {str(k).lower(): str(v)[:20] for k, v in (self.conf("lan", "names", default={}) or {}).items()}
+                gw_mac = next((n.get("lladdr", "") for n in neigh if n.get("dst") == route["gw"]), "")
+                net = gw_mac or route["gw"]
+                first_time = net not in known
+                seen = known.setdefault(net, {})
+                devices, new = [], []
+                for n in neigh:
+                    ip, mac = n.get("dst", ""), str(n.get("lladdr", "")).lower()
+                    st = n.get("state") or []
+                    if not mac or not ip or ip == route["src"] or any(x in st for x in ("FAILED", "INCOMPLETE", "NOARP")):
+                        continue
+                    try:
+                        if not ipaddress.ip_address(ip).is_private:
+                            continue
+                    except ValueError:
+                        continue
+                    d = seen.get(mac)
+                    if d is None:
+                        d = seen[mac] = {"first": now}
+                        if not first_time:
+                            new.append(ip)
+                    d.update(last=now, ip=ip)
+                    if ip not in names and ip != route["gw"]:
+                        names[ip] = ""
+                        threading.Thread(target=lambda i=ip: names.__setitem__(i, reverse_name(i)), daemon=True).start()
+                    name = cfg_names.get(mac) or cfg_names.get(ip) or ("router" if ip == route["gw"] else names.get(ip, ""))
+                    devices.append({"ip": ip, "name": name, "new": now - d["first"] < 900 and not d.get("base"),
+                                    "id": zlib.crc32(mac.encode()) % 100000})
+                if first_time:
+                    for d in seen.values():
+                        d["base"] = True   # the first look at a network is the baseline: no alerts for it
+                if len(seen) > 400:   # forget the oldest
+                    for k in sorted(seen, key=lambda k: seen[k].get("last", 0))[:len(seen) - 400]:
+                        del seen[k]
+                STATE_DIR.mkdir(parents=True, exist_ok=True)
+                state_file.write_text(json.dumps(known))
+                devices.sort(key=lambda d: tuple(int(p) for p in d["ip"].split(".")))
+                with self.lock:
+                    self.lan = {"devices": devices[:24], "net": route["cidr"]}
+                if self.conf("lan", "alert_new", default=True) is not False:
+                    for ip in new:
+                        nm = cfg_names.get(ip) or names.get(ip) or ""
+                        self.raise_alert("lan", "new device on your network", f"{ip}" + (f" · {nm}" if nm else ""),
+                                         "warn", speak=False)
+                        self.say("A new device joined your network.", "alerts")
+                        if shutil.which("notify-send"):
+                            subprocess.Popen(["notify-send", "Pulse · new device on your network", ip],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:   # noqa: BLE001
+                log(f"lan: {e}")
+            time.sleep(max(15, int(self.conf("lan", "every", default=60) or 60)))
+
+    # -- the voice: piper (offline, natural) or espeak-ng; off unless you turn it on
+    def say(self, text: str, why: str = "", force: bool = False) -> None:
+        v = self.conf("voice", default={}) or {}
+        if not force:
+            if v.get("enabled") not in (True, "on") or self.demo:
+                return
+            if why and why not in (v.get("events") or ["alerts", "agents", "digest", "focus"]):
+                return
+            if self.away or self.focus or in_quiet_hours(str(v.get("quiet", "23:00-08:00") or "")):
+                return
+        if self.privacy():   # sharing the screen: nothing is read aloud
+            return
+        try:
+            self.voice_q.put_nowait(re.sub(r"\s+", " ", str(text))[:240])
+        except queue.Full:
+            pass
+
+    def loop_voice(self) -> None:
+        while True:
+            text = self.voice_q.get()
+            try:
+                speak(text, self.conf("voice", default={}) or {})
+            except Exception as e:   # noqa: BLE001
+                log(f"voice: {e}")
 
     def drop_widget(self, wid: str) -> None:
         with self.lock:
@@ -395,7 +783,7 @@ class Hub:
              "order": src.get("order", src.get("_order", 50)), "private": bool(src.get("private", False)),
              "icon": src.get("icon"), "size": src.get("size"),
              "_rules": {k: src[k] for k in ("warn_above", "crit_above", "warn_below", "crit_below") if k in src},
-             "_notify": bool(src.get("notify", False))}
+             "_notify": bool(src.get("notify", False)), "click": bool(src.get("click"))}
         if src.get("unit"):
             f["unit_override"] = src["unit"]
         return f
@@ -816,6 +1204,8 @@ class Hub:
                 log(f"theme: {e}")
             try:
                 self.reload()
+                self.expire_agents()
+                self.check_focus()
             except Exception as e:   # noqa: BLE001
                 log(f"reload: {e}")
             time.sleep(3)
@@ -880,6 +1270,12 @@ class Hub:
                         "covered": monitor_covered(m, clients)}
                 with self.lock:
                     self.mons = out
+                saver = any("screensaver" in str(c.get("class", "")).lower() for c in clients)
+                if self.conf("presence", "lock", default=True) is not False:
+                    if saver and not self.away:
+                        self.set_away(True, "screensaver")
+                    elif not saver and self.away and self.away.get("why") == "screensaver" and not self.locked:
+                        self.set_away(False)
             except Exception:   # noqa: BLE001 - fail open if the compositor state is unavailable
                 with self.lock:
                     self.mons = {}
@@ -902,14 +1298,45 @@ class Hub:
             return {"v": VERSION, "t": time.time(), "demo": self.demo, "sys": self.sys,
                     "hist": {k: list(v) for k, v in self.hist.items()}, "weather": self.weather,
                     "widgets": ws, "alerts": list(self.alerts), "privacy": self.privacy(), "screencast": self.screencast,
-                    "mons": self.mons, "theme": self.theme,
+                    "mons": self.mons, "theme": self.colors(),
+                    "agents": sorted(self.agents.values(), key=lambda a: a.get("since", 0)), "focus": self.focus,
+                    "fxSeq": self.fx_seq, "music": bool(self.audio) and time.time() - self.audio_t < 1,
+                    "away": bool(self.away), "digest": self.public_digest(),
+                    "lan": [{**d, "name": "" if self.privacy() else d["name"], "ip": "" if self.privacy() else d["ip"]}
+                            for d in self.lan["devices"]],
                     "ui": {"fps": self.conf("pulse", "fps", default=20), "clock": self.conf("pulse", "clock", default="24h"),
                            "pause_when_covered": self.conf("pulse", "pause_when_covered", default=True),
                            "scene": self.conf("pulse", "scene", default="skyline"),
                            "font": self.conf("pulse", "font", default=""),
                            "title": self.conf("pulse", "title", default=""),
                            "dim_with_windows": self.conf("pulse", "dim_with_windows", default=True),
-                           "system": self.builtin("system") is not False, "network": self.builtin("network") is not False}}
+                           "system": self.builtin("system") is not False, "network": self.builtin("network") is not False,
+                           "face": self.conf("pulse", "face", default="agents"),
+                           "fireworks": self.conf("pulse", "celebrate", default=True) is not False,
+                           "music": self.conf("music", "enabled", default="auto") not in (False, "off"),
+                           "sun": self.conf("pulse", "sun", default=True) is not False,
+                           "sphere": self.conf("pulse", "sphere", default="real"),
+                           "cars": self.conf("lan", "cars", default=True) is not False,
+                           "eyes": self.conf("presence", "eyes", default=True) is not False}}
+
+    def public_digest(self):
+        d = self.digest
+        if not d or time.time() - d["until"] > 600:
+            return None
+        if self.privacy():
+            return {**d, "lines": [x for x in d["lines"] if not x.get("private")]}
+        return d
+
+    def colors(self) -> dict:
+        """The theme's colours, or a [colors] preset, with any single colour of [colors] on top."""
+        c = self.conf("colors", default={}) or {}
+        preset = str(c.get("preset", "theme"))
+        base = dict(self.theme.get("colors") or {}) if preset == "theme" or preset not in PRESETS else \
+            {COLOR_KEYS[k]: v for k, v in PRESETS[preset].items()}
+        for k, v in c.items():
+            if k in COLOR_KEYS and isinstance(v, str) and re.match(r"^#[0-9a-fA-F]{6}$", v):
+                base[COLOR_KEYS[k]] = v
+        return {"name": self.theme.get("name", ""), "colors": base, "preset": preset}
 
     def start(self) -> None:
         self.reload(force=True)
@@ -917,7 +1344,8 @@ class Hub:
             from_demo(self)
             return
         for fn in (self.loop_system, self.loop_weather, self.loop_github, self.loop_media, self.loop_notifications,
-                   self.loop_theme, self.loop_hypr):
+                   self.loop_theme, self.loop_hypr, self.loop_music, self.loop_presence, self.loop_lan,
+                   self.loop_voice):
             threading.Thread(target=fn, daemon=True).start()
 
 
@@ -1036,7 +1464,9 @@ def notification_history() -> list:
                 continue
         def timestamp(row):
             value = row.get("ts")
-            return value if isinstance(value, (int, float)) and value == value else 0
+            if not (isinstance(value, (int, float)) and value == value):
+                return 0
+            return value / 1000 if value > 1e11 else value   # seconds, whether the store keeps seconds or ms
         entries.sort(key=timestamp, reverse=True)
         result, seen = [], set()
         for row in entries:
@@ -1125,6 +1555,122 @@ def hypr_env() -> dict:
     return env
 
 
+def hypr_cursor() -> list | None:
+    """The pointer in layout pixels, from Hyprland's request socket (no process started)."""
+    env = hypr_env()
+    rt = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    sig = env.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if not sig:
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            s.connect(str(Path(rt) / "hypr" / sig / ".socket.sock"))
+            s.sendall(b"cursorpos")
+            out = s.recv(64).decode("ascii", "ignore")
+        x, y = (int(float(v)) for v in out.split(","))
+        return [x, y]
+    except (OSError, ValueError):
+        return None
+
+
+def process_running(names: tuple) -> bool:
+    try:
+        for p in os.listdir("/proc"):
+            if p.isdigit():
+                try:
+                    if Path(f"/proc/{p}/comm").read_text().strip() in names:
+                        return True
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return False
+
+
+def lan_route() -> dict | None:
+    """The default route's gateway, interface and the local network (only private IPv4 networks)."""
+    r = json.loads(subprocess.run(["ip", "-j", "-4", "route", "show", "default"], capture_output=True,
+                                  timeout=5).stdout or b"[]")
+    if not r or not r[0].get("gateway"):
+        return None
+    gw, dev = r[0]["gateway"], r[0].get("dev", "")
+    addrs = json.loads(subprocess.run(["ip", "-j", "-4", "addr", "show", "dev", dev], capture_output=True,
+                                      timeout=5).stdout or b"[]")
+    for a in (addrs[0].get("addr_info") if addrs else []) or []:
+        try:
+            net = ipaddress.ip_network(f"{a['local']}/{a['prefixlen']}", strict=False)
+        except (KeyError, ValueError):
+            continue
+        if net.is_private and ipaddress.ip_address(gw) in net:
+            return {"gw": gw, "dev": dev, "src": a["local"], "prefix": a["prefixlen"], "cidr": str(net)}
+    return None
+
+
+def reverse_name(ip: str) -> str:
+    try:
+        n = socket.gethostbyaddr(ip)[0]
+    except (OSError, UnicodeError):
+        return ""
+    n = n.split(".")[0]
+    return "" if not n or n.replace("-", "").isdigit() or n == ip.split(".")[0] else n[:20]
+
+
+def in_quiet_hours(spec: str, now: float | None = None) -> bool:
+    m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$", spec or "")
+    if not m:
+        return False
+    lt = time.localtime(now if now is not None else time.time())
+    cur = lt.tm_hour * 60 + lt.tm_min
+    a, b = int(m[1]) * 60 + int(m[2]), int(m[3]) * 60 + int(m[4])
+    return a <= cur < b if a <= b else cur >= a or cur < b
+
+
+def voice_model(v: dict) -> str | None:
+    m = str(v.get("model") or "")
+    if m:
+        p = Path(m).expanduser()
+        return str(p) if p.is_file() else None
+    d = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "piper"
+    found = sorted(d.glob("*.onnx")) if d.is_dir() else []
+    return str(found[0]) if found else None
+
+
+def piper_tts() -> str | None:
+    """piper-tts (AUR) or pip's `piper`; not the mouse tool also called piper."""
+    if shutil.which("piper-tts"):
+        return shutil.which("piper-tts")
+    p = shutil.which("piper")
+    try:
+        return p if p and "piper.__main__" in Path(p).read_text(errors="ignore")[:2000] else None
+    except OSError:
+        return None
+
+
+def speak(text: str, v: dict) -> None:
+    """One line, aloud. A `command` of your own gets the text on stdin; else piper, else espeak-ng."""
+    if v.get("command"):
+        subprocess.run(["bash", "-c", str(v["command"])], input=text.encode(), timeout=60,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    piper = piper_tts()
+    model = voice_model(v)
+    player = next(([p] for p in ("pw-play", "paplay", "aplay") if shutil.which(p)), None)
+    if piper and model and player:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        wav = STATE_DIR / "voice.wav"
+        subprocess.run([piper, "--model", model, "--output_file", str(wav)], input=text.encode(), timeout=60,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(player + [str(wav)], timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    if shutil.which("espeak-ng"):
+        subprocess.run(["espeak-ng", "-s", "165", text], timeout=60, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        return
+    log("voice: " + ("no audio player (pw-play, paplay or aplay)" if piper and model else
+                     "install piper-tts and a voice in ~/.local/share/piper/, or espeak-ng"))
+
+
 def hypr_socket() -> str | None:
     env = hypr_env()
     rt = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
@@ -1182,6 +1728,39 @@ def make_handler(hub: Hub, tok: str, port: int):
                         body = json.dumps(data, separators=(",", ":")).encode()
                     self._send(200, body)
                 return
+            if path == "/api/live":   # music bars and effects, as they happen (server-sent events)
+                if not self._authed(q):
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                last_fx = hub.fx_seq if q.get("fx", "-1") == "-1" else int(q.get("fx", "0") or 0)
+                sent, cur = 0.0, None
+                with hub.lock:
+                    hub.live_clients += 1
+                try:
+                    while True:
+                        now = time.time()
+                        audio = hub.audio if now - hub.audio_t < 0.5 else None
+                        with hub.lock:
+                            fx = [f for f in hub.fx if f["seq"] > last_fx]
+                        if fx:
+                            last_fx = fx[-1]["seq"]
+                        c = hub.cursor if hub.cursor != cur else None
+                        if audio is not None or fx or c or now - sent > 2:
+                            msg = {"a": audio, "fx": fx}
+                            if c:
+                                msg["c"] = cur = c
+                            self.wfile.write(b"data: " + json.dumps(msg, separators=(",", ":")).encode() + b"\n\n")
+                            self.wfile.flush()
+                            sent = now
+                        time.sleep(0.05 if audio is not None else 0.2)
+                except OSError:
+                    return
+                finally:
+                    with hub.lock:
+                        hub.live_clients -= 1
             if path == "/api/state":
                 if self._authed(q):
                     self._send(200, json.dumps(hub.state(), separators=(",", ":")).encode())
@@ -1228,6 +1807,32 @@ def make_handler(hub: Hub, tok: str, port: int):
             elif u.path == "/api/reload":
                 hub.reload(force=True)
                 self._send(200, b'{"ok":true}')
+            elif u.path.startswith("/api/agent/"):
+                hub.set_agent(urllib.parse.unquote(u.path[11:]), q.get("state", "working"),
+                              q.get("text") or body.decode("utf-8", "replace").strip())
+                self._send(200, b'{"ok":true}')
+            elif u.path == "/api/fx":
+                hub.add_fx(re.sub(r"[^a-z]", "", q.get("kind", "fireworks"))[:20] or "fireworks",
+                           q.get("text") or body.decode("utf-8", "replace").strip())
+                self._send(200, b'{"ok":true}')
+            elif u.path == "/api/focus":
+                v = body.decode().strip() or q.get("minutes", "")
+                try:
+                    mins = 0.0 if v in ("off", "stop", "0", "") else float(v)
+                except ValueError:
+                    mins = 0.0
+                hub.set_focus(mins, q.get("label", ""))
+                self._send(200, json.dumps({"focus": hub.focus}).encode())
+            elif u.path == "/api/presence":
+                v = body.decode().strip() or q.get("state", "")
+                hub.set_away(v in ("away", "on", "idle"), "you")
+                self._send(200, json.dumps({"away": bool(hub.away)}).encode())
+            elif u.path == "/api/say":
+                hub.say(q.get("text") or body.decode("utf-8", "replace").strip(), force=True)
+                self._send(200, b'{"ok":true}')
+            elif u.path.startswith("/api/click/"):
+                ok = hub.click(urllib.parse.unquote(u.path[11:]))
+                self._send(200 if ok else 404, b'{"ok":true}' if ok else b"{}")
             else:
                 self._send(404, b"{}")
     return H
@@ -1335,7 +1940,7 @@ def from_demo(hub: Hub) -> None:
         frames = {c.name: sorted(c.glob("*.jpg")) for c in cams if c.is_dir()}
         while True:
             t = time.time()
-            cpu = 28 + 22 * math.sin(t / 7) + 10 * math.sin(t / 1.7) + rnd.random() * 6
+            cpu = max(3.0, 28 + 22 * math.sin(t / 7) + 10 * math.sin(t / 1.7) + rnd.random() * 6)
             cores = [max(2, min(99, cpu + 25 * math.sin(t / (3 + i) + i) + rnd.random() * 8)) for i in range(16)]
             rx = 2.5e6 * (1.2 + math.sin(t / 5)) + rnd.random() * 4e5
             tx = 3e5 * (1.1 + math.cos(t / 4))
@@ -1391,6 +1996,53 @@ def from_demo(hub: Hub) -> None:
                                    {"title": "BTC 71,240 $ ▲ 1.2%"}, {"title": "next: standup 09:30"},
                                    {"title": "Omarchy 4.5 released"}]})
     threading.Thread(target=tick, daemon=True).start()
+    hub.lan = {"net": "10.0.0.0/24", "devices": [
+        {"ip": "10.0.0.1", "name": "router", "new": False, "id": 11}, {"ip": "10.0.0.5", "name": "nas", "new": False, "id": 23},
+        {"ip": "10.0.0.8", "name": "tv", "new": False, "id": 37}, {"ip": "10.0.0.12", "name": "phone", "new": False, "id": 41},
+        {"ip": "10.0.0.20", "name": "doorbell", "new": False, "id": 58}, {"ip": "10.0.0.31", "name": "printer", "new": False, "id": 66},
+        {"ip": "10.0.0.33", "name": "", "new": False, "id": 72}, {"ip": "10.0.0.40", "name": "laptop", "new": False, "id": 89}]}
+    hub.set_agent("claude · omarchytv", "working", "editing")
+    hub.set_agent("grok", "waiting", "needs your OK")
+    hub.set_agent("codex · pulse", "working", "running a command")
+    try:   # the real news feeds, if the network answers
+        r = subprocess.run([str(HERE / "sources" / "pulse-feed"), "Omarchy=https://github.com/basecamp/omarchy/releases.atom",
+                            "DHH=https://world.hey.com/dhh/feed.atom"], capture_output=True, timeout=12)
+        if r.returncode == 0:
+            p2 = parse_output(r.stdout)
+            p2.get("data", {}).pop("note", None)
+            hub.set_widget("news", title="omarchy · news", icon="󰎕", slot="right", order=25, **p2)
+    except Exception:   # noqa: BLE001
+        pass
+    if os.environ.get("PULSE_DEMO_LAN"):   # a file path: while it exists, a new device has joined
+        def lan():
+            flag, on = os.environ["PULSE_DEMO_LAN"], False
+            while True:
+                now_on = os.path.exists(flag)
+                if now_on != on:
+                    on = now_on
+                    with hub.lock:
+                        devs = [d for d in hub.lan["devices"] if d["ip"] != "10.0.0.57"]
+                        if on:
+                            devs.append({"ip": "10.0.0.57", "name": "", "new": True, "id": 97})
+                        hub.lan = {**hub.lan, "devices": devs}
+                    if on:
+                        hub.raise_alert("lan", "new device on your network", "10.0.0.57", "warn")
+                time.sleep(0.1)
+        threading.Thread(target=lan, daemon=True).start()
+    if os.environ.get("PULSE_DEMO_MUSIC"):
+        def music():
+            flag = os.environ.get("PULSE_DEMO_MUSIC", "")
+            while True:
+                if flag not in ("1", "") and not os.path.exists(flag):   # a file path: music only while it exists
+                    time.sleep(0.1)
+                    continue
+                t = time.time()
+                beat = max(0.0, math.sin(t * math.pi * 2 * 2.0)) ** 6      # 120 bpm
+                hub.audio = [int(max(0, min(100, (70 - i * 2.2) * beat + 25 * (0.5 + 0.5 * math.sin(t * 3 + i * 0.7)) +
+                                         rnd.random() * 10))) for i in range(24)]
+                hub.audio_t = t
+                time.sleep(0.033)
+        threading.Thread(target=music, daemon=True).start()
 
     def alerts():
         n = 0
@@ -1418,6 +2070,48 @@ def client(method: str, path: str, body: bytes = b"", ctype: str = "text/plain")
                                  method=method, headers={"X-Pulse-Token": token(), "Content-Type": ctype})
     with urllib.request.urlopen(req, timeout=5) as r:
         return json.loads(r.read() or b"{}")
+
+
+def quiet_client(path: str, body: bytes = b"") -> int:
+    """For hooks and scripts: a short request, no error if Pulse is not running."""
+    try:
+        port = port_of()
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=body, method="POST",
+                                     headers={"X-Pulse-Token": token(), "Content-Type": "text/plain"})
+        urllib.request.urlopen(req, timeout=1.5).read()
+    except Exception:   # noqa: BLE001
+        pass
+    return 0
+
+
+TOOL_WORDS = {"Bash": "running a command", "Edit": "editing", "MultiEdit": "editing", "Write": "writing a file",
+              "Read": "reading", "Grep": "searching", "Glob": "searching", "WebFetch": "on the web",
+              "WebSearch": "on the web", "Task": "delegating", "TodoWrite": "planning", "NotebookEdit": "editing"}
+
+
+def agent_hook(kind: str, args: list) -> None:
+    """Claude Code hooks send JSON on stdin; Codex CLI's notify passes JSON as the last argument.
+    Only the event, the tool name and the project folder are used: never the prompt or the code."""
+    if kind == "codex":
+        data = json.loads(args[-1]) if args else {}
+        if data.get("type") == "agent-turn-complete":
+            cwd = Path(data.get("cwd") or os.getcwd()).name
+            quiet_client("/api/agent/" + urllib.parse.quote(f"codex · {cwd}"[:32]) + "?state=done&text=turn+complete")
+        return
+    data = json.loads(sys.stdin.read() or "{}")
+    ev = data.get("hook_event_name", "")
+    name = f"claude · {Path(data.get('cwd') or os.getcwd()).name}"[:32]
+    state, text = {
+        "SessionStart": ("idle", "ready"),
+        "UserPromptSubmit": ("working", "thinking"),
+        "PreToolUse": ("working", TOOL_WORDS.get(data.get("tool_name", ""), str(data.get("tool_name", "working"))[:24])),
+        "Notification": ("waiting", "needs you"),
+        "Stop": ("done", "finished"),
+        "SessionEnd": ("gone", ""),
+    }.get(ev, (None, None))
+    if state:
+        quiet_client("/api/agent/" + urllib.parse.quote(name) + "?" + urllib.parse.urlencode({"state": state,
+                                                                                               "text": text}))
 
 
 def main(argv: list[str]) -> int:
@@ -1467,6 +2161,50 @@ def main(argv: list[str]) -> int:
             print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
             return 1
         return 0
+    if cmd == "agent":
+        if len(argv) < 4:
+            print("usage: omarchy-pulse agent NAME working|waiting|done|failed|idle|gone [TEXT]")
+            return 2
+        q = urllib.parse.urlencode({"state": argv[3], "text": " ".join(argv[4:])})
+        return quiet_client(f"/api/agent/{urllib.parse.quote(argv[2])}?{q}")
+    if cmd == "fireworks":
+        return quiet_client("/api/fx?" + urllib.parse.urlencode({"kind": "fireworks", "text": " ".join(argv[2:])}))
+    if cmd == "focus":
+        v = argv[2] if len(argv) > 2 else "25"
+        try:
+            r = client("POST", "/api/focus?" + urllib.parse.urlencode({"label": " ".join(argv[3:])}), v.encode())
+            f = r.get("focus")
+            print("focus: off" if not f else f"focus until {time.strftime('%H:%M', time.localtime(f['until']))}")
+        except Exception as e:   # noqa: BLE001
+            print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
+            return 1
+        return 0
+    if cmd in ("away", "back"):
+        return quiet_client("/api/presence", cmd.encode())
+    if cmd == "say":
+        return quiet_client("/api/say", " ".join(argv[2:]).encode())
+    if cmd == "watch":
+        if "--" not in argv or argv.index("--") < 3 or argv.index("--") == len(argv) - 1:
+            print("usage: omarchy-pulse watch NAME -- COMMAND [ARGS...]")
+            return 2
+        name, job = argv[2], argv[argv.index("--") + 1:]
+        quiet_client(f"/api/agent/{urllib.parse.quote(name)}?" + urllib.parse.urlencode(
+            {"state": "working", "text": " ".join(job)[:60]}))
+        try:
+            rc = subprocess.call(job)
+        except FileNotFoundError:
+            rc = 127
+        except KeyboardInterrupt:
+            rc = 130
+        quiet_client(f"/api/agent/{urllib.parse.quote(name)}?" + urllib.parse.urlencode(
+            {"state": "done" if rc == 0 else "failed", "text": "ok" if rc == 0 else f"exit {rc}"}))
+        return rc
+    if cmd == "hook":
+        try:
+            agent_hook(argv[2] if len(argv) > 2 else "claude", argv[3:])
+        except Exception:   # noqa: BLE001 - a hook must never get in the agent's way
+            pass
+        return 0
     if cmd == "privacy":
         v = argv[2] if len(argv) > 2 else "toggle"
         try:
@@ -1491,7 +2229,9 @@ def main(argv: list[str]) -> int:
                                 f"from gi.repository import {mod.split()[0]}"], capture_output=True)
             print(("  ok   " if r.returncode == 0 else "  MISS ") + f"{mod:20} ({pkg})")
             ok &= r.returncode == 0
-        for tool, why in (("ffmpeg", "cameras"), ("playerctl", "now playing"), ("gh", "GitHub notifications"),
+        for tool, why in (("ffmpeg", "cameras"), ("playerctl", "now playing"), ("cava", "the scene dances with music"),
+                          ("gh", "GitHub notifications"), ("fping", "finds every device on your network"),
+                          ("piper-tts", "the voice (or espeak-ng)"), ("espeak-ng", "a simpler voice"),
                           ("hyprctl", "calm down under windows, privacy")):
             print(("  ok   " if shutil.which(tool) else "  --   ") + f"{tool:20} ({why})")
         notification_dir = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy/notifications"

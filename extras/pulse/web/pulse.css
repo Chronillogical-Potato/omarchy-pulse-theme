@@ -181,3 +181,38 @@ body.dbg-x #scene, body.dbg-x #vig, body.dbg-noscene #scene, body.dbg-noscene #v
 /* blinking without CSS animations: pulse.js flips body.blink once a second, in the same repaint as the data
    (a running CSS animation makes WebKit redraw the whole wallpaper 60 times a second) */
 body.blink .lv-crit, body.blink .text .cur, body.blink .cam .rec::before, body.blink #incoming .tag { opacity: .3; }
+
+/* ---- 1.1: drones' tags, fireworks text, focus, clickable panels */
+#drones { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+.drone { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: .85rem; padding: .15rem .55rem;
+  background: rgba(var(--bg-rgb), .78); border: 1px solid rgba(var(--accent-rgb), .35); color: var(--fg); }
+.drone i { display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; margin-right: .45rem; vertical-align: .08rem; }
+.drone span { color: rgba(var(--fg-rgb), .6); }
+.drone b { color: var(--accent2); font-weight: 400; margin-left: .3rem; }
+.drone.waiting { border-color: var(--warn); } .drone.waiting b { color: var(--warn); }
+.drone.done { border-color: var(--ok); } .drone.failed { border-color: var(--crit); }
+#fxtext { position: fixed; left: 0; right: 0; top: 82%; text-align: center; font-size: 3.4rem; font-weight: 200; letter-spacing: .18em;
+  color: var(--fg); text-shadow: 0 0 2rem rgba(var(--accent2-rgb), .8); opacity: 0; transition: opacity .6s; pointer-events: none; z-index: 9; }
+#fxtext.on { opacity: 1; }
+body.focus #left, body.focus #right, body.focus #center-w, body.focus #ticker { opacity: .16; transition: opacity 1s; }
+body.focus #clock .who b { color: var(--accent2); }
+.panel.clickable { pointer-events: auto; cursor: pointer; }
+.panel.clickable:hover { border-color: rgba(var(--accent-rgb), .8); }
+.panel.pressed { border-color: var(--accent2) !important; }
+body.suspended #drones, body.suspended #fxtext { visibility: hidden; }
+body.private .drone { display: none; }   /* agent names can be project names */
+
+/* while you were away: what happened, when you are back (click to close) */
+#digest { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); z-index: 11; cursor: pointer;
+  animation: digestIn .6s ease-out; }
+#digest .frame { min-width: 36rem; max-width: 60rem; padding: 1.4rem 2.2rem 1.3rem; border: 1px solid rgba(var(--accent-rgb), .7);
+  background: rgba(var(--bg-rgb), .82); box-shadow: 0 0 4rem rgba(var(--accent-rgb), .3), inset 0 0 2.5rem rgba(var(--accent-rgb), .08);
+  backdrop-filter: blur(6px); }
+#digest .tag { font-size: 1.05rem; letter-spacing: .5em; color: var(--accent); margin-bottom: .9rem; }
+#digest ul { list-style: none; margin: 0; padding: 0; }
+#digest li { font-size: 1.35rem; color: rgba(var(--fg-rgb), .9); padding: .28rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#digest li i { font-style: normal; display: inline-block; width: 1.8rem; color: var(--accent2); }
+#digest li.ok i { color: var(--ok); } #digest li.warn i { color: var(--warn); } #digest li.crit i { color: var(--crit); }
+#digest li.dim { color: rgba(var(--fg-rgb), .5); }
+@keyframes digestIn { from { opacity: 0; transform: translate(-50%, -46%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+body.sceneonly #digest, body.suspended #digest { display: none !important; }

@@ -7,16 +7,50 @@
 city = ""                        # weather: "Milan", "Berlin"... (or latitude = 45.46 / longitude = 9.19)
 units = "metric"                 # or "imperial"
 clock = "24h"                    # or "12h"
-scene = "skyline"                # skyline | orbit | calm
+scene = "sphere"                 # sphere (the LED sphere) | skyline | orbit | calm
+sphere = "real"                  # the sphere's look: "real" (one continuous image) | "led" (thousands of separate lights)
 fps = 20                         # on an empty desktop; it slows down by itself under windows and stops when
                                  # something is full screen
 pause_when_covered = true        # pause drawing on monitors almost fully covered by windows
 privacy_on_screenshare = true    # sharing or recording the screen hides cameras, notifications and private panels
 temp_crit = 90                   # °C: CPU temperature alert
 gpu = "auto"                     # "never" if the wallpaper is heavy on a PC without a working GPU driver
+face = "agents"                  # the agent's face in the core: "agents" (while one works) | "always" | "off"
+celebrate = true                 # fireworks when an agent finishes, a focus ends or an alert is back to green
+sun = true                       # the sky follows the real sun (dawn, day, dusk, night)
 # title = "MISSION CONTROL"      # a word under the clock
 # font = "CaskaydiaMono Nerd Font"
 # port = 47800
+
+[colors]
+preset = "theme"                 # theme (the Omarchy theme in use) | synthwave | matrix | amber | ice | vapor | inferno
+# accent = "#39e1ff"             # or set any single colour: bg, fg, accent, accent2, ok, warn, crit, dim
+
+[music]
+enabled = "auto"                 # the city dances while music plays (needs cava): "auto" | "always" | "off"
+input = "pulse"                  # cava's input: "pulse" (PipeWire too) or "pipewire"
+
+[presence]
+eyes = true                      # the face's eyes follow your pointer; moving it on an empty desktop wakes the face
+lock = true                      # locking the screen (or the screensaver) = you are away: the face sleeps
+digest_after = 2                 # minutes away before "while you were away" shows what you missed
+notify = true                    # the digest also as a desktop notification
+# hypridle can tell Pulse too: on-timeout = omarchy-pulse away / on-resume = omarchy-pulse back
+
+[lan]
+enabled = true                   # every device on your network is a car on the grid; a new one is an alert
+cars = true
+scan = "auto"                    # with fping installed, look for every device every 5 minutes ("off": only those
+                                 # your PC already talks to). The first look at a network is learnt, no alerts.
+alert_new = true
+# names = { "192.168.1.5" = "nas", "aa:bb:cc:dd:ee:ff" = "tv" }   # by IP or MAC; else the name your router gives
+
+[voice]
+enabled = false                  # Pulse speaks: alerts, agents that finish or need you, the digest, the end of a focus
+events = ["alerts", "agents", "digest", "focus"]
+quiet = "23:00-08:00"            # never at night ("" = always). Never while sharing the screen, away or in focus.
+# model = "~/.local/share/piper/en_US-lessac-medium.onnx"   # piper-tts voice (default: the first one in that folder)
+# command = "spd-say -e"         # or any command that reads the text on stdin
 
 [builtin]
 system = true
@@ -43,6 +77,15 @@ type = "status"
 slot = "right"
 
 [[source]]
+name = "news"
+title = "omarchy · news"
+icon = "󰎕"
+command = "pulse-feed 'Omarchy=https://github.com/basecamp/omarchy/releases.atom' 'DHH=https://world.hey.com/dhh/feed.atom'"
+every = 1800
+slot = "right"
+# click = "xdg-open https://world.hey.com/dhh"   # any panel can run a command when you click it
+
+[[source]]
 name = "ping"
 title = "network"
 icon = "󰛳"
@@ -50,6 +93,12 @@ command = "pulse-ping gateway 1.1.1.1 github.com"   # 'gateway' = your router
 every = 20
 type = "status"
 slot = "right"
+
+# ---------------------------------------------------------------- AI agents as drones over the city
+# Claude Code: add the hooks in docs/GUIDE.md section 16 (omarchy-pulse hook claude); Codex CLI:
+# notify = ["omarchy-pulse", "hook", "codex"] in ~/.codex/config.toml; any agent or job:
+#   omarchy-pulse agent grok working "reading the issue"   ...   omarchy-pulse agent grok done
+#   omarchy-pulse watch build -- make release              (a drone while it runs, green or red at the end)
 
 # ---------------------------------------------------------------- examples: remove the # to turn one on
 

@@ -17,6 +17,14 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
 - [12. Light on the PC](#12-light-on-the-pc)
 - [13. Troubleshooting](#13-troubleshooting)
 - [14. Files](#14-files)
+- New in 1.1:
+  [15. The LED sphere](#15-the-led-sphere) ·
+  [16. AI agents as drones](#16-ai-agents-as-drones) ·
+  [17. Music, fireworks and focus](#17-music-fireworks-and-focus) ·
+  [18. Colours, news, clicks and the sun](#18-colours-news-clicks-and-the-sun) ·
+  [19. The face that sees you, and "while you were away"](#19-the-face-that-sees-you-and-while-you-were-away) ·
+  [20. Your network on the grid](#20-your-network-on-the-grid) ·
+  [21. The voice](#21-the-voice)
 
 ---
 
@@ -60,25 +68,28 @@ Nothing in the scene is decoration only:
 | the towers of the skyline | your CPU cores, one tower each, as tall as that core's load (red top above 90 %) |
 | the lit windows | your RAM: the more is used, the more windows are on |
 | the horizon line | your pulse: one beat per heartbeat, from 46 to about 140 a minute as the CPU works |
-| the wireframe core | beats with the pulse and turns faster with the load |
+| the LED sphere (scene **sphere**) | a screen: clock, weather, CPU, news, camera, alerts, music, focus, your agent's face (section 15) |
+| the wireframe core | beats with the pulse and turns faster with the load; your agent's face lives in it |
+| the drones | your AI agents and jobs at work (section 16) |
 | the grid on the floor | runs toward you as fast as the CPU works |
 | the aurora | your network traffic |
 | the sky | your real weather: stars on a clear night, rain, snow, fog, lightning in a storm |
 | a red or amber shockwave | an alert (section 6), with the **INCOMING** banner |
 
-Scenes (`scene =` in `[pulse]`): **skyline** (default), **orbit** (each core becomes a moon on its own ring around a
+Scenes (`scene =` in `[pulse]`): **sphere** (the LED sphere in the middle of the city, the default from 1.1),
+**skyline** (the city around a wireframe core), **orbit** (each core becomes a moon on its own ring around a
 larger core; faster moons, busier cores) and **calm** (a still grid, at most 10 frames a second).
 
 To change the scene, edit `scene` in `~/.config/omarchy-pulse/pulse.toml`, or in one line:
 
 ```
-sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # skyline | orbit | calm
+sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm
 ```
 
 The live wallpaper switches by itself within about 3 seconds (`omarchy-pulse reload` to do it now). Check the
 current one with `grep ^scene ~/.config/omarchy-pulse/pulse.toml`.
 
-The two still wallpapers of the theme (`01-pulse-skyline`, `02-pulse-orbit`, switched with Omarchy's
+The three still wallpapers of the theme (`01-pulse-skyline`, `02-pulse-orbit`, `03-pulse-sphere`, switched with Omarchy's
 next-background key) are what you see while Pulse is off or starting; they do not change the live scene.
 
 ## 3. Panels and where they go
@@ -419,6 +430,8 @@ In `[builtin]` (`false` hides one):
 - Camera addresses and passwords stay in the hub: the page only sees `/img/name`, and errors are shown with the
   password replaced by `***`. In privacy mode the hub does not even send camera frames.
 - Sources run as you, with your permissions: only put commands you trust in `pulse.toml`.
+- In privacy mode the drones, the names and addresses of the cars and the private lines of "while you were away"
+  are hidden, and the voice is silent. MAC addresses never leave the hub; the pointer position never leaves the PC.
 
 ## 12. Light on the PC
 
@@ -450,7 +463,15 @@ In `[builtin]` (`false` hides one):
 | The weather says `set city` | `city = "Your city"` in `[pulse]`. |
 | `omarchy-pulse: command not found` | `~/.local/bin` must be on your PATH (it is on Omarchy). |
 | Port 47800 busy | `port = 47801` in `[pulse]`. |
-| Too heavy | lower `fps`, `scene = "calm"`, `gpu = "never"`, fewer cameras or a lower camera `fps`. |
+| Too heavy | lower `fps`, `scene = "calm"` or `"skyline"` (the sphere draws the most), `gpu = "never"`, fewer cameras or a lower camera `fps`. |
+| The city does not dance | install cava (`sudo pacman -S cava`); it listens only while something plays (playerctl); `[music] input = "pipewire"` if `pulse` does not work; `omarchy-pulse doctor`. |
+| No drone for Claude Code | check the hooks in `~/.claude/settings.json` (section 16) and that `omarchy-pulse` is on the PATH of the shell Claude Code uses. |
+| Too many fireworks | `celebrate = false` in `[pulse]` (only `omarchy-pulse fireworks` still fires them). |
+| The eyes do not follow the pointer | Hyprland only (Pulse reads the pointer from its socket); `eyes = true` in `[presence]`; `face` must not be `"off"`. |
+| No "while you were away" | you must be away at least `digest_after` minutes; locking the screen counts, or add the hypridle listener (section 19). |
+| No cars on the grid | `ip` must work (`iproute2`) and the network must be a private one (192.168.x, 10.x, 172.16-31.x); install `fping` to see every device. |
+| A new-device alert for a known device | name it in `[lan] names`; a phone with a private Wi-Fi address gets a new one per network (turn it off for your home Wi-Fi). |
+| The voice says nothing | `enabled = true` in `[voice]`; `omarchy-pulse say "test"`; `omarchy-pulse doctor` (piper-tts or espeak-ng); check `quiet`. |
 
 ## 14. Files
 
@@ -465,6 +486,207 @@ In `[builtin]` (`false` hides one):
 ~/.config/systemd/user/omarchy-pulse.service
 ~/.config/autostart/omarchy-pulse.desktop
 ~/.config/omarchy/hooks/theme-set.d/omarchy-pulse
+~/.local/state/omarchy-pulse/cava.conf     written by Pulse for cava (1.1)
+~/.local/state/omarchy-pulse/lan.json      the devices already seen on each network (1.1)
+~/.local/state/omarchy-pulse/voice.wav     the last line spoken (1.1)
 ```
 
 MIT, © 2026 Marco Porro ([x.com/MarcoPorro](https://x.com/MarcoPorro)). Weather by [Open-Meteo](https://open-meteo.com).
+
+---
+
+## 15. The LED sphere
+
+`scene = "sphere"` (the default from 1.1). A globe of LEDs stands in the middle of the city and turns. Every pixel
+looks up its place on a screen painted live, so from your chair it reads as one continuous image, with the fine LED
+grid, a softer edge, a halo in the colours it shows, its light on the plaza and its reflection on the wet floor.
+What faces you stays readable while the sphere turns.
+
+It changes program every 11 seconds, and something important takes over at once:
+
+| Program | When |
+|---|---|
+| **alert** (red, with a big "!") | right after an alert (section 6) |
+| **focus** (the countdown) | during focus mode (section 17) |
+| **face** | while one of your agents works, waits, has finished or failed (section 16), or always with `face = "always"` |
+| **music** (the spectrum) | while music plays and cava listens (section 17) |
+| **clock**, **weather**, **cpu** (your CPU history), **news** (the latest headline or the AI brief) | in turn, the rest of the time |
+| **camera** | in turn, when a camera panel exists (never in privacy mode) |
+
+Two looks, `sphere =` in `[pulse]`: **real** (default: one continuous image, as from across the street) or **led**
+(thousands of separate lights on a dark globe, the clock and the agent's eyes lit up in them).
+
+It is the heaviest scene to draw: on a PC without a GPU, `scene = "skyline"` is lighter.
+
+## 16. AI agents as drones
+
+Every agent (or any long job) is a drone over the city, with a tag: its name, what it is doing, for how long.
+
+| State | The drone |
+|---|---|
+| `working` | flies and scans the city with its beam; the face thinks |
+| `waiting` | blinks amber with a "!": it needs you; the face looks up, surprised |
+| `done` | lands with a green light and small fireworks; the face smiles; gone after 90 s |
+| `failed` | lands red and raises an alert; the face is sad; gone after 90 s |
+| `idle` | hovers, dim |
+
+From anything:
+
+```
+omarchy-pulse agent grok working "reading the issue"
+omarchy-pulse agent grok waiting "needs your OK"
+omarchy-pulse agent grok done            # or failed, idle, gone
+omarchy-pulse watch build -- make release      # working while it runs, done or failed with its exit code
+curl -s -X POST -H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" \
+     "http://127.0.0.1:47800/api/agent/grok?state=working&text=reading"
+```
+
+**Claude Code**: add the hooks to `~/.claude/settings.json` (merge them with the hooks you already have):
+
+```json
+{
+  "hooks": {
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "omarchy-pulse hook claude" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "omarchy-pulse hook claude" }] }],
+    "PreToolUse":       [{ "matcher": "", "hooks": [{ "type": "command", "command": "omarchy-pulse hook claude" }] }],
+    "Notification":     [{ "hooks": [{ "type": "command", "command": "omarchy-pulse hook claude" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "omarchy-pulse hook claude" }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "omarchy-pulse hook claude" }] }]
+  }
+}
+```
+
+One drone per project (`claude · <folder>`). The hook reads only the event, the tool name and the folder name: your
+prompts, your code and the commands it runs never reach the wallpaper. It always exits at once and never blocks
+Claude Code, even when Pulse is not running.
+
+**Codex CLI**: in `~/.codex/config.toml`, `notify = ["omarchy-pulse", "hook", "codex"]`: a drone lands at the end of
+every turn.
+
+**Grok Bot, or any other agent**: call `omarchy-pulse agent NAME STATE "text"` from its hooks or its scripts, or
+start it with `omarchy-pulse watch NAME -- ...`.
+
+Drones are hidden in privacy mode: agent names are often project names.
+
+## 17. Music, fireworks and focus
+
+**Music.** With [cava](https://github.com/karlstav/cava) installed (`sudo pacman -S cava`), the skyline, the horizon,
+the floor, the aurora and the sphere move with what you play. Pulse starts cava only while something plays
+(playerctl) and stops it after. In `[music]`: `enabled = "auto"` (default) | `"always"` | `"off"`, `input = "pulse"`
+(works with PipeWire) or `"pipewire"`, `bars = 24`.
+
+**Fireworks.** By themselves when an agent finishes, a focus session ends, or an alert goes back to green (a small
+burst); `celebrate = false` turns those off. By hand, with an optional text in the sky:
+
+```
+omarchy-pulse fireworks "v1.1 shipped"
+git push && omarchy-pulse fireworks "pushed"
+```
+
+**Focus mode.** `omarchy-pulse focus 25 "write the guide"`: every panel dims, the countdown goes on the sphere (or
+around the core) and under the clock; at the end, fireworks and a desktop notification. `omarchy-pulse focus off`
+stops it.
+
+## 18. Colours, news, clicks and the sun
+
+**Colours.** In `[colors]`: `preset = "theme"` (default: the colours of the Omarchy theme in use), or `synthwave`,
+`matrix`, `amber`, `ice`, `vapor`, `inferno`; then any single colour on top: `bg`, `fg`, `accent`, `accent2`, `ok`,
+`warn`, `crit`, `dim` (`accent = "#39e1ff"`).
+
+**News.** The `news` source, on by default, shows the Omarchy releases and DHH's posts. `pulse-feed` reads any RSS
+or Atom feed, merges several by date and marks what is new in the last 24 hours:
+
+```toml
+command = "pulse-feed 'Omarchy=https://github.com/basecamp/omarchy/releases.atom' 'DHH=https://world.hey.com/dhh/feed.atom' 'HN=https://hnrss.org/frontpage'"
+```
+
+**Clicks.** Any source can run a command when you click its panel on the desktop:
+`click = "xdg-open https://zabbix.example.lan"`, `click = "alacritty -e journalctl -f"`. Only commands written in
+your `pulse.toml` run: the page cannot send its own.
+
+**The sun.** The sky follows sunrise and sunset from your weather: a warm dawn and dusk, a lighter day, the night
+with its stars. `sun = false` keeps the night.
+
+**Shooting stars** cross the sky when a notification or a news item arrives.
+
+## 19. The face that sees you, and "while you were away"
+
+**Eyes.** The face's eyes follow your pointer, on every monitor (Pulse reads it from Hyprland a few times a second,
+only while a wallpaper is on screen). Move the pointer on an empty desktop and the face wakes up and looks at you,
+even with no agent at work; after a few seconds it goes back to the sphere's programs.
+
+**Sleep.** When you leave, the face falls asleep (closed eyes, z z z) and the wallpaper slows down to save power.
+Pulse knows you left when:
+
+- you lock the screen (hyprlock, swaylock or gtklock) or the Omarchy screensaver starts: by itself;
+- hypridle tells it, with a listener in `~/.config/hypr/hypridle.conf` (the most precise, also without locking):
+
+```
+listener {
+    timeout = 300
+    on-timeout = omarchy-pulse away
+    on-resume = omarchy-pulse back
+}
+```
+
+- or you say so: `omarchy-pulse away` / `omarchy-pulse back`.
+
+**While you were away.** When you are back the face wakes up and smiles, and a card shows what happened since you
+left: the alerts, the agents that finished, the new devices on your network, the new posts, how many notifications
+(without their text). Click it to close it, or it goes by itself. It also comes as a desktop notification, and the
+voice can read it (section 21).
+
+```toml
+[presence]
+eyes = true          # the eyes follow the pointer
+lock = true          # lock screen / screensaver = away
+digest_after = 2     # minutes away before a digest
+notify = true        # the digest as a desktop notification too
+```
+
+## 20. Your network on the grid
+
+Every device on your network is a car driving on the grid: two lights and a light trail, coming toward you or going
+away. Named devices carry their name; a **new** device (never seen on this network before) blinks amber with its
+address, raises an alert (INCOMING) and a notification.
+
+Pulse reads the devices your PC knows (`ip neigh`, no root); with `fping` installed (`sudo pacman -S fping`) it also
+looks for every device on the network every 5 minutes. The first time it sees a network it only learns it: no alerts
+for the devices already there. Only private networks, and nothing leaves the PC; the MAC addresses stay in
+`~/.local/state/omarchy-pulse/lan.json` and never reach the page.
+
+```toml
+[lan]
+enabled = true
+cars = true                  # false: no cars, only the alert
+scan = "auto"                # "off": only the devices your PC already talks to
+alert_new = true
+names = { "192.168.1.5" = "nas", "aa:bb:cc:dd:ee:ff" = "tv" }   # by IP or MAC; else the name your router gives
+every = 60
+```
+
+In privacy mode the cars drive without names or addresses.
+
+## 21. The voice
+
+Pulse can speak, offline: alerts, an agent that finishes, fails or needs you, the digest when you are back ("Welcome
+back. While you were away, 25 minutes: claude, omarchytv finished; new device on your network"), the end of a focus.
+Off by default.
+
+```toml
+[voice]
+enabled = true
+events = ["alerts", "agents", "digest", "focus"]
+quiet = "23:00-08:00"        # never at night ("" = any time)
+# model = "~/.local/share/piper/it_IT-paola-medium.onnx"
+# command = "spd-say -e"     # or any command that reads the text on stdin
+```
+
+It uses [piper](https://github.com/rhasspy/piper) (a natural voice, on your PC) or, if piper is not there,
+`espeak-ng` (`sudo pacman -S espeak-ng`). For piper: `yay -S piper-tts-bin` (or `pipx install piper-tts`), then put
+a voice (the `.onnx` file and its `.onnx.json`) in `~/.local/share/piper/`, from
+[the piper voices](https://huggingface.co/rhasspy/piper-voices): `en_US-lessac-medium`, `it_IT-paola-medium` and many
+more. Pulse plays it with `pw-play`, `paplay` or `aplay`.
+
+It never speaks while you share or record the screen, while you are away (the digest waits for you), in focus mode,
+or in the quiet hours. Private panels are never read aloud. Try it: `omarchy-pulse say "hello from Pulse"`.
