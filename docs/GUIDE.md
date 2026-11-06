@@ -450,6 +450,21 @@ In `[builtin]` (`false` hides one):
 - WebKitGTK uses about 400 MB of memory with one monitor. Every monitor gets its own page (only the first shows
   INCOMING).
 - Check it in `btop`: the `WebKitWebProcess` and `python3` processes.
+- **Measure it**: `omarchy-pulse perf` shows, for every monitor, the frames per second it really gets, how long a
+  frame takes to draw and how long it takes to reach the screen. When a frame takes much longer to reach the screen
+  than to draw (for example 150 ms against 5 ms), the time goes into copying and presenting the frame, not into the
+  scene: changing the scene does not help. Pulse then lowers that monitor's frames by itself so the CPU calms down,
+  and writes a line in the log (`journalctl --user -u omarchy-pulse`).
+- **NVIDIA, 4K and several monitors**: on NVIDIA, Pulse turns off WebKit's DMA-BUF renderer by default, because some
+  drivers draw nothing with it. The price is that every frame is copied through the CPU, which is heavy at 4K and
+  with two or more monitors (choppy motion, a busy `WebKitWebProcess`). With a recent driver try:
+
+  ```toml
+  [pulse]
+  dmabuf = "on"        # "auto" (default: off on NVIDIA) | "on" | "off"
+  ```
+
+  then `systemctl --user restart omarchy-pulse`. If the wallpaper turns black or empty, go back to `"auto"`.
 
 ## 13. Troubleshooting
 
@@ -457,7 +472,8 @@ In `[builtin]` (`false` hides one):
 |---|---|
 | Still a still wallpaper | `systemctl --user status omarchy-pulse`, `journalctl --user -u omarchy-pulse -e`, `omarchy-pulse doctor`. Is the theme **pulse** (or `--always` set)? Run `extras/install-live` from a terminal on the PC, not SSH. |
 | `missing dependencies` in the log | `extras/install-live` again (it installs them). |
-| Black or empty on NVIDIA | Pulse already sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` on NVIDIA; also try `gpu = "never"`. |
+| Black or empty on NVIDIA | keep `dmabuf = "auto"` (Pulse turns WebKit's DMA-BUF renderer off on NVIDIA); also try `gpu = "never"`. |
+| Choppy, or a `WebKitWebProcess` at 100% (NVIDIA, 4K, two monitors) | `omarchy-pulse perf`; if frames take much longer to reach the screen than to draw, try `dmabuf = "on"` (section 12). |
 | A panel does not appear | read the amber line at its bottom; run the command yourself in a terminal; `omarchy-pulse reload`. |
 | A panel is missing from a full column | it does not fit: lower its `order`, move it to another `slot`, or turn something off. |
 | The weather says `set city` | `city = "Your city"` in `[pulse]`. |

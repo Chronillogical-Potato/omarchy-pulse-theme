@@ -44,7 +44,6 @@ export WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE GDK_BACKEND=wayland
 # exit 77 = nothing to do (the unit does not restart for it)
 wanted || exit 77
 [[ -n $WAYLAND_DISPLAY ]] || { echo "pulse-live: no Wayland session yet" >&2; exit 1; }
-# WebKitGTK draws nothing on some NVIDIA drivers with its DMA-BUF renderer
-[[ -e /proc/driver/nvidia/version ]] && export WEBKIT_DISABLE_DMABUF_RENDERER=1
+# NVIDIA and WebKit's DMA-BUF renderer: decided by the engine (dmabuf = in pulse.toml)
 sleep 1   # let the desktop put its still background up first
 exec python3 "$engine" run

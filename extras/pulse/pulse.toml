@@ -15,6 +15,8 @@ pause_when_covered = true        # pause drawing on monitors almost fully covere
 privacy_on_screenshare = true    # sharing or recording the screen hides cameras, notifications and private panels
 temp_crit = 90                   # °C: CPU temperature alert
 gpu = "auto"                     # "never" if the wallpaper is heavy on a PC without a working GPU driver
+dmabuf = "auto"                  # NVIDIA: "auto" keeps WebKit's DMA-BUF renderer off (some drivers draw nothing with
+                                 # it); "on" is much lighter on recent drivers, above all with 4K or several monitors
 face = "agents"                  # the agent's face in the core: "agents" (while one works) | "always" | "off"
 celebrate = true                 # fireworks when an agent finishes, a focus ends or an alert is back to green
 sun = true                       # the sky follows the real sun (dawn, day, dusk, night)
