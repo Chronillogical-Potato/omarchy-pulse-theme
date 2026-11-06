@@ -10,6 +10,7 @@ clock = "24h"                    # or "12h"
 scene = "skyline"                # skyline | orbit | calm
 fps = 20                         # on an empty desktop; it slows down by itself under windows and stops when
                                  # something is full screen
+pause_when_covered = true        # pause drawing on monitors almost fully covered by windows
 privacy_on_screenshare = true    # sharing or recording the screen hides cameras, notifications and private panels
 temp_crit = 90                   # °C: CPU temperature alert
 gpu = "auto"                     # "never" if the wallpaper is heavy on a PC without a working GPU driver

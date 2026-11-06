@@ -67,6 +67,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 body.private .panel.private .cover { display: flex; }
 body.private .panel.private .body { filter: blur(.7rem); }
 body.private .ip { visibility: hidden; }
+/* Never expose stale private data while waking up and waiting for fresh state. */
+body.suspended #ui, body.suspended #ticker, body.suspended #incoming { visibility: hidden; }
 #badge { position: fixed; top: 3.9rem; right: 2.4rem; font-size: .85rem; letter-spacing: .2em; color: var(--warn); display: none; }
 body.private #badge { display: block; }
 

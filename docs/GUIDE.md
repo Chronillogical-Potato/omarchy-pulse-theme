@@ -422,6 +422,11 @@ In `[builtin]` (`false` hides one):
 
 ## 12. Light on the PC
 
+- Pulse pauses each monitor's drawing and panel updates when windows cover at least 95% of its usable area; the small
+  allowance avoids treating normal window gaps as an exposed desktop. It resumes when the monitor is uncovered. Set
+  `[pulse]` `pause_when_covered = false` to keep the original behavior. This uses window geometry, so translucent
+  windows can appear covered even when the wallpaper is visible through them. If compositor data is unavailable,
+  Pulse keeps drawing. Source collection and alert checks continue in the hub while a view is paused.
 - 20 frames a second only while you look at an empty desktop (`fps`), 8 with windows open, almost nothing with an app
   full screen; at most 12 on battery; panels refresh once a second; no CSS animations (blinking happens once a
   second, with the data).

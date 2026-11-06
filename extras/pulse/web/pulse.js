@@ -9,6 +9,7 @@
   var MONKEY = (Q.get("mx") || "0") + "," + (Q.get("my") || "0");
   var PRIMARY = Q.get("primary") !== "0";
   var S = null;               // last state
+  var covered = false;        // this monitor is almost entirely covered by windows
   var seenAlert = -1;         // alerts already shown
   var themeKey = "";
   var $ = function (s, r) { return (r || document).querySelector(s); };
@@ -280,6 +281,7 @@
   }
   // typing animation for text panels
   setInterval(function () {
+    if (covered) return;
     Object.keys(typed).forEach(function (id) {
       var ty = typed[id], el = panels[id];
       if (!el) return;
@@ -360,7 +362,7 @@
         (ui.title ? '<span class="title">' + esc(ui.title) + "</span>" : ""));
     }
   }
-  setInterval(function () { if (fails) clock(); }, 1000);   // render() ticks the clock while the hub answers
+  setInterval(function () { if (fails && !covered) clock(); }, 1000);   // render() ticks the clock while the hub answers
 
   // ------------------------------------------------------------------ ticker
   function tickerUpdate(ws) {
@@ -380,6 +382,7 @@
   // one headline at a time, every 6 seconds (a scrolling marquee would repaint the screen 60 times a second)
   var tickItems = [], tickIdx = -1;
   setInterval(function () {
+    if (covered) return;
     if (!tickItems.length) return;
     var tr = $("#ticker .track");
     tickIdx = (tickIdx + 1) % tickItems.length;
@@ -655,9 +658,11 @@
     }
 
     // a PC that cannot keep up (no GPU, software rendering) gets fewer frames instead of a busy CPU
-    var cap = 60, slow = 0, gap = 0;
+    var cap = 60, slow = 0, gap = 0, frameId = null;
     function frame(now) {
-      requestAnimationFrame(frame);
+      frameId = null;
+      if (covered) return;
+      frameId = requestAnimationFrame(frame);
       if (paused && last) return;
       var want = Math.min(fps, cap);
       if (now - last < 1000 / want - 2) return;
@@ -672,8 +677,15 @@
     }
 
     return {
-      start: function () { if (!COL.bg) applyTheme(null); resize(); addEventListener("resize", resize); requestAnimationFrame(frame); },
+      start: function () { if (!COL.bg) applyTheme(null); resize(); addEventListener("resize", resize); frameId = requestAnimationFrame(frame); },
       reset: reset,
+      setCovered: function (value) {
+        if (covered === value) return;
+        covered = value;
+        document.body.classList.toggle("suspended", covered);
+        if (covered && frameId !== null) { cancelAnimationFrame(frameId); frameId = null; }
+        else if (!covered && frameId === null) { last = 0; gap = 0; frameId = requestAnimationFrame(frame); }
+      },
       mode: function (m, st) {
         var ui = st.ui || {};
         kind = window.PULSE_SCENE || Q.get("scene") || ui.scene || "skyline";
@@ -695,10 +707,27 @@
 
   // ------------------------------------------------------------------ data loop
   var fails = 0;
+  function getJSON(path) {
+    return fetch(path + "?token=" + encodeURIComponent(TOKEN), { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("Pulse hub unavailable");
+      return r.json();
+    });
+  }
+  function isCovered(data, enabled) {
+    var m = (data.mons || {})[MONKEY];
+    return enabled !== false && !!(m && m.covered);
+  }
   function poll() {
-    fetch("/api/state?token=" + encodeURIComponent(TOKEN), { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
-      S = j; fails = 0;
-      try { render(); } catch (e) { console.error(e); }
+    var request = covered ? getJSON("/api/visibility").then(function (v) {
+      if (isCovered(v, v.pause_when_covered)) return null;
+      return getJSON("/api/state");
+    }) : getJSON("/api/state");
+    request.then(function (j) {
+      fails = 0;
+      if (!j) return;
+      if (isCovered(j, (j.ui || {}).pause_when_covered)) { Scene.setCovered(true); return; }
+      S = j;
+      try { render(); Scene.setCovered(false); } catch (e) { console.error(e); }
     }).catch(function () { fails++; }).then(function () { setTimeout(poll, fails ? Math.min(10000, 1000 * fails) : 1000); });
   }
   if (Q.get("only") === "scene") document.body.classList.add("sceneonly");
