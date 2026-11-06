@@ -1190,6 +1190,22 @@
 
     // a PC that cannot keep up (no GPU, software rendering) gets fewer frames instead of a busy CPU
     var cap = 60, slow = 0, gap = 0, frameId = null;
+    // frame pacing: how long a frame takes to reach the screen vs how long it takes to draw (omarchy-pulse perf)
+    var pf = { n: 0, cost: 0, gap: 0, max: 0, t: 0, prev: 0 }, pbound = false, pbAt = 0;
+    function perfReport(now) {
+      var n = Math.max(1, pf.n), avgCost = pf.cost / n, avgGap = pf.n > 1 ? pf.gap / (pf.n - 1) : 0;
+      var want = Math.min(Math.max(fps, 1), cap);
+      // most of the time is spent after draw(): copying and presenting the frame, not drawing it
+      pbound = pf.n > 3 && avgGap > 80 && avgGap > 1.4 * 1000 / want && avgCost < avgGap / 8;
+      if (pbound) { cap = Math.max(2, Math.min(cap, Math.round(450 / avgGap))); pbAt = now; }   // fewer frames: the CPU calms down
+      else if (pbAt && now - pbAt > 60000) { cap = 60; pbAt = 0; }   // try full speed again now and then
+      var body = { mon: MONKEY, scene: kind, fps: +(pf.n / ((now - pf.t) / 1000)).toFixed(1), want: want, cap: cap,
+        draw: +avgCost.toFixed(1), gap: +avgGap.toFixed(0), maxGap: +pf.max.toFixed(0), bound: pbound,
+        w: Math.round(innerWidth * (window.devicePixelRatio || 1)), h: Math.round(innerHeight * (window.devicePixelRatio || 1)),
+        canvas: W + "x" + H };
+      pf = { n: 0, cost: 0, gap: 0, max: 0, t: now, prev: 0 };
+      try { fetch("/api/perf?token=" + encodeURIComponent(TOKEN), { method: "POST", body: JSON.stringify(body) }).catch(function () {}); } catch (e) {}
+    }
     function frame(now) {
       frameId = null;
       if (covered) return;
@@ -1205,6 +1221,11 @@
       var cost = performance.now() - a;
       if ((cost > 22 || gap > 1.7 * 1000 / want) && want > 6) { if (++slow > 60) { cap = Math.max(6, Math.round(want * 0.7)); slow = 0; gap = 0; } }
       else slow = Math.max(0, slow - 1);
+      if (!pf.t) pf.t = now;
+      pf.n++; pf.cost += cost;
+      if (pf.prev) { var fg = now - pf.prev; pf.gap += fg; if (fg > pf.max) pf.max = fg; }
+      pf.prev = now;
+      if (now - pf.t > 5000) perfReport(now);
     }
 
     return {

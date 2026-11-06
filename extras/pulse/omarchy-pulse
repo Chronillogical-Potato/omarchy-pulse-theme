@@ -17,6 +17,7 @@
   omarchy-pulse away | back      you left / you are back (hypridle can call these): the face sleeps, then a digest
                                  of what happened while you were away (locking the screen does it by itself)
   omarchy-pulse say TEXT         speak a line with the voice (piper, or espeak-ng)
+  omarchy-pulse perf             frame pacing on every monitor: frames per second, draw time, time to the screen
   omarchy-pulse reload           re-read pulse.toml now (it is also re-read by itself when you save it)
   omarchy-pulse doctor           check dependencies, config and sources
 
@@ -57,7 +58,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -338,6 +339,8 @@ class Hub:
         self.locked = False
         self.lan: dict = {"devices": [], "net": ""}   # devices on your network: cars on the grid
         self.voice_q: queue.Queue = queue.Queue(maxsize=6)
+        self.perf: dict = {}                   # frame pacing reported by every monitor's page
+        self.perf_logged: dict = {}
 
     # -- config
     def conf(self, *keys, default=None):
@@ -764,6 +767,25 @@ class Hub:
                 speak(text, self.conf("voice", default={}) or {})
             except Exception as e:   # noqa: BLE001
                 log(f"voice: {e}")
+
+    # -- frame pacing: each page reports every 5 s; a monitor whose frames are slow to reach the screen is logged
+    def set_perf(self, d: dict) -> None:
+        if not isinstance(d, dict):
+            return
+        num = lambda k: float(d.get(k) or 0) if isinstance(d.get(k), (int, float)) else 0.0
+        mon = re.sub(r"[^0-9,\-]", "", str(d.get("mon", "")))[:24] or "?"
+        p = {"fps": num("fps"), "want": num("want"), "cap": num("cap"), "draw": num("draw"), "gap": num("gap"),
+             "maxGap": num("maxGap"), "bound": bool(d.get("bound")), "w": int(num("w")), "h": int(num("h")),
+             "scene": re.sub(r"[^a-z]", "", str(d.get("scene", "")))[:12], "t": time.time()}
+        with self.lock:
+            m = self.mons.get(mon) or {}
+            p["name"] = m.get("name", "")
+            self.perf[mon] = p
+            last = self.perf_logged.get(mon, 0)
+            if not p["bound"] or time.time() - last < 600:
+                return
+            self.perf_logged[mon] = time.time()
+        log(perf_hint(p, self.conf("pulse", "dmabuf", default="auto")))
 
     def drop_widget(self, wid: str) -> None:
         with self.lock:
@@ -1677,6 +1699,26 @@ def speak(text: str, v: dict) -> None:
                      "install piper-tts and a voice in ~/.local/share/piper/, or espeak-ng"))
 
 
+def nvidia() -> bool:
+    return Path("/proc/driver/nvidia/version").exists()
+
+
+def dmabuf_disabled(setting: str, on_nvidia: bool) -> bool:
+    """WebKit's DMA-BUF renderer: "auto" turns it off on NVIDIA (some drivers draw nothing with it), "on" keeps it
+    (much faster on recent NVIDIA drivers: no frame copy through the CPU), "off" always turns it off."""
+    s = str(setting or "auto").lower()
+    return s in ("off", "false", "no") or (s not in ("on", "true", "yes") and on_nvidia)
+
+
+def perf_hint(p: dict, dmabuf: str) -> str:
+    where = f"monitor {p.get('name') or '?'} ({p.get('w')}x{p.get('h')})"
+    msg = (f"{where}: a frame takes {p['gap']:.0f} ms to reach the screen but only {p['draw']:.1f} ms to draw; "
+           f"the time goes into copying and presenting it, so Pulse lowered this monitor to {p['cap']:.0f} fps")
+    if nvidia() and dmabuf_disabled(dmabuf, True):
+        msg += '; on NVIDIA try dmabuf = "on" in [pulse] (docs/GUIDE.md section 12)'
+    return msg
+
+
 def hypr_socket() -> str | None:
     env = hypr_env()
     rt = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
@@ -1767,6 +1809,12 @@ def make_handler(hub: Hub, tok: str, port: int):
                 finally:
                     with hub.lock:
                         hub.live_clients -= 1
+            if path == "/api/perf":
+                if self._authed(q):
+                    with hub.lock:
+                        self._send(200, json.dumps({"perf": hub.perf, "nvidia": nvidia(),
+                                                    "dmabuf": not dmabuf_disabled(hub.conf("pulse", "dmabuf", default="auto"), nvidia())}).encode())
+                return
             if path == "/api/state":
                 if self._authed(q):
                     self._send(200, json.dumps(hub.state(), separators=(",", ":")).encode())
@@ -1829,6 +1877,12 @@ def make_handler(hub: Hub, tok: str, port: int):
                     mins = 0.0
                 hub.set_focus(mins, q.get("label", ""))
                 self._send(200, json.dumps({"focus": hub.focus}).encode())
+            elif u.path == "/api/perf":
+                try:
+                    hub.set_perf(json.loads(body or b"{}"))
+                except ValueError:
+                    pass
+                self._send(200, b"{}")
             elif u.path == "/api/presence":
                 v = body.decode().strip() or q.get("state", "")
                 hub.set_away(v in ("away", "on", "idle"), "you")
@@ -1853,7 +1907,11 @@ def serve(hub: Hub, port: int) -> ThreadingHTTPServer:
 
 # ---------------------------------------------------------------- the wallpaper window (GTK3 + layer shell + WebKit)
 
-def run_wall(url: str, gpu: str = "auto") -> int:
+def run_wall(url: str, gpu: str = "auto", dmabuf: str = "auto") -> int:
+    if dmabuf_disabled(dmabuf, nvidia()):   # set before WebKit starts: its web processes inherit it
+        os.environ["WEBKIT_DISABLE_DMABUF_RENDERER"] = "1"
+    else:
+        os.environ.pop("WEBKIT_DISABLE_DMABUF_RENDERER", None)
     try:
         import gi
         gi.require_version("Gtk", "3.0")
@@ -2141,7 +2199,7 @@ def main(argv: list[str]) -> int:
                     time.sleep(3600)
             except KeyboardInterrupt:
                 return 0
-        return run_wall(url, str(hub.conf("pulse", "gpu", default="auto")))
+        return run_wall(url, str(hub.conf("pulse", "gpu", default="auto")), str(hub.conf("pulse", "dmabuf", default="auto")))
     if cmd == "push":
         if len(argv) < 4:
             print("usage: omarchy-pulse push NAME VALUE|- [--title T] [--type T] [--level L] [--slot S]")
@@ -2184,6 +2242,22 @@ def main(argv: list[str]) -> int:
         except Exception as e:   # noqa: BLE001
             print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
             return 1
+        return 0
+    if cmd == "perf":
+        try:
+            r = client("GET", "/api/perf")
+        except Exception as e:   # noqa: BLE001
+            print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
+            return 1
+        print(f"NVIDIA: {'yes' if r.get('nvidia') else 'no'} · WebKit DMA-BUF renderer: {'on' if r.get('dmabuf') else 'off'}")
+        if not r.get("perf"):
+            print("no report yet: the pages report every 5 s while they draw (not while covered or full screen)")
+        for p in r.get("perf", {}).values():
+            print(f"  {p.get('name') or '?':10} {p['w']}x{p['h']} {p['scene']:8} {p['fps']:5.1f} fps (asked {p['want']:.0f}, "
+                  f"cap {p['cap']:.0f})  draw {p['draw']:.1f} ms  frame gap {p['gap']:.0f} ms (max {p['maxGap']:.0f})"
+                  + ("  <- slow to present" if p["bound"] else ""))
+            if p["bound"]:
+                print("     " + perf_hint(p, load_config().get("pulse", {}).get("dmabuf", "auto")).split(": ", 1)[1])
         return 0
     if cmd in ("away", "back"):
         return quiet_client("/api/presence", cmd.encode())
@@ -2250,6 +2324,10 @@ def main(argv: list[str]) -> int:
         else:
             print(f"  ok   {CONF} ({len(cfg.get('source', []))} sources)")
         print(f"  theme: {theme_name() or '?'}")
+        if nvidia():
+            off = dmabuf_disabled((cfg.get("pulse") or {}).get("dmabuf", "auto"), True)
+            print(f"  NVIDIA: WebKit DMA-BUF renderer {'off (safe; frames are copied through the CPU)' if off else 'on'}"
+                  + ('; if the wallpaper is choppy or heavy, try dmabuf = "on" in [pulse]' if off else ""))
         return 0 if ok else 1
     print(__doc__)
     return 0 if cmd in ("help", "-h", "--help") else 2
