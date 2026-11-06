@@ -750,8 +750,8 @@ class Hub:
     def loop_notifications(self) -> None:
         while True:
             try:
-                if self.builtin("notifications") is not False and shutil.which("makoctl"):
-                    items = mako_history()
+                if self.builtin("notifications") is not False:
+                    items = notification_history()
                     if items:
                         self.set_widget("notifications", title="notifications", type="list", slot="center", order=40,
                                         private=True, data={"items": items[:5]})
@@ -963,6 +963,41 @@ def iso_ts(s):
         return dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
     except Exception:   # noqa: BLE001
         return None
+
+
+def notification_history() -> list:
+    """Read Omarchy 4.5's notification store, with a fallback for Mako."""
+    state = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy/notifications"
+    paths = (state / "live.json", state / "history.json")
+    if any(p.is_file() for p in paths):
+        entries = []
+        for path in paths:
+            try:
+                if path.stat().st_size > 4_000_000:
+                    continue
+                rows = json.loads(path.read_text())
+                if isinstance(rows, list):
+                    entries.extend(row for row in rows[:100] if isinstance(row, dict))
+            except (OSError, ValueError):
+                continue
+        def timestamp(row):
+            value = row.get("ts")
+            return value if isinstance(value, (int, float)) and value == value else 0
+        entries.sort(key=timestamp, reverse=True)
+        result, seen = [], set()
+        for row in entries:
+            key = row.get("key")
+            if isinstance(key, str) and key in seen:
+                continue
+            if isinstance(key, str):
+                seen.add(key)
+            result.append({"title": str(row.get("summary") or "")[:120],
+                           "text": str(row.get("body") or "")[:160],
+                           "right": str(row.get("app") or "")[:80], "t": timestamp(row)})
+            if len(result) == 5:
+                break
+        return result
+    return mako_history() if shutil.which("makoctl") else []
 
 
 def mako_history() -> list:
@@ -1395,8 +1430,11 @@ def main(argv: list[str]) -> int:
             print(("  ok   " if r.returncode == 0 else "  MISS ") + f"{mod:20} ({pkg})")
             ok &= r.returncode == 0
         for tool, why in (("ffmpeg", "cameras"), ("playerctl", "now playing"), ("gh", "GitHub notifications"),
-                          ("makoctl", "notifications"), ("hyprctl", "calm down under windows, privacy")):
+                          ("hyprctl", "calm down under windows, privacy")):
             print(("  ok   " if shutil.which(tool) else "  --   ") + f"{tool:20} ({why})")
+        notification_dir = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy/notifications"
+        notification_backend = "Omarchy" if any((notification_dir / n).is_file() for n in ("live.json", "history.json")) else "makoctl" if shutil.which("makoctl") else "none detected"
+        print(f"  {'--' if notification_backend == 'none detected' else 'ok'}   notifications        ({notification_backend})")
         cfg = load_config()
         if cfg.get("_error"):
             print("  ERR  pulse.toml: " + cfg["_error"])

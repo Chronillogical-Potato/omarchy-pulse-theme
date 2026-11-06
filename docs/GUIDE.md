@@ -399,7 +399,7 @@ In `[builtin]` (`false` hides one):
 | `network` | download/upload with sparklines, `user@host`, local IP |
 | `weather` | Open-Meteo, no key: `city = "Milan"` (or `latitude`/`longitude`) in `[pulse]`, `units = "imperial"` for °F and mph |
 | `media` | now playing (playerctl): title, artist, progress |
-| `notifications` | the last desktop notifications (mako); private |
+| `notifications` | the last desktop notifications (Omarchy 4.5 or mako); private |
 | `github = ["owner/repo", ...]` | latest release and commits of the repos you follow (`[]` to hide) |
 | `github_notifications` | your GitHub notifications, after `gh auth login` |
 

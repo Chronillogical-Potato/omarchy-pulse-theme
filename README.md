@@ -125,7 +125,7 @@ OctoPrint/Klipper, Uptime Kuma, Grafana, TrueNAS, Synology, Wazuh, Jellyfin, Tai
 ## Built in
 
 System (CPU, every core, RAM, GPU, temperature, disk, battery), network, weather (Open-Meteo, no key), now
-playing (playerctl), your last notifications (mako), GitHub (releases and commits of the repos you follow, plus your
+playing (playerctl), your last notifications (Omarchy 4.5 or mako), GitHub (releases and commits of the repos you follow, plus your
 notifications after `gh auth login`), clock and a ticker. Turn any of them off in `[builtin]`.
 
 ## Privacy
