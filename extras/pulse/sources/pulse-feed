@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Omarchy Pulse source: the latest posts of one or more RSS/Atom feeds, newest first, as a list.
+
+   pulse-feed URL [URL...]                 every feed, merged by date
+   pulse-feed "DHH=https://world.hey.com/dhh/feed.atom" "Omarchy=https://github.com/basecamp/omarchy/releases.atom"
+   PULSE_FEED_MAX=6 pulse-feed ...         how many items (default 6)
+
+A label before "=" is shown next to each post (default: the feed's own title). Posts of the last 24 hours are
+marked new. (c) 2026 Marco Porro (x.com/MarcoPorro), MIT.
+"""
+import email.utils
+import json
+import os
+import re
+import sys
+import time
+import urllib.request
+import xml.etree.ElementTree as ET
+
+ATOM = "{http://www.w3.org/2005/Atom}"
+
+
+def when(s: str):
+    if not s:
+        return None
+    s = s.strip()
+    try:
+        return email.utils.parsedate_to_datetime(s).timestamp()      # RSS: Tue, 04 Nov 2026 10:00:00 +0000
+    except (TypeError, ValueError):
+        pass
+    try:
+        import datetime as dt
+        return dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()   # Atom: 2026-11-04T10:00:00Z
+    except ValueError:
+        return None
+
+
+def clean(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s or "")).strip()
+
+
+def read(url: str, label: str | None) -> list:
+    req = urllib.request.Request(url, headers={"User-Agent": "omarchy-pulse-feed/1.0"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        root = ET.fromstring(r.read(3_000_000))
+    out = []
+    if root.tag == ATOM + "feed":
+        name = label or clean(root.findtext(ATOM + "title") or "")
+        for e in root.findall(ATOM + "entry"):
+            out.append({"title": clean(e.findtext(ATOM + "title")), "src": name,
+                        "t": when(e.findtext(ATOM + "updated") or e.findtext(ATOM + "published"))})
+    else:
+        ch = root.find("channel")
+        if ch is None:
+            ch = root
+        name = label or clean(ch.findtext("title") or "")
+        for e in ch.iter("item"):
+            out.append({"title": clean(e.findtext("title")), "src": name, "t": when(e.findtext("pubDate") or "")})
+    return [o for o in out if o["title"]]
+
+
+def main(args: list) -> int:
+    if not args:
+        print(__doc__)
+        return 2
+    posts, errors = [], []
+    for a in args:
+        label, url = (a.split("=", 1) if re.match(r"^[^=:/]+=https?://", a) else (None, a))
+        try:
+            posts += read(url, label)
+        except Exception as e:   # noqa: BLE001 - one dead feed must not hide the others
+            errors.append(f"{label or url}: {e}")
+    posts.sort(key=lambda p: p["t"] or 0, reverse=True)
+    now = time.time()
+    items = [{"title": p["title"][:110], "text": p["src"], "t": p["t"],
+              **({"level": "info"} if p["t"] and now - p["t"] < 86400 else {})}
+             for p in posts[:int(os.environ.get("PULSE_FEED_MAX", "6"))]]
+    out = {"type": "list", "items": items}
+    if errors:
+        out["note"] = "offline: " + "; ".join(errors)[:180]
+    if not items and errors:
+        print("; ".join(errors)[:300])
+        return 1
+    print(json.dumps(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

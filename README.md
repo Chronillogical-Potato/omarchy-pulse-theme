@@ -4,6 +4,14 @@
 
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
+- **the LED sphere**: a giant LED globe in the middle of the city, turning, showing your clock, weather, CPU, news,
+  cameras, alerts and the face of your AI agent; it lights the plaza and shines on the wet floor
+- **your AI agents are drones**: Claude Code, Codex, Grok Bot or any job fly over the city while they work, blink
+  when they need you, land green (with fireworks) or red when they finish
+- **the city dances with your music**, fireworks celebrate what goes right, a **focus mode** quiets everything down
+- **it sees you**: the face's eyes follow your pointer, it falls asleep when you leave and, when you are back, tells
+  you **what happened while you were away** (also aloud, with an offline voice)
+- **your network drives on the grid**: every device is a car of light; a new one blinks and raises an alert
 - **the skyline is your CPU**: one tower per core, as tall as its load; the lit windows follow your RAM
 - **the horizon is your pulse**: it beats faster when the PC works, and every beat runs from the core to the edges
 - **the aurora is your network**, **the sky is your real weather** (rain, snow, fog, storms), and an alert sends a
@@ -24,7 +32,8 @@ omarchy-theme-install https://github.com/piermark/omarchy-pulse-theme
 
 The first line installs the **pulse** theme (colours, borders, btop, two still wallpapers). The second makes the
 wallpaper live: it installs what it needs (`python-gobject`, `gtk-layer-shell`, `webkit2gtk-4.1`, and `ffmpeg` /
-`playerctl` if missing), asks your city for the weather and starts Pulse. From then on it starts at every login while
+`playerctl` if missing), asks your city for the weather and starts Pulse (optional: `sudo pacman -S cava fping
+espeak-ng` for the music, every device on your network and the voice). From then on it starts at every login while
 the theme is **pulse**. Run it from a terminal on the PC itself, not over SSH.
 
 - Live with **every** theme (Pulse takes each theme's colours): `extras/install-live --always`
@@ -37,18 +46,67 @@ Actions, MQTT and more, privacy, tuning, troubleshooting): [docs/GUIDE.md](docs/
 
 ## Scenes and wallpapers
 
-Three live scenes: **skyline** (the city of your CPU cores, the default), **orbit** (the cores become moons around a
-larger core) and **calm** (a still grid, lighter on the PC). Pick one with `scene` in
-`~/.config/omarchy-pulse/pulse.toml`, or in one line:
+Four live scenes: **sphere** (the LED sphere in the city, the default from 1.1), **skyline** (the city of your CPU
+cores around a wireframe core), **orbit** (the cores become moons around a larger core) and **calm** (a still grid,
+lighter on the PC). Pick one with `scene` in `~/.config/omarchy-pulse/pulse.toml`, or in one line:
 
 ```
-sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # skyline | orbit | calm
+sed -i 's/^scene = .*/scene = "sphere"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm
 ```
 
 The wallpaper switches within about 3 seconds (`omarchy-pulse reload` to do it now).
 
-The theme also has two still wallpapers, `01-pulse-skyline` and `02-pulse-orbit`, switched with Omarchy's
+The theme also has three still wallpapers, `01-pulse-skyline`, `02-pulse-orbit` and `03-pulse-sphere`, switched with Omarchy's
 next-background key. You see them while Pulse is off or starting; they do not change the live scene.
+
+## New in 1.1
+
+**The LED sphere.** Thousands of LEDs on a turning globe. It shows the clock, the weather, your CPU, the latest news,
+a camera, and takes over when it matters: red with an alert, a countdown in focus mode, the spectrum of your music,
+the face of your agent while it works. Its light falls on the city and on the wet plaza. Two looks: `sphere = "real"`
+(one continuous image) or `"led"` (thousands of separate lights).
+
+**AI agents as drones.** Every agent at work is a drone flying over the city with its tag ("claude · omarchytv ·
+editing · 4m"). A working drone scans the city with its beam, a waiting one blinks amber (it needs you), a finished
+one lands green with fireworks, a failed one red with an alert. The agent's face lives in the sphere (or in the core).
+
+```
+omarchy-pulse agent grok working "reading the issue"     # any agent, any script
+omarchy-pulse agent grok done
+omarchy-pulse watch build -- make release                 # a drone while it runs, green or red at the end
+omarchy-pulse hook claude                                 # Claude Code hooks (docs/GUIDE.md, section 16)
+```
+
+Only the agent, the tool it uses and the project folder reach the wallpaper: never your prompts or your code.
+
+**The city dances with your music** (with [cava](https://github.com/karlstav/cava) installed): the towers, the horizon,
+the floor and the sphere move with what you play, only while something plays.
+
+**Fireworks** when an agent finishes, a focus session ends, an alert goes back to green, or whenever you want:
+`omarchy-pulse fireworks "v1.1 shipped"` (`git push && omarchy-pulse fireworks "pushed"`).
+
+**Focus mode**: `omarchy-pulse focus 25 "write the guide"` dims every panel, puts the countdown on the sphere and
+under the clock, and ends with fireworks and a notification. `omarchy-pulse focus off` to stop.
+
+**Your colours**: `[colors] preset = "synthwave" | "matrix" | "amber" | "ice" | "vapor" | "inferno"`, or `"theme"`
+(the Omarchy theme in use, the default), and any single colour on top (`accent = "#39e1ff"`).
+
+**It sees you.** The eyes of the face follow your pointer; move it on an empty desktop and the face wakes up and
+looks at you. Lock the screen (or leave: hypridle can tell Pulse) and it falls asleep, z z z. When you are back it
+smiles and shows **while you were away**: the alerts, the agents that finished, the new devices, the news, how many
+notifications. ([guide, section 19](docs/GUIDE.md#19-the-face-that-sees-you-and-while-you-were-away))
+
+**Your network on the grid.** Every device on your Wi-Fi is a car of light driving on the grid, with its name. A
+device never seen before blinks amber and raises an alert: you know at once when something new joins your network.
+Nothing leaves the PC. ([section 20](docs/GUIDE.md#20-your-network-on-the-grid))
+
+**A voice** (off by default, offline with [piper](https://github.com/rhasspy/piper) or espeak-ng): "claude finished",
+"grok needs you", "welcome back, while you were away...". Never while you share the screen, never at night.
+([section 21](docs/GUIDE.md#21-the-voice))
+
+**News**: a panel with the Omarchy releases and DHH's posts, on by default (`pulse-feed` reads any RSS/Atom feed).
+**Click** a panel to run its `click = "..."` command. **The sky follows the sun**: dawn, day, dusk and night from
+your weather. **Shooting stars** cross the sky when a notification or a news item arrives.
 
 ## Put anything on your wallpaper
 
@@ -107,7 +165,7 @@ curl -s -X POST -H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" \
 
 Pulse shows any live data, and the best sources come from the people who use it.
 [`community/`](community/) is a growing collection of ready-made sources: Zabbix, Proxmox, GitHub
-Actions, Docker, Hacker News and more. Each one is a folder with the script, the `[[source]]` block
+Actions, Docker, Hacker News, UniFi and more. Each one is a folder with the script, the `[[source]]` block
 to paste in your `pulse.toml` and a short README.
 
 Install one:
@@ -119,7 +177,7 @@ then paste `community/zabbix/source.toml` into `~/.config/omarchy-pulse/pulse.to
 
 **Made a source for your homelab, your printer, your smart home?** Open a pull request: see
 [CONTRIBUTING.md](CONTRIBUTING.md). Sources run on other people's PCs, so they are read-only,
-keep secrets out of the files and talk only to the service they say. Wanted: UniFi, Pi-hole,
+keep secrets out of the files and talk only to the service they say. Wanted: Pi-hole,
 OctoPrint/Klipper, Uptime Kuma, Grafana, TrueNAS, Synology, Wazuh, Jellyfin, Tailscale.
 
 ## Built in
@@ -146,10 +204,10 @@ WebKitGTK: about 400 MB of memory with one monitor.
 ## Files
 
 - `colors.toml`, `hyprland.conf` (cyan to magenta borders), `btop.theme`, `icons.theme`
-- `backgrounds/01-pulse-skyline.png`, `backgrounds/02-pulse-orbit.png`: the stills, under the live wallpaper
+- `backgrounds/01-pulse-skyline.png`, `02-pulse-orbit.png`, `03-pulse-sphere.png`: the stills, under the live wallpaper
 - `extras/install-live`, `extras/pulse-live` (theme-set hook and login start), `extras/pulse/` (the engine:
-  `omarchy-pulse`, the page in `web/`, `pulse.toml`, `sources/` with `pulse-ai`, `pulse-ping`, `pulse-systemd`,
-  `pulse-table`)
+  `omarchy-pulse`, the page in `web/`, `pulse.toml`, `sources/` with `pulse-ai`, `pulse-feed`, `pulse-ping`,
+  `pulse-systemd`, `pulse-table`)
 - `docs/GUIDE.md`: the full guide
 
 ## License
