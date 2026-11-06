@@ -69,6 +69,18 @@ Nothing in the scene is decoration only:
 Scenes (`scene =` in `[pulse]`): **skyline** (default), **orbit** (each core becomes a moon on its own ring around a
 larger core; faster moons, busier cores) and **calm** (a still grid, at most 10 frames a second).
 
+To change the scene, edit `scene` in `~/.config/omarchy-pulse/pulse.toml`, or in one line:
+
+```
+sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # skyline | orbit | calm
+```
+
+The live wallpaper switches by itself within about 3 seconds (`omarchy-pulse reload` to do it now). Check the
+current one with `grep ^scene ~/.config/omarchy-pulse/pulse.toml`.
+
+The two still wallpapers of the theme (`01-pulse-skyline`, `02-pulse-orbit`, switched with Omarchy's
+next-background key) are what you see while Pulse is off or starting; they do not change the live scene.
+
 ## 3. Panels and where they go
 
 Every source is a panel in the Omarchy box style (title cut into the border). Four places:
