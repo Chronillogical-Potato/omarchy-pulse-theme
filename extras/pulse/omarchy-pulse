@@ -905,8 +905,13 @@ def read_temp():
 
 
 def read_battery():
-    for b in Path("/sys/class/power_supply").glob("BAT*"):
+    # BAT0 on most laptops, macsmc-battery on Apple Silicon. Mice and headsets are batteries too, with scope Device.
+    for b in sorted(Path("/sys/class/power_supply").glob("*")):
         try:
+            if (b / "type").read_text().strip() != "Battery":
+                continue
+            if (b / "scope").exists() and (b / "scope").read_text().strip() == "Device":
+                continue
             return {"pct": int((b / "capacity").read_text()), "status": (b / "status").read_text().strip()}
         except Exception:   # noqa: BLE001
             pass
