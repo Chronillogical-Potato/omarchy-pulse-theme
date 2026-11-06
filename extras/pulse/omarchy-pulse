@@ -1290,7 +1290,7 @@ def from_demo(hub: Hub) -> None:
                                    {"title": "Calendar", "text": "Team call in 15 minutes", "right": "calendar"},
                                    {"title": "Battery of the doorbell low", "text": "18 %", "right": "home"}]})
     hub.set_widget("ticker", title="feeds", type="list", slot="ticker",
-                   data={"items": [{"title": "Hacker News · Show HN: an Omarchy live wallpaper"},
+                   data={"items": [{"title": "Omarchy Pulse · demo data"},
                                    {"title": "BTC 71,240 $ ▲ 1.2%"}, {"title": "next: standup 09:30"},
                                    {"title": "Omarchy 4.5 released"}]})
     threading.Thread(target=tick, daemon=True).start()

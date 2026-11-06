@@ -230,7 +230,9 @@
           (it.text ? '<div class="s">' + esc(it.text) + "</div>" : "") + '</div><span class="r">' + esc(it.right || ago(it.t) || (it.value != null ? it.value + (it.unit || "") : "")) + "</span></li>";
       }).join("") + "</ul>" + (d.note ? '<div class="note">' + esc(d.note) + "</div>" : "");
     } else if (t === "status") {
-      html = '<div class="tiles">' + (d.items || []).slice(0, 12).map(function (it) {
+      // long names (problems, alerts) get one tile per line instead of being cut in two columns
+      var wide = (d.items || []).some(function (it) { return String(it.title || "").length > 15; });
+      html = '<div class="tiles' + (wide ? " one" : "") + '">' + (d.items || []).slice(0, wide ? 6 : 12).map(function (it) {
         return '<div class="tile ' + (it.level || "") + '"><span class="dot ' + (it.level ? "lv-" + it.level : "") + '"></span><span class="n">' + esc(it.title) + '</span><span class="m">' + esc(it.note || "") + "</span></div>";
       }).join("") + "</div>";
     } else if (t === "kv") {
