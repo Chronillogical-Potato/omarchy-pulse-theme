@@ -1638,9 +1638,10 @@
     // a thank-you to Omarchy: a plane tows its icon and your words across the whole sky, left to right, in 16 seconds
     function banner(text) { if (text) banners.push({ t: performance.now(), text: String(text).toUpperCase(), dir: 1, y: 0.07 }); }   // high in the sky, above the clock and the panels' text
     function drawBanners(now, hz) {
-      if (bannerText && bannerEvery > 0 && !away) {
-        if (!bannerNext) bannerNext = now + (5 + Math.random() * 10) * 60000;
-        if (now > bannerNext) { banner(bannerText); bannerNext = now + bannerEvery * 60000 * (0.7 + Math.random() * 0.6); }
+      if (bannerText && bannerEvery > 0 && !away && PRIMARY) {
+        if (!bannerNext) bannerNext = now + (1 + Math.random() * 2) * 60000;   // the first one a minute or two after start
+        // when it is time, it waits until you can see the sky (no window over the desktop), so you do not miss it
+        if (now > bannerNext && deskEmpty && !covered && !banners.length) { banner(bannerText); bannerNext = now + bannerEvery * 60000 * (0.7 + Math.random() * 0.6); }
       }
       var keep = [];
       for (var i = 0; i < banners.length; i++) {

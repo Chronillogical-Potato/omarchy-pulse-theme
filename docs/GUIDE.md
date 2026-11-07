@@ -1607,7 +1607,8 @@ agents_as = "drones" # "robots", "both"
 
 ## 46. The banner plane
 
-A thank-you to Omarchy. Now and then (about every 45 minutes, at random, while you are at the PC) a little propeller
+A thank-you to Omarchy. A minute or two after Pulse starts, and then now and then (about every 45 minutes, at random,
+while you are at the PC, waiting until no window covers the desktop so you see it) a little propeller
 plane crosses the whole sky from left to right, towing a big banner that waves in the wind: the Omarchy icon and
 "OMARCHY · WE CAN FIX EVERYTHING", in your theme's font and colours.
 
