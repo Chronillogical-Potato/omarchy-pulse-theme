@@ -299,6 +299,10 @@ WebKitGTK: about 400 MB of memory with one monitor.
   `pulse-systemd`, `pulse-table`)
 - `docs/GUIDE.md`: the full guide
 
+## Support
+
+Pulse is free and MIT-licensed. If you find it useful and want to support development, you can [buy me a coffee](https://buymeacoffee.com/piermark) or sponsor me on [GitHub Sponsors](https://github.com/sponsors/piermark) — totally optional.
+
 ## License
 
 MIT, © 2026 Marco Porro ([x.com/MarcoPorro](https://x.com/MarcoPorro)). Weather data by
