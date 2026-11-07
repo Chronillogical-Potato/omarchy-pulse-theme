@@ -1,12 +1,14 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-![Omarchy Pulse](preview.png)
+**Version 1.4** · [what's new](#new-in-14) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+
+![Omarchy Pulse 1.4: the real night sky over Berlin, the Moon's crescent, Saturn, a Starlink train, the banner plane, robots on the floor](preview.png)
 
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
 - **new in 1.4: the real night sky** (stars, constellations, the Moon's phase, the planets, meteor showers),
-  **Starlink trains**, **every kind of weather**, the air, sound, your room's lights, Alexa, your phone, **Pulse
-  Wrapped** ([what's new](#new-in-14))
+  **Starlink trains**, **every kind of weather**, the air, sound, your room's lights, Alexa, your phone, **robots**
+  (your containers and AI bots), **a banner plane that thanks Omarchy**, **Pulse Wrapped** ([what's new](#new-in-14))
 - **new in 1.3: a city that grows with your work**, the real **planes** over you, **your day as a video**, your
   **calendar** as trains, your **doorbell** on the sphere, **earthquakes** ([what's new](#new-in-13))
 - **new in 1.2: your real city** (90+, every continent), **your repositories as towers**, **the ISS and every SpaceX
