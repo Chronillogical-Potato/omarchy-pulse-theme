@@ -451,7 +451,8 @@ In `[builtin]` (`false` hides one):
   `[pulse]` `pause_when_covered = false` to keep the original behavior. This uses window geometry, so translucent
   windows can appear covered even when the wallpaper is visible through them. If compositor data is unavailable,
   Pulse keeps drawing. Source collection and alert checks continue in the hub while a view is paused.
-- 20 frames a second only while you look at an empty desktop (`fps`), 8 with windows open, almost nothing with an app
+- 20 frames a second only while you look at an empty desktop (`fps`), 8 with windows open (`dim_with_windows = false`
+  keeps full speed and full brightness under windows), almost nothing with an app
   full screen; at most 12 on battery; panels refresh once a second; no CSS animations (blinking happens once a
   second, with the data).
 - A PC that cannot keep up gets fewer frames by itself.
@@ -504,6 +505,9 @@ In `[builtin]` (`false` hides one):
 | The crew sees nothing | the same `code` on every PC, at least 16 characters (`omarchy-pulse crew new`); `omarchy-pulse crew`; the relay must be reachable. |
 | Hey sphere does not hear | `omarchy-pulse doctor` (whisper-cli or faster-whisper); test with `omarchy-pulse listen --file question.wav`; the microphone needs `pw-record` (PipeWire) or `arecord`. |
 | The voice says nothing | `enabled = true` in `[voice]`; `omarchy-pulse say "test"`; `omarchy-pulse doctor` (piper-tts or espeak-ng); check `quiet`. |
+
+**Preview without installing anything live**: `omarchy-pulse serve` runs only the hub and prints a URL to open in a
+browser; `omarchy-pulse serve --demo` does the same with demo data (no personal data), as in the videos.
 
 ## 14. Files
 
@@ -885,4 +889,3 @@ model such as `ggml-base.bin` in `~/.local/share/whisper/`) or [faster-whisper](
 `~/.local/state/omarchy-pulse/listen.wav` and is deleted as soon as it is understood; Pulse never listens on its
 own. The answer uses the voice of section 21 (it speaks even with `[voice]` off, since you asked). Try it without a
 microphone: `omarchy-pulse listen --file question.wav`.
-
