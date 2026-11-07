@@ -1464,10 +1464,18 @@
     // ---------------- the planes over you: where they really are in your sky, with their lights
     function drawPlanes(t, hz) {
       if (!planes.length) return;
-      var seen = {};
+      var seen = {}, boxes = [], shown = 0;
       for (var i = 0; i < planes.length; i++) {
-        var p = planes[i]; seen[p.id] = 1;
-        var tx = W / 2 + Math.max(-1.05, Math.min(1.05, (p.az - 180) / 90)) * W * 0.44, ty = hz * 0.93 - (p.el / 90) * hz * 0.85;   // the horizon at the city, straight up at the top of the screen
+        var p = planes[i];
+        // you look south: east on the left, west on the right. A plane behind you (north) is not in this sky, unless it
+        // is almost overhead: then it flies near the top, from the side it really is on.
+        var front = p.az >= 75 && p.az <= 285, over = p.el >= 62;
+        if (!front && !over) continue;
+        if (++shown > 6) break;
+        seen[p.id] = 1;
+        var tx = front ? W / 2 + (p.az - 180) / 90 * W * 0.44
+                       : W / 2 - Math.sin(p.az * Math.PI / 180) * W * 0.44 * (90 - p.el) / 28;
+        var ty = hz * 0.93 - (p.el / 90) * hz * 0.85;   // the horizon at the city, straight up at the top of the screen
         var q = planePos[p.id] || (planePos[p.id] = [tx, ty]);
         q[0] += (tx - q[0]) * 0.03; q[1] += (ty - q[1]) * 0.03;
         var s2 = H * (0.009 + p.el / 90 * 0.008), dir = Math.cos((p.track - (p.az + 180)) * Math.PI / 180) > 0 ? 1 : -1;
@@ -1492,7 +1500,10 @@
         });
         if (blink < 0.08) { var sg = g.createRadialGradient(q[0], q[1], 0, q[0], q[1], s2 * 7); sg.addColorStop(0, rgba(COL.fg, 1)); sg.addColorStop(1, rgba(COL.fg, 0)); g.fillStyle = sg; g.fillRect(q[0] - s2 * 7, q[1] - s2 * 7, s2 * 14, s2 * 14); }
         g.globalCompositeOperation = "source-over";
-        if (!shareMode && p.flight) {
+        var lw = H * 0.2, lh = H * 0.034, lb = [q[0] + s2 * 2.4, q[1] - s2 * 2.6 - H * 0.013, lw, lh];
+        var free = boxes.every(function (b) { return lb[0] > b[0] + b[2] || lb[0] + lb[2] < b[0] || lb[1] > b[1] + b[3] || lb[1] + lb[3] < b[1]; });
+        if (!shareMode && p.flight && free) {   // a label only where it does not cover another one
+          boxes.push(lb);
           g.font = "600 " + Math.round(H * 0.013) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "left";
           g.fillStyle = rgba(COL.fg, 0.75); var lx2 = q[0] + s2 * 2.4, ly2 = q[1] - s2 * 2.6;   // the flight, the aircraft, how high; then where from, where to
           g.fillText(p.flight + (p.type ? " · " + p.type : "") + " · " + (Math.round(p.ft / 100) * 100).toLocaleString("en-US") + " ft", lx2, ly2);
@@ -1750,7 +1761,6 @@
 
       drawShooting();
       drawISS(t, hz);
-      drawPlanes(t, hz);
       if (now - flareAt < 2500) { g.fillStyle = rgba(COL.warn, 0.18 * (1 - (now - flareAt) / 2500)); g.fillRect(0, 0, W, hz); }   // a solar flare
       // the core: a wireframe sphere rising on the horizon, beating with the load (or the LED sphere)
       var R = H * (kind === "orbit" ? 0.15 : kind === "sphere" ? 0.165 : 0.135) * (1 + (kind === "sphere" ? 0.012 : 0.035) * beatEnv);
@@ -1848,6 +1858,7 @@
       drawGrowth(t, hz);    // 1.3: in front, on the floor: your district, the train line, the quake waves
       drawTrains(t, hz);
       drawCar(t, hz);
+      drawPlanes(t, hz);   // in front of the sphere, so a plane is never hidden behind it
       drawQuakeWaves(now, hz);
       drawTsunami(now, hz);
       // reflection of the core on the floor

@@ -964,7 +964,9 @@ routes = true           # where each flight comes from and goes (adsbdb.com); fa
 ```
 
 Like the ISS, the wallpaper looks south: east on the left, west on the right; the higher a plane, the higher it flies
-on the screen: straight above you is the top of the screen.
+on the screen: straight above you is the top of the screen. So that the sky stays readable: only planes at least 10°
+above your horizon, at most 6 at a time, the ones behind you (north) only when they are almost overhead, and a label
+never covers another one. They fly in front of the sphere, never hidden behind it.
 
 ## 30. Your day as a video
 

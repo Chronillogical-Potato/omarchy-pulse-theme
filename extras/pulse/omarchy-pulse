@@ -2973,14 +2973,14 @@ def planes_over(lat: float, lon: float, raw: list) -> list:
             if ft < 300:
                 continue
             az, el = look_angles(lat, lon, float(a["lat"]), float(a["lon"]), ft * 0.0003048)
-            if el < 3:
-                continue
+            if el < 10:
+                continue   # far away on the horizon: they would only crowd it
             out.append({"id": str(a.get("hex") or "")[:8], "flight": re.sub(r"[^A-Z0-9-]", "", str(a.get("flight") or "").upper())[:8],
                         "type": re.sub(r"[^A-Z0-9]", "", str(a.get("type") or "").upper())[:5], "az": round(az, 1), "el": round(el, 1),
                         "ft": int(round(ft, -2)), "kt": int(float(a.get("gs") or 0)), "track": float(a.get("track") or 0)})
         except (TypeError, ValueError):
             continue
-    return sorted(out, key=lambda p: -p["el"])[:8]
+    return sorted(out, key=lambda p: -p["el"])[:16]
 
 
 def _ics_time(value: str, params: str):
