@@ -1495,6 +1495,18 @@
       var R = H * 0.17; uiB.push([W / 2 - R, H * 0.745 - R * 2, R * 2, R * 2]);   // the sphere
       return uiB;
     }
+    // a plane where a panel is would fly unseen under it: it is drawn just beside the panel, on the side of the middle of
+    // the screen, at the same height (the sphere is not a panel: the planes fly in front of it)
+    function clearOfPanels(x, y, m) {
+      var bs = uiBoxes().slice(0, -1);
+      for (var n = 0; n < 4; n++) {
+        var hit = null;
+        for (var j = 0; j < bs.length; j++) { var b = bs[j]; if (x > b[0] - m && x < b[0] + b[2] + m && y > b[1] - m && y < b[1] + b[3] + m) { hit = b; break; } }
+        if (!hit) return x;
+        x = hit[0] + hit[2] / 2 > W / 2 ? hit[0] - m : hit[0] + hit[2] + m;
+      }
+      return x;
+    }
     function drawPlanes(t, hz) {
       if (!planes.length) return;
       var seen = {}, boxes = [], shown = 0;
@@ -1510,6 +1522,7 @@
                        : W / 2 - Math.sin(p.az * Math.PI / 180) * W * 0.44 * (90 - p.el) / 28;
         var ty = hz * 0.93 - Math.sqrt(p.el / 90) * hz * 0.85;   // the sky above the towers: most planes are 10-40° up, so
         // the low part of the sky gets more room; straight up is still the top of the screen
+        tx = clearOfPanels(tx, ty, H * 0.04);
         var q = planePos[p.id] || (planePos[p.id] = [tx, ty]);
         q[0] += (tx - q[0]) * 0.03; q[1] += (ty - q[1]) * 0.03;
         var s2 = H * (0.009 + p.el / 90 * 0.008), dir = Math.sin(p.track * Math.PI / 180) > 0 ? -1 : 1;   // heading east flies to the left (you look south)
