@@ -502,6 +502,15 @@
   var Scene = (function () {
     var cv = $("#scene"), g = cv.getContext("2d");
     var W = 0, H = 0, SC = +Q.get("q") || 0.5, last = 0, t0 = performance.now();
+    // how sharp the scene is: [pulse] quality. "full" = the screen's own pixels, "half" = half (light), "auto" = full,
+    // but half on a screen bigger than 2560x1440, on battery, or as soon as the frames get slow
+    var quality = "auto", qAuto = 1, qSlowAt = 0;
+    function wantScale() {
+      if (Q.get("q")) return +Q.get("q");
+      if (quality === "half") return 0.5;
+      if (quality === "full") return 1;
+      return qAuto;
+    }
     var stars = [], drops = [], spikes = [], far = [], heights = [], rings = [], ridge = [];
     var beatAt = 0, beatEnv = 0, flash = 0, alertEnv = 0, alertCol = null;
     var fps = 30, paused = false, kind = "skyline", wx = "clear", day = 0;
@@ -541,7 +550,8 @@
     var rnd = function (s) { return function () { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; }; };
 
     function resize() {
-      var r = (Q.get("q") ? (window.devicePixelRatio || 1) : Math.min(1, window.devicePixelRatio || 1)) * SC;
+      SC = wantScale();
+      var r = (SC >= 1 ? Math.min(2, window.devicePixelRatio || 1) : Math.min(1, window.devicePixelRatio || 1)) * SC;
       W = Math.max(320, innerWidth * r | 0); H = Math.max(200, innerHeight * r | 0);
       cv.width = W; cv.height = H;
       var R = rnd(42);
@@ -1096,9 +1106,13 @@
           txt2(w ? Math.round(w.temp) + "°" : "--", x + 16, TH * 0.46, 30, fg); txt2(windLine ? "WIND " + Math.round(Math.max(w.wind, w.gust || 0)) + " " + String(w.windUnit || "").toUpperCase() : w ? String(w.city || "").toUpperCase() : "", x, TH * 0.78, 11, fg, 700); });
       } else if (prog === "cpu") {
         var hcpu = (S && S.hist && S.hist.cpu) || [];
-        c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(0, TH * 0.4, TW, TH * 0.5);
-        c.fillStyle = rgba(fg, 0.95);
-        for (i = 0; i < TW; i++) { var v = hcpu.length ? hcpu[Math.floor(i / TW * hcpu.length)] || 0 : 0; var hh = Math.max(1, v / 100 * TH * 0.45); c.fillRect(i, TH * 0.88 - hh, 1, hh); }
+        // the last minutes of CPU as bars, scaled to the busiest moment (at least 25%), so a quiet PC is not a black band
+        var top = Math.max(25, Math.max.apply(null, hcpu.concat([0])));
+        c.fillStyle = "rgba(0,0,0,0.18)"; c.fillRect(0, TH * 0.42, TW, TH * 0.48);
+        for (i = 0; i < TW; i++) {
+          var v = hcpu.length ? hcpu[Math.floor(i / TW * hcpu.length)] || 0 : 0, hh = Math.max(TH * 0.02, v / top * TH * 0.42);
+          c.fillStyle = rgba(v > 80 ? COL.crit : v > 50 ? COL.warn : COL.accent, 0.95); c.fillRect(i, TH * 0.88 - hh, 1, hh);
+        }
         at(function (x) { txt2("CPU " + Math.round(cpu) + "%", x, TH * 0.3, 22, fg); });
       } else if (prog === "news") {
         c.textAlign = "left"; c.font = font(24);
@@ -1959,7 +1973,13 @@
       var a = performance.now();
       try { draw(now); } catch (e) { if (window.PULSE_DEBUG && !frame._err) { frame._err = 1; console.error("draw: " + e + " " + (e.stack || "")); } }   // never stop the wallpaper for one bad frame
       var cost = performance.now() - a;
-      if (!probe && (cost > 22 || gap > 1.7 * 1000 / want) && want > 6) { if (++slow > 60) { cap = Math.max(6, Math.round(want * 0.7)); slow = 0; gap = 0; } }
+      if (!probe && (cost > 22 || gap > 1.7 * 1000 / want) && want > 6) {
+        if (++slow > 60) {
+          if (quality === "auto" && qAuto > 0.5) { qAuto = 0.5; qSlowAt = now; resize(); }   // first, fewer pixels
+          else cap = Math.max(6, Math.round(want * 0.7));
+          slow = 0; gap = 0;
+        }
+      }
       else slow = Math.max(0, slow - 1);
       if (!pf.t) pf.t = now;
       pf.n++; pf.cost += cost;
@@ -2032,6 +2052,10 @@
         gitRepos = st.git || []; space = st.space || {}; heartBpm = st.heart || null; listenSt = st.listen || null; speakingOn = !!st.speaking;
         deskEmpty = !(m && m.windows > 0);
         weatherNow = w && !w.error ? w : null; windFrom(weatherNow); sunOn = ui.sun !== false;
+        var bat = st.sys && st.sys.bat, onBat = !!(bat && bat.status === "Discharging");
+        var bigScreen = innerWidth * innerHeight * Math.pow(window.devicePixelRatio || 1, 2) > 2560 * 1440 * 1.05;
+        var nq = ui.quality || "auto", nAuto = (onBat || bigScreen || (qSlowAt && performance.now() - qSlowAt < 600000)) ? 0.5 : 1;
+        if (nq !== quality || (nq === "auto" && nAuto !== qAuto)) { quality = nq; qAuto = nAuto; resize(); }   // 10 minutes after slow frames, try sharp again
         var ph = sunOn ? sunPhase(w) : "night";
         city = window.PULSE_CITY != null ? window.PULSE_CITY : Q.get("city") || ui.skyline || "";
         if (ph + kind + city !== phaseKey) { phaseKey = ph + kind + city; phase = ph; paintStatic(); }

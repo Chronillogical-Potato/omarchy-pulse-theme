@@ -469,6 +469,18 @@ In `[builtin]` (`false` hides one):
   full screen; at most 12 on battery; panels refresh once a second; no CSS animations (blinking happens once a
   second, with the data).
 - A PC that cannot keep up gets fewer frames by itself.
+- **How sharp** (`quality`, 1.3): the panels, the clock and every text are always at your screen's full resolution
+  (HD or 4K); the scene behind (the city, the sphere, the planes) can be drawn at the screen's resolution or at
+  half, which is four times fewer pixels.
+
+  ```toml
+  [pulse]
+  quality = "auto"   # "full" sharp (up to 2x on HiDPI screens) | "half" light | "auto"
+  ```
+
+  `auto` draws it sharp, and at half on screens bigger than 2560x1440, on battery, or as soon as the frames get slow
+  (it tries sharp again 10 minutes later). On a 4K screen with a strong GPU, try `quality = "full"` and check it
+  with `omarchy-pulse perf`.
 - `scene = "calm"`: a still grid at 10 frames a second.
 - `gpu = "never"` if the wallpaper is heavy on a PC without a working GPU driver (with no GPU device at all Pulse does
   that by itself); `"always"` to force the GPU.
@@ -512,7 +524,8 @@ In `[builtin]` (`false` hides one):
 | The doorbell does nothing | `[home] url`, `token`, `doorbell` (a binary sensor or an event entity); `journalctl --user -u omarchy-pulse` shows HA errors. |
 | The car does not appear | `[car] enabled = true` and the Tessie `token` (or the Home Assistant entities); the log says `car: ...`. A car being driven is hidden. |
 | No tsunami wave | it only comes when USGS marks an earthquake with a tsunami message; try `curl -X POST -H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" "localhost:47800/api/fx?kind=quake&mag=7&tsunami=1"`. |
-| Choppy, or a `WebKitWebProcess` at 100% (NVIDIA, 4K, two monitors) | `omarchy-pulse perf`; if frames take much longer to reach the screen than to draw, try `dmabuf = "on"` (section 12). |
+| The city looks soft | `quality = "full"` in `[pulse]` (section 12); `auto` draws it at half on battery and on screens above 2560x1440. |
+| Choppy, or a `WebKitWebProcess` at 100% (NVIDIA, 4K, two monitors) | `quality = "half"`; `omarchy-pulse perf`; if frames take much longer to reach the screen than to draw, try `dmabuf = "on"` (section 12). |
 | A panel does not appear | read the amber line at its bottom; run the command yourself in a terminal; `omarchy-pulse reload`. |
 | A panel is missing from a full column | it does not fit: lower its `order`, move it to another `slot`, or turn something off. |
 | The weather says `set city` | `city = "Your city"` in `[pulse]`. |

@@ -299,3 +299,13 @@ class VoiceLanguageTests(unittest.TestCase):
             with mock.patch.dict(pulse.os.environ, {'XDG_DATA_HOME': d}):
                 self.assertTrue(pulse.voice_model({'language': 'it'}).endswith('it_IT-paola-medium.onnx'))
                 self.assertTrue(pulse.voice_model({}).endswith('en_US-lessac-medium.onnx'))
+
+
+class QualityTests(unittest.TestCase):
+    def test_quality_reaches_the_page(self):
+        self.assertEqual(pulse.quality_mode('FULL'), 'full')
+        self.assertEqual(pulse.quality_mode('4k'), 'auto')
+        self.assertEqual(pulse.quality_mode(None), 'auto')
+        hub = pulse.Hub()
+        hub.cfg = {'pulse': {'quality': 'half'}}
+        self.assertEqual(hub.state()['ui']['quality'], 'half')
