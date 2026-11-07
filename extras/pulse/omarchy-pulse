@@ -18,6 +18,11 @@
                                  of what happened while you were away (locking the screen does it by itself)
   omarchy-pulse say TEXT         speak a line with the voice (piper, or espeak-ng)
   omarchy-pulse perf             frame pacing on every monitor: frames per second, draw time, time to the screen
+  omarchy-pulse listen [SECONDS | start | stop | --file F.wav]
+                                 "hey sphere": push to talk (bind it to a key); offline speech to text, safe commands,
+                                 the answer out loud (focus, privacy, status, weather, agents, what you missed...)
+  omarchy-pulse crew new         a code to share with friends: your agents fly in their city, theirs in yours
+  omarchy-pulse crew             the crew status
   omarchy-pulse reload           re-read pulse.toml now (it is also re-read by itself when you save it)
   omarchy-pulse doctor           check dependencies, config and sources
 
@@ -37,7 +42,10 @@ a JSON list -> list; any object may also set "title", "level" (ok/info/warn/crit
 """
 from __future__ import annotations
 
+import base64
 import collections
+import hashlib
+import hmac
 import ipaddress
 import queue
 import json
@@ -52,13 +60,15 @@ import sys
 import threading
 import time
 import tomllib
+import unicodedata
 import urllib.parse
+import urllib.error
 import urllib.request
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -88,6 +98,37 @@ PRESETS = {
 }
 COLOR_KEYS = {"bg": "background", "fg": "foreground", "accent": "accent", "accent2": "color5", "ok": "color2",
               "warn": "color3", "crit": "color1", "dim": "color8"}
+CITY_KEYS = set(['rome', 'milan', 'turin', 'alessandria', 'florence', 'venice', 'naples', 'pisa', 'bologna', 'genoa', 'london', 'paris', 'berlin', 'madrid', 'barcelona', 'lisbon', 'amsterdam', 'brussels', 'vienna', 'prague', 'budapest', 'warsaw', 'moscow', 'athens', 'istanbul', 'dublin', 'stockholm', 'copenhagen', 'oslo', 'helsinki', 'zurich', 'munich', 'cologne', 'frankfurt', 'kyiv', 'bern', 'reykjavik', 'edinburgh', 'new-york', 'washington', 'chicago', 'los-angeles', 'san-francisco', 'seattle', 'las-vegas', 'miami', 'boston', 'toronto', 'montreal', 'vancouver', 'mexico-city', 'sao-paulo', 'rio-de-janeiro', 'buenos-aires', 'ottawa', 'havana', 'lima', 'bogota', 'santiago', 'tokyo', 'beijing', 'shanghai', 'hong-kong', 'shenzhen', 'seoul', 'singapore', 'kuala-lumpur', 'taipei', 'osaka', 'kyoto', 'hanoi', 'manila', 'jakarta', 'kathmandu', 'tehran', 'ankara', 'bangkok', 'mumbai', 'delhi', 'dubai', 'abu-dhabi', 'doha', 'riyadh', 'tel-aviv', 'cairo', 'sydney', 'melbourne', 'auckland', 'cape-town', 'johannesburg', 'lagos', 'nairobi'])
+CITY_ALIASES = {
+    "roma": "rome", "milano": "milan", "torino": "turin", "firenze": "florence", "venezia": "venice",
+    "napoli": "naples", "genova": "genoa", "londra": "london", "parigi": "paris", "berlino": "berlin",
+    "lisboa": "lisbon", "lisbona": "lisbon", "bruxelles": "brussels", "brussel": "brussels", "bruxelas": "brussels",
+    "wien": "vienna", "praha": "prague", "praga": "prague", "warszawa": "warsaw", "varsavia": "warsaw",
+    "moskva": "moscow", "mosca": "moscow", "athina": "athens", "atene": "athens", "koln": "cologne",
+    "colonia": "cologne", "munchen": "munich", "muenchen": "munich", "monaco-di-baviera": "munich",
+    "kobenhavn": "copenhagen", "copenaghen": "copenhagen", "stoccolma": "stockholm", "dublino": "dublin",
+    "zuerich": "zurich", "zurigo": "zurich", "francoforte": "frankfurt", "frankfurt-am-main": "frankfurt",
+    "kiev": "kyiv", "kiyv": "kyiv", "berna": "bern", "edimburgo": "edinburgh", "atene-centro": "athens",
+    "nyc": "new-york", "new-york-city": "new-york", "manhattan": "new-york", "brooklyn": "new-york",
+    "washington-d-c": "washington", "washington-dc": "washington", "la": "los-angeles", "sf": "san-francisco",
+    "ciudad-de-mexico": "mexico-city", "citta-del-messico": "mexico-city", "mexico": "mexico-city",
+    "rio": "rio-de-janeiro", "san-paolo": "sao-paulo", "bogota-d-c": "bogota", "la-habana": "havana",
+    "l-avana": "havana", "santiago-de-chile": "santiago", "pechino": "beijing", "peking": "beijing",
+    "hongkong": "hong-kong", "kl": "kuala-lumpur", "bombay": "mumbai", "new-delhi": "delhi", "nuova-delhi": "delhi",
+    "il-cairo": "cairo", "al-qahirah": "cairo", "tel-aviv-yafo": "tel-aviv", "citta-del-capo": "cape-town",
+    "kaapstad": "cape-town", "teheran": "tehran", "giacarta": "jakarta", "seul": "seoul", "tokio": "tokyo",
+    "singapura": "singapore", "abu-dhabi-city": "abu-dhabi", "ar-riyad": "riyadh", "dubayy": "dubai",
+}
+
+
+def city_key(name) -> str:
+    """A city name (any language, any accents) -> the key of a skyline Pulse can draw, or ""."""
+    n = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode().lower()
+    n = re.sub(r"[^a-z0-9]+", "-", n).strip("-")
+    n = CITY_ALIASES.get(n, n)
+    return n if n in CITY_KEYS else ""
+
+
 CAVA_CONF = """[general]
 bars = {bars}
 framerate = 30
@@ -340,6 +381,23 @@ class Hub:
         self.lan: dict = {"devices": [], "net": ""}   # devices on your network: cars on the grid
         self.voice_q: queue.Queue = queue.Queue(maxsize=6)
         self.perf: dict = {}                   # frame pacing reported by every monitor's page
+        self.location: tuple | None = None     # (lat, lon) of the weather: the ISS passes over it
+        self.git: list = []                    # your repositories: towers of the Git city
+        self.space: dict = {}                  # the ISS over you, the Kp index (aurora), solar flares
+        self.heart: dict | None = None         # your heart rate, if you connect one (never logged)
+        self.crew_code = ""
+        self.crew_id = secrets.token_hex(6)
+        self.crew_agents: dict = {}            # your friends' agents
+        self.crew_last: dict = {}
+        self.crew_status = "off"
+        self.crew_q: queue.Queue = queue.Queue(maxsize=50)
+        self.launches: list = []               # the next rocket launches (Launch Library 2)
+        self.launched: set = set()
+        self.listen: dict | None = None        # "hey sphere": listening, thinking, the answer
+        self.listen_stop = threading.Event()
+        self.speaking = False
+        self.scene_override = ""
+        self.skyline_override = ""
         self.perf_logged: dict = {}
 
     # -- config
@@ -479,7 +537,8 @@ class Hub:
         now = time.time()
         with self.lock:
             if st == "gone":
-                self.agents.pop(name, None)
+                if self.agents.pop(name, None):
+                    self.crew_send({"ev": "agent", "agent": name, "state": "gone"})
                 return
             if st not in AGENT_STATES:
                 st = "working"
@@ -491,6 +550,7 @@ class Hub:
             self.agents[name] = a
         if st == prev:
             return
+        self.crew_send({"ev": "agent", "agent": name, "state": st})
         spoken = name.replace("·", ",")
         if st == "done":
             self.note("agent", f"{name} finished", "ok")
@@ -511,6 +571,10 @@ class Hub:
                 age = now - a.get("t", now)
                 if (a["state"] in ("done", "failed") and age > 90) or (a["state"] == "idle" and age > 600) or age > 3600:
                     del self.agents[n]
+            for n, a in list(self.crew_agents.items()):
+                age = now - a.get("t", now)
+                if (a["state"] in ("done", "failed") and age > 90) or age > 3600:
+                    del self.crew_agents[n]
 
     def set_focus(self, minutes: float, label: str = "") -> None:
         with self.lock:
@@ -749,11 +813,16 @@ class Hub:
         if not force:
             if v.get("enabled") not in (True, "on") or self.demo:
                 return
-            if why and why not in (v.get("events") or ["alerts", "agents", "digest", "focus"]):
+            if why and why not in (v.get("events") or ["alerts", "agents", "digest", "focus", "space"]):
                 return
             if self.away or self.focus or in_quiet_hours(str(v.get("quiet", "23:00-08:00") or "")):
                 return
         if self.privacy():   # sharing the screen: nothing is read aloud
+            return
+        if self.demo and os.environ.get("PULSE_DEMO_SPEAK_SCALE"):   # the demo video: the face talks, the audio is added later
+            self.speaking = True
+            secs = len(text) / 15 * float(os.environ["PULSE_DEMO_SPEAK_SCALE"])   # about 15 characters a second
+            threading.Timer(secs, lambda: setattr(self, "speaking", False)).start()
             return
         try:
             self.voice_q.put_nowait(re.sub(r"\s+", " ", str(text))[:240])
@@ -763,10 +832,13 @@ class Hub:
     def loop_voice(self) -> None:
         while True:
             text = self.voice_q.get()
+            self.speaking = True
             try:
                 speak(text, self.conf("voice", default={}) or {})
             except Exception as e:   # noqa: BLE001
                 log(f"voice: {e}")
+            finally:
+                self.speaking = False
 
     # -- frame pacing: each page reports every 5 s; a monitor whose frames are slow to reach the screen is logged
     def set_perf(self, d: dict) -> None:
@@ -786,6 +858,430 @@ class Hub:
                 return
             self.perf_logged[mon] = time.time()
         log(perf_hint(p, self.conf("pulse", "dmabuf", default="auto")))
+
+    # -- the Git city: every repository is a tower; it grows with this week's commits, a push lights it up
+    def git_repos(self) -> list:
+        g = self.conf("git", default={}) or {}
+        if g.get("enabled") is False:
+            return []
+        paths = [Path(str(p)).expanduser() for p in (g.get("repos") or [])]
+        if not paths:
+            root = g.get("root", "auto")
+            roots = ([Path(str(root)).expanduser()] if root not in ("auto", "", None) else
+                     [HOME / d for d in ("code", "src", "projects", "Projects", "dev", "git", "repos", "work", "Work")])
+            for r in roots:
+                try:
+                    for d in sorted(r.iterdir()) if r.is_dir() else []:
+                        if (d / ".git").exists():
+                            paths.append(d)
+                        elif d.is_dir() and not d.name.startswith("."):
+                            paths += [e for e in sorted(d.iterdir()) if (e / ".git").exists()]
+                except OSError:
+                    pass
+        return [p for p in paths if (p / ".git").exists()][:40]
+
+    def loop_git(self) -> None:
+        prev: dict = {}
+        ci_t: dict = {}
+        while True:
+            g = self.conf("git", default={}) or {}
+            try:
+                repos = self.git_repos() if shutil.which("git") else []
+                out = []
+                use_ci = g.get("ci", "auto") not in (False, "off") and bool(shutil.which("gh"))
+                for path in repos:
+                    info = git_info(path)
+                    if not info:
+                        continue
+                    key, name = str(path), path.name[:24]
+                    p = prev.get(key)
+                    if p and info["up"] and p["up"] and info["up"] != p["up"] and info["head"] == info["up"] == p["head"]:
+                        self.add_fx("push", f"{name} · pushed", small=True)
+                        self.note("git", f"{name} pushed", "ok")
+                    elif p and info["head"] != p["head"]:
+                        self.add_fx("commit", name, small=True)
+                    ci = (p or {}).get("ci", "")
+                    slug = github_slug(info["remote"])
+                    if use_ci and slug and time.time() - ci_t.get(key, 0) > 300:
+                        ci_t[key] = time.time()
+                        new = gh_ci(slug, info["branch"])
+                        if new == "fail" and ci != "fail":
+                            self.raise_alert("git:" + name, f"CI failed · {name}", info["branch"], "warn")
+                        elif new == "ok" and ci == "fail":
+                            self.add_fx("burst", f"{name} · CI green", small=True)
+                        ci = new or ci
+                    info["ci"] = ci
+                    prev[key] = info
+                    out.append({"name": name, "week": info["week"], "last": info["last"], "dirty": info["dirty"],
+                                "ci": ci, "branch": info["branch"][:24]})
+                out.sort(key=lambda r: (-r["week"], -r["last"]))
+                with self.lock:
+                    self.git = out[: int(g.get("max", 8) or 8)]
+            except Exception as e:   # noqa: BLE001
+                log(f"git: {e}")
+            time.sleep(max(15, int(g.get("every", 60) or 60)))
+
+    # -- space: the ISS when it passes over you, the aurora (Kp index), solar flares
+    def loop_space(self) -> None:
+        track: list = []
+        kp_t = fl_t = 0.0
+        last_flare, first_flare, up, warned = "", True, False, 0.0
+        while True:
+            sp = self.conf("space", default={}) or {}
+            if sp.get("enabled") is False or self.demo:
+                time.sleep(30)
+                continue
+            now = time.time()
+            with self.lock:
+                space = dict(self.space)
+            try:
+                if self.location and sp.get("iss", True) is not False:
+                    if not track or track[-1]["timestamp"] - now < 120:
+                        ts = ",".join(str(int(now + i * 60)) for i in range(10))
+                        track = http_json("https://api.wheretheiss.at/v1/satellites/25544/positions?units=kilometers&timestamps=" + ts)
+                    pos = iss_at(track, now)
+                    if pos:
+                        az, el = look_angles(self.location[0], self.location[1], pos["latitude"], pos["longitude"], pos["altitude"])
+                        space["iss"] = {"az": round(az, 1), "el": round(el, 1), "alt": round(pos["altitude"]),
+                                        "vel": round(pos.get("velocity", 0)), "lit": pos.get("visibility") == "daylight"} if el > 0 else None
+                        if el > 10 and not up:
+                            self.add_fx("iss", "ISS overhead · " + f"{pos.get('velocity', 27600):,.0f} km/h")
+                            self.note("space", "the ISS passed over you", "info")
+                            self.say("The International Space Station is passing over you right now.", "space")
+                        up = el > 10
+                if now - kp_t > 900:
+                    kp_t = now
+                    space["kp"] = latest_kp(http_json("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"))
+                    if (space["kp"] or 0) >= 5:
+                        self.note("space", f"geomagnetic storm · Kp {space['kp']:.0f}", "info")
+                if now - fl_t > 600:
+                    fl_t = now
+                    rows = http_json("https://services.swpc.noaa.gov/json/goes/primary/xray-flares-latest.json")
+                    r = rows[-1] if isinstance(rows, list) and rows else rows if isinstance(rows, dict) else {}
+                    cls, when = str(r.get("max_class") or ""), str(r.get("max_time") or "")
+                    if cls[:1] in ("M", "X") and when != last_flare:
+                        last_flare = when
+                        space["flare"] = {"class": cls, "t": now}
+                        if not first_flare:
+                            self.add_fx("flare", f"solar flare · {cls}")
+                            self.note("space", f"solar flare {cls}", "info")
+                    first_flare = False
+            except Exception as e:   # noqa: BLE001
+                if now - warned > 3600:
+                    warned = now
+                    log(f"space: {e}")
+            with self.lock:
+                self.space = {**space, "launch": self.space.get("launch")}
+            time.sleep(5)
+
+    # -- rocket launches: SpaceX by default (Launch Library 2, The Space Devs); a countdown, then liftoff on your horizon
+    def loop_launches(self) -> None:
+        fetched, warned = 0.0, 0.0
+        while True:
+            sp = self.conf("space", default={}) or {}
+            who = str(sp.get("launches", "spacex") or "off")
+            if sp.get("enabled") is False or who in ("off", "false") or self.demo:
+                self.drop_widget("launches")
+                time.sleep(30)
+                continue
+            now = time.time()
+            try:
+                if now - fetched > 600:   # the free API allows 15 calls an hour
+                    fetched = now
+                    q = "limit=5&mode=list" + ("" if who == "all" else "&lsp__name=" + urllib.parse.quote(
+                        {"spacex": "SpaceX", "rocketlab": "Rocket Lab", "blueorigin": "Blue Origin", "nasa": "National Aeronautics and Space Administration"}.get(who.lower(), who)))
+                    j = http_json("https://ll.thespacedevs.com/2.3.0/launches/upcoming/?" + q)
+                    self.launches = [x for x in (parse_launch(r) for r in j.get("results") or []) if x]
+                ls = [x for x in self.launches if x["net"] > now - 120]
+                for x in ls:   # liftoff, at T-0 (to the second when the time is known that well)
+                    if x["id"] not in self.launched and x["net"] <= now < x["net"] + 90 and x["status"] in ("Go", "In Flight", "Success"):
+                        self.launched.add(x["id"])
+                        self.add_fx("launch", f"{x['rocket']} · {x['mission']} · liftoff")
+                        self.note("space", f"{x['rocket']} {x['mission']} lifted off", "info")
+                        self.say(f"Liftoff! {x['rocket']}, {x['mission']}.", "space")
+                nxt = next((x for x in ls if x["net"] > now - 60), None)
+                with self.lock:
+                    self.space = {**self.space, "launch": nxt}
+                panel = str(sp.get("launches_panel", "ticker"))
+                if panel != "off" and ls:
+                    self.set_widget("launches", title="launches", type="list", slot=panel if panel in ("left", "right", "center") else "ticker",
+                                    order=27, icon="󱓞", data={"items": [{"title": f"{x['rocket']} · {x['mission']}",
+                                    "text": countdown(x["net"] - now) + " · " + x["status"], "t": x["net"]} for x in ls[:3]]})
+            except Exception as e:   # noqa: BLE001
+                if now - warned > 3600:
+                    warned = now
+                    log(f"launches: {e}")
+            time.sleep(5)
+
+    # -- your heart: the horizon beats with it (only from a source you connect; never logged, never sent)
+    def loop_heart(self) -> None:
+        while True:
+            h = self.conf("heart", default={}) or {}
+            if h.get("enabled") is False or not (h.get("command") or h.get("url") or h.get("file")):
+                self.heart = None
+                time.sleep(30)
+                continue
+            try:
+                if h.get("command"):
+                    raw = subprocess.run(["bash", "-c", str(h["command"])], capture_output=True, timeout=15,
+                                         env=self.src_env()).stdout.decode("utf-8", "replace")
+                elif h.get("url"):
+                    req = urllib.request.Request(str(h["url"]), headers={str(k): str(v) for k, v in (h.get("headers") or {}).items()})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        raw = r.read(100_000).decode("utf-8", "replace")
+                else:
+                    raw = Path(str(h["file"])).expanduser().read_text()[:100_000]
+                bpm = heart_value(raw, str(h.get("path") or ""))
+                if bpm:
+                    self.heart = {"bpm": bpm, "t": time.time()}
+            except Exception:   # noqa: BLE001 - a heart source that fails just goes quiet (no values in the log)
+                pass
+            time.sleep(max(3, int(h.get("every", 10) or 10)))
+
+    # -- the crew: friends share a code; agents and fireworks travel between your cities, sealed with that code
+    def crew_send(self, payload: dict) -> None:
+        code = self.crew_code
+        if not code:
+            return
+        c = self.conf("crew", default={}) or {}
+        if payload.get("ev") == "agent":
+            a = str(payload.get("agent", ""))
+            payload["agent"] = a if c.get("share") == "full" else a.split("·")[0].strip()
+            k = payload["agent"]
+            if self.crew_last.get(k) == payload["state"]:
+                return
+            self.crew_last[k] = payload["state"]
+        payload.update(v=1, id=self.crew_id, name=str(c.get("name") or os.environ.get("USER") or "friend")[:16],
+                       t=int(time.time()))
+        try:
+            self.crew_q.put_nowait((code, payload))
+        except queue.Full:
+            pass
+
+    def loop_crew_send(self) -> None:
+        """One message at a time, a little apart, again after a while if the relay says "too many" (HTTP 429)."""
+        while True:
+            code, payload = self.crew_q.get()
+            time.sleep(0.4)   # what happens together travels together: one message, fewer requests
+            batch = [payload]
+            while len(batch) < 10:
+                try:
+                    c2, p2 = self.crew_q.get_nowait()
+                except queue.Empty:
+                    break
+                if c2 == code:
+                    batch.append(p2)
+            if len(batch) > 1:
+                payload = {k: payload[k] for k in ("v", "id", "name", "t") if k in payload}
+                payload["batch"] = [{k: v for k, v in b.items() if k not in ("v", "id", "name", "t")} for b in batch]
+            relay = str(self.conf("crew", "relay", default="") or "https://ntfy.sh").rstrip("/")
+            body = crew_seal(code, payload).encode()
+            for attempt in range(5):
+                try:
+                    urllib.request.urlopen(urllib.request.Request(f"{relay}/{crew_topic(code)}", data=body, method="POST",
+                                                                  headers={"Content-Type": "text/plain"}), timeout=10).read()
+                    break
+                except urllib.error.HTTPError as e:
+                    if e.code != 429 or attempt == 4:
+                        log(f"crew: could not send ({e})")
+                        break
+                    time.sleep(6 * (attempt + 1))
+                except Exception as e:   # noqa: BLE001
+                    log(f"crew: could not send ({e})")
+                    break
+            time.sleep(1.5)
+
+    def crew_receive(self, payload: dict) -> None:
+        if payload.get("id") == self.crew_id or abs(time.time() - float(payload.get("t") or 0)) > 300:
+            return
+        if isinstance(payload.get("batch"), list):
+            for item in payload["batch"][:10]:
+                if isinstance(item, dict):
+                    self.crew_receive({**item, "id": payload.get("id"), "name": payload.get("name"), "t": payload.get("t")})
+            return
+        clean = lambda v, n: re.sub(r"[^\w.:@\- ]", "", str(v or ""))[:n].strip()
+        who = clean(payload.get("name"), 16) or "friend"
+        if payload.get("ev") == "agent":
+            agent = clean(payload.get("agent"), 24) or "agent"
+            key, st = f"{who} · {agent}", str(payload.get("state", ""))
+            now = time.time()
+            with self.lock:
+                if st == "gone" or st not in AGENT_STATES:
+                    self.crew_agents.pop(key, None)
+                    return
+                a = self.crew_agents.get(key) or {"name": key, "since": now, "crew": who}
+                prev = a.get("state")
+                a.update(state=st, text="crew", t=now)
+                self.crew_agents[key] = a
+            if st == "done" and prev != "done" and self.conf("pulse", "celebrate", default=True) is not False:
+                self.add_fx("fireworks", f"{key} · done", small=True)
+        elif payload.get("ev") == "fx":
+            self.add_fx("fireworks", f"{who} · {clean(payload.get('text'), 40)}".strip(" ·"), small=True)
+
+    def loop_crew(self) -> None:
+        backoff = 5
+        while True:
+            c = self.conf("crew", default={}) or {}
+            code = str(c.get("code") or "") if c.get("enabled") is not False else ""
+            self.crew_code = code if len(code) >= 16 else ""
+            if not self.crew_code or self.demo:
+                self.crew_status = "off" if not code else "code too short (omarchy-pulse crew new)"
+                time.sleep(10)
+                continue
+            relay = str(c.get("relay") or "https://ntfy.sh").rstrip("/")
+            try:
+                req = urllib.request.Request(f"{relay}/{crew_topic(code)}/json", headers={"User-Agent": "omarchy-pulse/" + VERSION})
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    self.crew_status = "connected"
+                    backoff = 5
+                    for line in r:
+                        if str(self.conf("crew", "code", default="") or "") != code:
+                            break   # the code changed: start again
+                        try:
+                            m = json.loads(line)
+                            if m.get("event") == "message":
+                                self.crew_receive(crew_open(code, m.get("message", "")))
+                        except (ValueError, KeyError, TypeError):
+                            continue   # not ours, or tampered with: ignored
+            except Exception as e:   # noqa: BLE001
+                self.crew_status = f"offline ({e})"
+                time.sleep(backoff)
+                backoff = min(120, backoff * 2)
+
+    # -- "hey sphere": push to talk, offline speech to text, only safe commands, the answer out loud
+    def listen_start(self, secs: float = 5, wav: str = "") -> bool:
+        if self.listen and self.listen.get("state") in ("listening", "thinking"):
+            return False
+        self.listen_stop.clear()
+        threading.Thread(target=self._listen, args=(max(1.0, min(15.0, secs)), wav), daemon=True).start()
+        return True
+
+    def _listen(self, secs: float, wav: str) -> None:
+        conf = self.conf("listen", default={}) or {}
+        tmp = None
+        try:
+            if not wav:
+                STATE_DIR.mkdir(parents=True, exist_ok=True)
+                tmp = wav = str(STATE_DIR / "listen.wav")
+                rec = (["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", wav] if shutil.which("pw-record") else
+                       ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", wav] if shutil.which("arecord") else None)
+                if not rec:
+                    self.listen = {"state": "answer", "heard": "", "answer": "No microphone tool: install pipewire or alsa-utils.", "t": time.time()}
+                    return
+                self.listen = {"state": "listening", "t": time.time()}
+                p = subprocess.Popen(rec, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.listen_stop.wait(secs)
+                p.terminate()
+                try:
+                    p.wait(3)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+            else:   # a file: "listening" for as long as asked, then the file is understood
+                self.listen = {"state": "listening", "t": time.time()}
+                self.listen_stop.wait(secs)
+            self.listen = {"state": "thinking", "t": time.time()}
+            heard = speech_to_text(wav, conf)
+            if heard is None:
+                answer = "I need a speech engine: whisper.cpp or faster-whisper (see the guide)."
+                heard = ""
+            elif not heard.strip():
+                answer = "Sorry, I didn't catch that."
+            else:
+                answer = self.voice_command(heard)
+            self.listen = {"state": "answer", "heard": heard.strip()[:120], "answer": answer[:300], "t": time.time()}
+            self.say(answer, force=True)
+        except Exception as e:   # noqa: BLE001
+            log(f"listen: {e}")
+            self.listen = {"state": "answer", "heard": "", "answer": "Something went wrong.", "t": time.time()}
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp)   # the recording never stays on disk
+                except OSError:
+                    pass
+
+    def voice_command(self, text: str) -> str:
+        t = re.sub(r"^\W*((hey|hi|ok|ehi|ei|ciao)\W+)?(sphere|sfera|pulse)\W*", "", text.lower().strip()).strip()
+        it = bool(re.search(r"\b(che|come|quanti|quante|accendi|spegni|ferma|metti|fuochi|meteo|ore|sono|stato|minuti|cosa|mi|ho|il|la|per)\b|citt|^\W*ehi\b|sfera", text.lower()))
+        L = lambda en, itl: itl if it else en
+        if re.search(r"\b(stop|end|basta|ferma|termina|spegni)\b.*\b(focus|concentra\w*)", t):
+            self.set_focus(0)
+            return L("Focus off.", "Focus finito.")
+        m = re.search(r"\b(focus|concentra\w*)\D{0,24}(\d{1,3})", t) or re.search(r"(\d{1,3})\s*(minutes?|minuti)\s*(of\s*)?(di\s*)?(focus|concentra\w*)", t)
+        if m:
+            n = max(1, min(240, int(next(g for g in m.groups() if g and g.isdigit()))))
+            self.set_focus(n, "voice")
+            return L(f"Focus for {n} minutes. I'll keep things quiet.", f"Focus per {n} minuti. Faccio silenzio.")
+        if "privacy" in t:
+            on = not re.search(r"\b(off|disattiva|spegni|togli|no)\b", t)
+            self.privacy_manual = True if on else None
+            return L("Privacy on." if on else "Privacy off.", "Privacy attiva." if on else "Privacy spenta.")
+        if re.search(r"firework|fuochi", t):
+            self.add_fx("fireworks", "hey sphere")
+            return L("Fireworks!", "Fuochi d'artificio!")
+        if re.search(r"\bmiss|away|\bpers[oi]|successo|novit", t):
+            d = self.digest
+            if not d or not d["lines"]:
+                return L("Nothing happened while you were away.", "Mentre eri via non è successo niente.")
+            items = "; ".join((x["text"].split(" · ")[0] if x["kind"] == "alert" else x["text"].replace("·", ","))
+                              for x in d["lines"][:4] if not x.get("private"))
+            return L(f"While you were away: {items}.", f"Mentre eri via: {items}.")
+        if re.search(r"\biss\b|space station|stazione spaziale", t):
+            iss = (self.space or {}).get("iss")
+            if iss:
+                return L(f"The ISS is above you right now, {iss['el']:.0f} degrees up.", f"La ISS è sopra di te adesso, a {iss['el']:.0f} gradi.")
+            return L("The ISS is not over you right now. I'll tell you when it passes.", "La ISS ora non è sopra di te. Ti avviso quando passa.")
+        if re.search(r"weather|meteo|tempo fa|piov|rain", t):
+            w = self.weather or {}
+            if w.get("temp") is None:
+                return L("I have no weather yet.", "Non ho ancora il meteo.")
+            return L(f"{w['temp']:.0f} degrees, feels like {w.get('feels', w['temp']):.0f}.",
+                     f"{w['temp']:.0f} gradi, percepiti {w.get('feels', w['temp']):.0f}.")
+        if re.search(r"time is it|what time|che or[ae]", t):
+            return L("It's " + time.strftime("%H:%M") + ".", "Sono le " + time.strftime("%H:%M") + ".")
+        if re.search(r"agent|agenti|claude|codex|grok|drone", t):
+            with self.lock:
+                ag = list(self.agents.values())
+            if not ag:
+                return L("No agents are working right now.", "Nessun agente sta lavorando adesso.")
+            words = {"working": L("working", "lavora"), "waiting": L("needs you", "ti aspetta"), "done": L("is done", "ha finito"),
+                     "failed": L("failed", "è fallito"), "idle": L("is idle", "è fermo")}
+            return "; ".join(f"{a['name'].replace('·', ',')} {words.get(a['state'], a['state'])}" for a in ag[:4]) + "."
+        m = re.search(r"\b(city|citta|città|skyline)[\s,:;]+(?:di\s+|of\s+)?([a-zà-ü .'-]{2,40}?)[\W]*$", t)
+        if m:
+            k = city_key(m.group(2).strip(" .?!"))
+            if not k:
+                return L(f"I can't draw {m.group(2).strip()} yet.", f"Non so ancora disegnare {m.group(2).strip()}.")
+            self.skyline_override = k
+            said = m.group(2).strip(" .?!").title()
+            return L(f"Welcome to {said}.", f"Benvenuto a {said}.")
+        m = re.search(r"\b(scene|scena)\s+(sphere|sfera|skyline|orbit|calm)", t)
+        if m:
+            self.scene_override = {"sfera": "sphere"}.get(m.group(2), m.group(2))
+            return L(f"Scene {self.scene_override}.", f"Scena {self.scene_override}.")
+        if re.search(r"server|status|stato|come (va|sta)|alert|problem|tutto bene|everything", t):
+            with self.lock:
+                bad = [w.get("title", w["id"]) for w in self.widgets.values() if w.get("level") in ("warn", "crit")
+                       and not (w.get("private") and self.privacy())]
+                n = len(self.widgets)
+            if not bad:
+                return L(f"Everything is fine: {n} sources, no alerts.", f"Tutto a posto: {n} sorgenti, nessun allarme.")
+            return L(f"{len(bad)} need attention: " + ", ".join(bad[:4]) + ".", f"{len(bad)} da controllare: " + ", ".join(bad[:4]) + ".")
+        ask = str((self.conf("listen", default={}) or {}).get("ask") or "")
+        if ask:
+            try:
+                prompt = ("You are the voice of a live desktop wallpaper. Answer in one or two short spoken sentences, "
+                          f"in the language of the question. Question: {text.strip()}")
+                r = subprocess.run(["bash", "-c", ask], input=prompt.encode(), capture_output=True, timeout=60, env=self.src_env())
+                out = re.sub(r"\s+", " ", r.stdout.decode("utf-8", "replace")).strip()
+                if out:
+                    return out[:300]
+            except Exception as e:   # noqa: BLE001
+                log(f"listen ask: {e}")
+        return L("I can start a focus, turn privacy on, fire fireworks, and tell you the status, the weather, the time, "
+                 "your agents, the ISS or what you missed.",
+                 "Posso avviare un focus, attivare la privacy, lanciare fuochi d'artificio e dirti lo stato, il meteo, "
+                 "l'ora, i tuoi agenti, la ISS o cosa ti sei perso.")
 
     def drop_widget(self, wid: str) -> None:
         with self.lock:
@@ -1114,6 +1610,7 @@ class Hub:
                         self.weather = {"city": city, "error": "set city = \"...\" in pulse.toml" if not city else
                                         f"city not found: {city}"}
                     else:
+                        self.location = (float(lat), float(lon))
                         imperial = self.conf("pulse", "units", default="metric") == "imperial"
                         q = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                              "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,is_day,precipitation"
@@ -1327,14 +1824,22 @@ class Hub:
                     "hist": {k: list(v) for k, v in self.hist.items()}, "weather": self.weather,
                     "widgets": ws, "alerts": list(self.alerts), "privacy": self.privacy(), "screencast": self.screencast,
                     "mons": self.mons, "theme": self.colors(),
-                    "agents": sorted(self.agents.values(), key=lambda a: a.get("since", 0)), "focus": self.focus,
+                    "agents": sorted(list(self.agents.values()) + list(self.crew_agents.values()), key=lambda a: a.get("since", 0)),
+                    "focus": self.focus,
+                    "git": [{**r, "name": "" if self.privacy() else r["name"], "branch": "" if self.privacy() else r["branch"]}
+                            for r in self.git],
+                    "space": self.space,
+                    "heart": None if self.privacy() or not self.heart or time.time() - self.heart["t"] > 120 else self.heart["bpm"],
+                    "listen": self.listen if self.listen and time.time() - self.listen["t"] < float(os.environ.get("PULSE_DEMO_LISTEN_SECS") or 12) else None,
+                    "speaking": self.speaking,
                     "fxSeq": self.fx_seq, "music": bool(self.audio) and time.time() - self.audio_t < 1,
                     "away": bool(self.away), "digest": self.public_digest(),
                     "lan": [{**d, "name": "" if self.privacy() else d["name"], "ip": "" if self.privacy() else d["ip"]}
                             for d in self.lan["devices"]],
                     "ui": {"fps": self.conf("pulse", "fps", default=20), "clock": self.conf("pulse", "clock", default="24h"),
                            "pause_when_covered": self.conf("pulse", "pause_when_covered", default=True),
-                           "scene": self.conf("pulse", "scene", default="skyline"),
+                           "scene": self.scene_override or self.conf("pulse", "scene", default="skyline"),
+                           "skyline": self.skyline(),
                            "font": self.conf("pulse", "font", default=""),
                            "title": self.conf("pulse", "title", default=""),
                            "dim_with_windows": self.conf("pulse", "dim_with_windows", default=True),
@@ -1346,6 +1851,17 @@ class Hub:
                            "sphere": self.conf("pulse", "sphere", default="real"),
                            "cars": self.conf("lan", "cars", default=True) is not False,
                            "eyes": self.conf("presence", "eyes", default=True) is not False}}
+
+    def skyline(self) -> str:
+        """The real city behind the towers: "auto" follows the weather's city (not while sharing the screen)."""
+        sk = self.skyline_override or str(self.conf("pulse", "skyline", default="auto") or "auto")
+        if sk in ("off", "none", "generic", "false"):
+            return ""
+        if sk == "auto":
+            if self.privacy():
+                return ""
+            return city_key((self.weather or {}).get("city") or self.conf("pulse", "city", default=""))
+        return city_key(sk)
 
     def public_digest(self):
         d = self.digest
@@ -1373,7 +1889,8 @@ class Hub:
             return
         for fn in (self.loop_system, self.loop_weather, self.loop_github, self.loop_media, self.loop_notifications,
                    self.loop_theme, self.loop_hypr, self.loop_music, self.loop_presence, self.loop_lan,
-                   self.loop_voice):
+                   self.loop_voice, self.loop_git, self.loop_space, self.loop_heart, self.loop_crew,
+                   self.loop_crew_send, self.loop_launches):
             threading.Thread(target=fn, daemon=True).start()
 
 
@@ -1692,11 +2209,229 @@ def speak(text: str, v: dict) -> None:
         subprocess.run(player + [str(wav)], timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
     if shutil.which("espeak-ng"):
-        subprocess.run(["espeak-ng", "-s", "165", text], timeout=60, stdout=subprocess.DEVNULL,
+        subprocess.run(["espeak-ng", "-v", str(v.get("espeak_voice") or "en-us"), "-s", "165", text], timeout=60, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
         return
     log("voice: " + ("no audio player (pw-play, paplay or aplay)" if piper and model else
                      "install piper-tts and a voice in ~/.local/share/piper/, or espeak-ng"))
+
+
+def git_info(path) -> dict | None:
+    def g(*a):
+        try:
+            r = subprocess.run(["git", "-C", str(path), *a], capture_output=True, timeout=5, text=True)
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        return r.stdout.strip() if r.returncode == 0 else ""
+    head = g("rev-parse", "HEAD")
+    if not head:
+        return None
+    week = g("rev-list", "--count", "--since=7.days", "HEAD")
+    last = g("log", "-1", "--format=%ct")
+    return {"head": head, "up": g("rev-parse", "@{u}"), "branch": g("rev-parse", "--abbrev-ref", "HEAD"),
+            "week": int(week) if week.isdigit() else 0, "last": int(last) if last.isdigit() else 0,
+            "dirty": len([x for x in g("status", "--porcelain", "--untracked-files=no").splitlines() if x]),
+            "remote": g("remote", "get-url", "origin")}
+
+
+def github_slug(remote: str) -> str:
+    m = re.search(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$", remote or "")
+    return m.group(1) if m else ""
+
+
+def gh_ci(slug: str, branch: str) -> str:
+    try:
+        r = subprocess.run(["gh", "run", "list", "-R", slug, "-b", branch, "-L", "1", "--json", "status,conclusion"],
+                           capture_output=True, timeout=20, text=True)
+        runs = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return ""
+    if not runs:
+        return ""
+    if runs[0].get("status") != "completed":
+        return "run"
+    return "ok" if runs[0].get("conclusion") in ("success", "skipped", "neutral") else "fail"
+
+
+def iss_at(track: list, now: float) -> dict | None:
+    """The ISS position now, interpolated between the minute positions of wheretheiss.at."""
+    pts = [p for p in track if isinstance(p, dict) and "timestamp" in p]
+    for a, b in zip(pts, pts[1:]):
+        if a["timestamp"] <= now <= b["timestamp"]:
+            u = (now - a["timestamp"]) / max(1, b["timestamp"] - a["timestamp"])
+            dl = (b["longitude"] - a["longitude"] + 540) % 360 - 180
+            return {**a, "latitude": a["latitude"] + (b["latitude"] - a["latitude"]) * u,
+                    "longitude": (a["longitude"] + dl * u + 540) % 360 - 180,
+                    "altitude": a["altitude"] + (b["altitude"] - a["altitude"]) * u}
+    return None
+
+
+def look_angles(lat: float, lon: float, slat: float, slon: float, alt_km: float) -> tuple:
+    """Azimuth (0 = north, 90 = east) and elevation in degrees of a satellite seen from (lat, lon)."""
+    import math
+    R = 6371.0
+    def ecef(la, lo, r):
+        la, lo = math.radians(la), math.radians(lo)
+        return (r * math.cos(la) * math.cos(lo), r * math.cos(la) * math.sin(lo), r * math.sin(la))
+    o, sat = ecef(lat, lon, R), ecef(slat, slon, R + alt_km)
+    d = [sat[i] - o[i] for i in range(3)]
+    la, lo = math.radians(lat), math.radians(lon)
+    e = (-math.sin(lo), math.cos(lo), 0.0)
+    n = (-math.sin(la) * math.cos(lo), -math.sin(la) * math.sin(lo), math.cos(la))
+    u = (math.cos(la) * math.cos(lo), math.cos(la) * math.sin(lo), math.sin(la))
+    dot = lambda a, b: sum(a[i] * b[i] for i in range(3))
+    dist = math.sqrt(dot(d, d))
+    el = math.degrees(math.asin(max(-1.0, min(1.0, dot(d, u) / dist))))
+    az = (math.degrees(math.atan2(dot(d, e), dot(d, n))) + 360) % 360
+    return az, el
+
+
+def latest_kp(rows) -> float | None:
+    """NOAA's planetary K index: a list of objects or a header row and lists, oldest first."""
+    if not isinstance(rows, list) or not rows:
+        return None
+    last = rows[-1]
+    if isinstance(last, dict):
+        v = next((last[k] for k in ("Kp", "kp", "kp_index", "estimated_kp") if k in last), None)
+    elif isinstance(last, list) and isinstance(rows[0], list) and "Kp" in rows[0]:
+        v = last[rows[0].index("Kp")]
+    else:
+        v = None
+    try:
+        return round(float(v), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_launch(r: dict) -> dict | None:
+    import datetime as dt
+    try:
+        net = dt.datetime.fromisoformat(str(r["net"]).replace("Z", "+00:00")).timestamp()
+    except (KeyError, ValueError):
+        return None
+    name = str(r.get("name") or "")
+    rocket, _, mission = name.partition("|")
+    rocket = re.sub(r"\s+Block\s+\d+", "", rocket).strip()[:24] or "rocket"
+    return {"id": str(r.get("id") or name), "rocket": rocket, "mission": mission.strip()[:32] or name[:32], "net": net,
+            "status": str((r.get("status") or {}).get("abbrev") or "TBD")[:10]}
+
+
+def countdown(secs: float) -> str:
+    if secs < 0:
+        return "liftoff"
+    d, r = divmod(int(secs), 86400)
+    h, r = divmod(r, 3600)
+    m = r // 60
+    return "T-" + (f"{d}d {h}h" if d else f"{h}h {m:02d}m" if h else f"{m}m {int(secs) % 60:02d}s")
+
+
+def heart_value(raw: str, path: str = "") -> int | None:
+    v = raw
+    try:
+        j = json.loads(raw)
+        v = dig(j, path) if path else j
+        if isinstance(v, dict):
+            v = v.get("state", v.get("value", v.get("bpm")))
+    except (ValueError, KeyError, IndexError, TypeError):
+        pass
+    m = re.search(r"\d+(?:[.,]\d+)?", str(v))
+    if not m:
+        return None
+    bpm = float(m.group().replace(",", "."))
+    return round(bpm) if 30 <= bpm <= 230 else None
+
+
+def crew_keys(code: str) -> tuple:
+    k = hashlib.sha256(b"omarchy-pulse crew key|" + code.encode()).digest()
+    m = hashlib.sha256(b"omarchy-pulse crew mac|" + code.encode()).digest()
+    return k, m
+
+
+def crew_topic(code: str) -> str:
+    return "pulse-" + hashlib.sha256(b"omarchy-pulse crew topic|" + code.encode()).hexdigest()[:32]
+
+
+def _keystream(key: bytes, nonce: bytes, n: int) -> bytes:
+    out, i = b"", 0
+    while len(out) < n:
+        out += hmac.new(key, nonce + i.to_bytes(4, "big"), hashlib.sha256).digest()
+        i += 1
+    return out[:n]
+
+
+def crew_seal(code: str, obj: dict) -> str:
+    """Encrypt-then-MAC with HMAC-SHA256 (a keystream from HMAC in counter mode, then a tag): stdlib only."""
+    k, m = crew_keys(code)
+    pt = json.dumps(obj, separators=(",", ":")).encode()
+    nonce = secrets.token_bytes(16)
+    ct = bytes(a ^ b for a, b in zip(pt, _keystream(k, nonce, len(pt))))
+    tag = hmac.new(m, nonce + ct, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(nonce + ct + tag).decode()
+
+
+def crew_open(code: str, msg: str) -> dict:
+    k, m = crew_keys(code)
+    raw = base64.urlsafe_b64decode(str(msg).encode())
+    if len(raw) < 49:
+        raise ValueError("short")
+    nonce, ct, tag = raw[:16], raw[16:-32], raw[-32:]
+    if not hmac.compare_digest(tag, hmac.new(m, nonce + ct, hashlib.sha256).digest()):
+        raise ValueError("bad tag")
+    return json.loads(bytes(a ^ b for a, b in zip(ct, _keystream(k, nonce, len(ct)))))
+
+
+_WHISPER = {}
+
+
+def speech_to_text(wav: str, conf: dict) -> str | None:
+    """A command of yours (with {wav}), whisper.cpp, or faster-whisper; None when there is no engine."""
+    lang = str(conf.get("language") or "auto")
+    if conf.get("command"):
+        r = subprocess.run(["bash", "-c", str(conf["command"]).replace("{wav}", shlex_quote(wav))], capture_output=True,
+                           timeout=120)
+        return r.stdout.decode("utf-8", "replace").strip()
+    exe = shutil.which("whisper-cli") or shutil.which("whisper-cpp")
+    model = str(conf.get("model") or "")
+    if exe:
+        if not model:
+            d = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "whisper"
+            found = sorted(d.glob("ggml-*.bin")) if d.is_dir() else []
+            model = str(found[0]) if found else ""
+        if model:
+            r = subprocess.run([exe, "-m", str(Path(model).expanduser()), "-f", wav, "-nt", "-np", "-l", lang],
+                               capture_output=True, timeout=120)
+            return re.sub(r"\[[^\]]*\]", "", r.stdout.decode("utf-8", "replace")).strip()
+    try:
+        from faster_whisper import WhisperModel   # pip/pipx: faster-whisper
+    except ImportError:
+        return None
+    name = model or "base"
+    if name not in _WHISPER:
+        _WHISPER[name] = WhisperModel(name, device="cpu", compute_type="int8")
+    segs, _ = _WHISPER[name].transcribe(wav_samples(wav), language=None if lang == "auto" else lang, beam_size=1)
+    return " ".join(x.text for x in segs).strip()
+
+
+def wav_samples(wav: str):
+    """A 16-bit PCM wav as 16 kHz mono float samples (what Whisper wants), without ffmpeg or PyAV."""
+    import wave
+    import numpy as np
+    with wave.open(wav) as w:
+        rate, ch, width = w.getframerate(), w.getnchannels(), w.getsampwidth()
+        raw = w.readframes(w.getnframes())
+    if width != 2:
+        raise ValueError("16-bit wav expected")
+    a = np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
+    if ch > 1:
+        a = a.reshape(-1, ch).mean(axis=1)
+    if rate != 16000:
+        a = np.interp(np.arange(0, len(a), rate / 16000), np.arange(len(a)), a).astype(np.float32)
+    return a
+
+
+def shlex_quote(s: str) -> str:
+    import shlex
+    return shlex.quote(s)
 
 
 def nvidia() -> bool:
@@ -1866,8 +2601,11 @@ def make_handler(hub: Hub, tok: str, port: int):
                               q.get("text") or body.decode("utf-8", "replace").strip())
                 self._send(200, b'{"ok":true}')
             elif u.path == "/api/fx":
-                hub.add_fx(re.sub(r"[^a-z]", "", q.get("kind", "fireworks"))[:20] or "fireworks",
-                           q.get("text") or body.decode("utf-8", "replace").strip())
+                kind = re.sub(r"[^a-z]", "", q.get("kind", "fireworks"))[:20] or "fireworks"
+                text = q.get("text") or body.decode("utf-8", "replace").strip()
+                hub.add_fx(kind, text)
+                if kind == "fireworks":
+                    hub.crew_send({"ev": "fx", "text": text[:40]})
                 self._send(200, b'{"ok":true}')
             elif u.path == "/api/focus":
                 v = body.decode().strip() or q.get("minutes", "")
@@ -1883,6 +2621,19 @@ def make_handler(hub: Hub, tok: str, port: int):
                 except ValueError:
                     pass
                 self._send(200, b"{}")
+            elif u.path == "/api/listen":
+                v = (body.decode().strip() or q.get("do", "start")).lower()
+                if v == "clear":
+                    hub.listen = None
+                    ok = True
+                elif v == "stop":
+                    hub.listen_stop.set()
+                    ok = True
+                else:
+                    secs = float(v) if re.match(r"^\d+(\.\d+)?$", v) else 10.0 if v == "start" else 5.0
+                    wav = q.get("file", "")
+                    ok = hub.listen_start(secs, wav if wav and Path(wav).is_file() else "")
+                self._send(200, json.dumps({"ok": ok}).encode())
             elif u.path == "/api/presence":
                 v = body.decode().strip() or q.get("state", "")
                 hub.set_away(v in ("away", "on", "idle"), "you")
@@ -2077,6 +2828,52 @@ def from_demo(hub: Hub) -> None:
             hub.set_widget("news", title="omarchy · news", icon="󰎕", slot="right", order=25, **p2)
     except Exception:   # noqa: BLE001
         pass
+    hub.git = [{"name": "omarchy-pulse", "week": 52, "last": time.time() - 300, "dirty": 0, "ci": "run", "branch": "main"},
+               {"name": "omarchytv", "week": 34, "last": time.time() - 3600, "dirty": 0, "ci": "ok", "branch": "main"},
+               {"name": "homelab", "week": 12, "last": time.time() - 86400, "dirty": 2, "ci": "ok", "branch": "main"},
+               {"name": "dotfiles", "week": 6, "last": time.time() - 2 * 86400, "dirty": 3, "ci": "", "branch": "main"},
+               {"name": "website", "week": 3, "last": time.time() - 3 * 86400, "dirty": 0, "ci": "fail", "branch": "main"}]
+    hub.space = {"iss": None, "kp": 2.3}
+    hub.heart = {"bpm": 68, "t": time.time()}
+    t_launch = float(os.environ.get("PULSE_DEMO_LAUNCH_AT") or time.time() + float(os.environ.get("PULSE_DEMO_LAUNCH", "5400")))
+    hub.space["launch"] = {"id": "demo", "rocket": "Falcon 9", "mission": "Starlink 12-4", "net": t_launch, "status": "Go"}
+    hub.set_widget("launches", title="launches", type="list", slot="ticker", order=27,
+                   data={"items": [{"title": "Falcon 9 · Starlink 12-4", "text": "Go"}, {"title": "Starship · Flight 13", "text": "TBC"}]})
+
+    def demo_launch():
+        while time.time() < t_launch:
+            time.sleep(0.2)
+        hub.add_fx("launch", "Falcon 9 · Starlink 12-4 · liftoff")
+    if not os.environ.get("PULSE_DEMO_LAUNCH_AT"):   # with _AT the video script fires the liftoff on its own clock
+        threading.Thread(target=demo_launch, daemon=True).start()
+
+    def demo_flags():   # the demo video: an ISS pass, a friend's agent, while their flag files exist
+        sp_flag, crew_flag = os.environ.get("PULSE_DEMO_SPACE", ""), os.environ.get("PULSE_DEMO_CREW", "")
+        t_sp, crew_state = None, ""
+        while True:
+            now = time.time()
+            hub.heart = {"bpm": int(66 + 4 * math.sin(now / 9)), "t": now}
+            if sp_flag:
+                if os.path.exists(sp_flag):
+                    if t_sp is None:
+                        t_sp = now
+                        hub.add_fx("iss", "ISS overhead · 27,580 km/h")
+                    try:   # the video script writes how far along the pass is; else 14 seconds
+                        u = float(Path(sp_flag).read_text().strip())
+                    except ValueError:
+                        u = min(1.0, (now - t_sp) / 14)
+                    hub.space = {"iss": {"az": round(250 - 150 * u, 1), "el": round(62 * math.sin(math.pi * u), 1), "alt": 418,
+                                         "vel": 27580, "lit": True} if u < 1 else None, "kp": 6.3, "launch": hub.space.get("launch")}
+                elif t_sp is not None:
+                    t_sp = None
+                    hub.space = {"iss": None, "kp": 2.3}
+            if crew_flag:
+                st = Path(crew_flag).read_text().strip() if os.path.exists(crew_flag) else "gone"
+                if st != crew_state:
+                    crew_state = st
+                    hub.crew_receive({"v": 1, "id": "demo-friend", "name": "luca", "t": now, "ev": "agent", "agent": "claude", "state": st})
+            time.sleep(0.2)
+    threading.Thread(target=demo_flags, daemon=True).start()
     if os.environ.get("PULSE_DEMO_LAN"):   # a file path: while it exists, a new device has joined
         def lan():
             flag, on = os.environ["PULSE_DEMO_LAN"], False
@@ -2259,6 +3056,23 @@ def main(argv: list[str]) -> int:
             if p["bound"]:
                 print("     " + perf_hint(p, load_config().get("pulse", {}).get("dmabuf", "auto")).split(": ", 1)[1])
         return 0
+    if cmd == "listen":
+        a = argv[2] if len(argv) > 2 else "5"
+        if a == "--file" and len(argv) > 3:
+            return quiet_client("/api/listen?" + urllib.parse.urlencode({"file": str(Path(argv[3]).resolve())}), b"2")
+        return quiet_client("/api/listen", a.encode())
+    if cmd == "crew":
+        if len(argv) > 2 and argv[2] == "new":
+            code = secrets.token_urlsafe(18)
+            print(f"Your crew code: {code}\n\nPut it in ~/.config/omarchy-pulse/pulse.toml on every PC of the crew:\n\n"
+                  f"[crew]\ncode = \"{code}\"\nname = \"{os.environ.get('USER', 'me')}\"\n\n"
+                  "Share it only with the people you want in your city. Messages go through the relay (ntfy.sh by\n"
+                  "default) sealed with this code: the relay sees only noise.")
+            return 0
+        cfg = load_config().get("crew") or {}
+        print("crew: " + ("off (omarchy-pulse crew new)" if not cfg.get("code") else
+                          f"on as {cfg.get('name') or os.environ.get('USER', 'friend')}, relay {cfg.get('relay') or 'https://ntfy.sh'}"))
+        return 0
     if cmd in ("away", "back"):
         return quiet_client("/api/presence", cmd.encode())
     if cmd == "say":
@@ -2312,6 +3126,7 @@ def main(argv: list[str]) -> int:
         for tool, why in (("ffmpeg", "cameras"), ("playerctl", "now playing"), ("cava", "the scene dances with music"),
                           ("gh", "GitHub notifications"), ("fping", "finds every device on your network"),
                           ("piper-tts", "the voice (or espeak-ng)"), ("espeak-ng", "a simpler voice"),
+                          ("whisper-cli", "hey sphere: speech to text (or faster-whisper)"), ("git", "the Git city"),
                           ("hyprctl", "calm down under windows, privacy")):
             print(("  ok   " if shutil.which(tool) else "  --   ") + f"{tool:20} ({why})")
         notification_dir = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy/notifications"

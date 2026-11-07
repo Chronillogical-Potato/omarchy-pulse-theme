@@ -351,6 +351,7 @@
     tickerUpdate(ticker);
     alerts();
     digest();
+    heard();
     var m = (S.mons || {})[MONKEY] || null;
     Scene.mode(m, S);
     document.body.classList.toggle("focus", !!S.focus);
@@ -379,6 +380,7 @@
     } else if (S && S.sys) {
       var t = S.theme && S.theme.name ? S.theme.name : "omarchy";
       setHTML($("#clock .who"), esc(S.sys.user || "") + "@" + esc(S.sys.host || "") + " · <b>" + esc(t) + "</b> · up " + upt(S.sys.uptime) +
+        (S.heart ? ' · <span class="heart">♥ ' + (+S.heart) + "</span>" : "") +
         (ui.title ? '<span class="title">' + esc(ui.title) + "</span>" : ""));
     }
   }
@@ -429,6 +431,14 @@
     $(".text", box).textContent = S.privacy ? "" : (a.text || "");
     clearTimeout(incT);
     incT = setTimeout(function () { box.hidden = true; }, 7000);
+  }
+  // ------------------------------------------------------------------ hey sphere: what it heard, what it says
+  function heard() {
+    var l = S.listen, el = $("#heard");
+    if (!el) { el = document.createElement("div"); el.id = "heard"; document.body.appendChild(el); }
+    var html = !l ? "" : l.state === "listening" ? '<i>●</i> listening…' : l.state === "thinking" ? "…" :
+      (l.heard ? '<q>' + esc(l.heard) + "</q>" : "") + '<span>' + esc(l.answer || "") + "</span>";
+    setHTML(el, html); el.className = html ? "on" : "";
   }
   // ------------------------------------------------------------------ while you were away
   var seenDigest = 0;
@@ -494,7 +504,9 @@
     var focus = null, sunOn = true, phase = "night", phaseKey = "";       // focus mode, the sun
     var shooting = [], camImg = null, newsText = "", weatherNow = null, clockStr = "", ledStyle = false;
     var gaze = { x: 0, y: 0 }, cursorXY = null, cursorAt = -1e9, eyesOn = true, deskEmpty = true;   // the eyes follow you
-    var away = false, wakeAt = -1e9, lan = [], carsOn = true, privacyOn = false, newAt = {};             // sleep; cars = your network
+    var away = false, wakeAt = -1e9, lan = [], carsOn = true, privacyOn = false, newAt = {};
+    var gitRepos = [], gitFlash = {}, gitPos = {}, space = {}, issPos = null, issTrail = [], flareAt = -1e9;   // 1.2
+    var heartBpm = null, listenSt = null, speakingOn = false, liftoffs = [];             // sleep; cars = your network
     var tex = document.createElement("canvas"), tg = tex.getContext("2d", { willReadFrequently: true }), TW = 192, TH = 96, texData = null;
     var TX = 2;   // the texture is painted in 192x96 units on a 384x192 canvas: sharper letters on the sphere
     tex.width = TW * TX; tex.height = TH * TX;
@@ -516,6 +528,300 @@
       band = [(l.right + 30) * r, (rr.left - 30) * r];
       if (!(band[1] - band[0] > W * 0.25)) band = [W * 0.08, W * 0.92];
       paintStatic();
+    }
+    // ---------------- real cities: the skyline of your city behind the towers, drawn from simple silhouettes
+    // (original line drawings of public buildings; no photos, no logos). x: -1..1 (left / right of the core),
+    // h and w in screen heights.
+    function sym(c, x, y, w, h, prof) {   // a symmetric outline: prof = [[half width 0..0.5, height 0..1], ...] bottom to top
+      c.moveTo(x - prof[0][0] * w, y);
+      for (var i = 0; i < prof.length; i++) c.lineTo(x - prof[i][0] * w, y - prof[i][1] * h);
+      for (i = prof.length - 1; i >= 0; i--) c.lineTo(x + prof[i][0] * w, y - prof[i][1] * h);
+      c.closePath();
+    }
+    function rect(c, x, y, w, h) { c.rect(x - w / 2, y - h, w, h); }
+    function holeArch(c, x, y, w, h) {   // an arched opening, for even-odd fills
+      c.moveTo(x - w / 2, y); c.lineTo(x - w / 2, y - h + w / 2); c.arc(x, y - h + w / 2, w / 2, Math.PI, 0); c.lineTo(x + w / 2, y); c.closePath();
+    }
+    function dome(c, x, y, r, hh) { c.moveTo(x - r, y); c.bezierCurveTo(x - r, y - hh * 0.75, x - r * 0.45, y - hh, x, y - hh); c.bezierCurveTo(x + r * 0.45, y - hh, x + r, y - hh * 0.75, x + r, y); c.closePath(); }
+    function onion(c, x, y, r, hh) { c.moveTo(x - r * 0.7, y); c.bezierCurveTo(x - r * 1.5, y - hh * 0.45, x - r * 0.2, y - hh * 0.7, x, y - hh); c.bezierCurveTo(x + r * 0.2, y - hh * 0.7, x + r * 1.5, y - hh * 0.45, x + r * 0.7, y); c.closePath(); }
+    var LM = {
+      tower: function (c, x, y, w, h, p) { var n = p || 3, pr = []; for (var i = 0; i < n; i++) { pr.push([0.5 - i * 0.12, i / n]); pr.push([0.5 - i * 0.12, (i + 1) / n]); } sym(c, x, y, w, h, pr); },
+      empire: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .55], [.38, .55], [.38, .7], [.26, .7], [.26, .8], [.16, .8], [.16, .86], [.08, .86], [.06, .92], [.015, .93], [.008, 1]]); },
+      chrysler: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .62], [.36, .62], [.36, .7], [.3, .72], [.24, .78], [.18, .83], [.12, .88], [.06, .93], [.01, 1]]); },
+      onewtc: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .06], [.42, .08], [.2, .72], [.14, .73], [.012, .74], [.008, 1]]); },
+      shard: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.3, .45], [.06, .97], [0, 1]]); },
+      taper: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.44, .5], [.3, .88], [.05, 1]]); },
+      burj: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .12], [.36, .13], [.36, .28], [.27, .29], [.27, .45], [.19, .46], [.19, .6], [.12, .61], [.12, .74], [.06, .75], [.04, .85], [.01, 1]]); },
+      pyramid: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.02, .96], [0, 1]]); },
+      obelisk: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.36, .9], [0, 1]]); },
+      needle: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.06, .96], [0, 1]]); },
+      prang: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.46, .12], [.36, .3], [.3, .5], [.2, .72], [.1, .88], [.02, .96], [0, 1]]); },
+      campanile: function (c, x, y, w, h) {
+        sym(c, x, y, w, h, [[.5, 0], [.5, .64], [.56, .65], [.56, .68], [.5, .68], [.5, .82], [.44, .83], [.44, .86], [.32, .88], [.02, .99], [0, 1]]);
+        for (var i = -1; i <= 1; i += 2) holeArch(c, x + i * w * 0.2, y - h * 0.8, w * 0.22, h * 0.1);
+      },
+      clock: function (c, x, y, w, h) {
+        sym(c, x, y, w, h, [[.5, 0], [.5, .6], [.58, .61], [.58, .76], [.5, .77], [.5, .82], [.36, .86], [.0, 1]]);
+        c.moveTo(x + w * 0.3, y - h * 0.685); c.arc(x, y - h * 0.685, w * 0.3, 0, Math.PI * 2);
+      },
+      leaning: function (c, x, y, w, h) {
+        var a = 0.075, dx = Math.sin(a) * h, k = 0.5;
+        c.moveTo(x - w * k, y); c.lineTo(x - w * k + dx, y - h * 0.93); c.lineTo(x - w * 0.36 + dx * 1.02, y - h * 0.94);
+        c.lineTo(x - w * 0.36 + dx * 1.04, y - h); c.lineTo(x + w * 0.36 + dx * 1.04, y - h); c.lineTo(x + w * 0.36 + dx * 1.02, y - h * 0.94);
+        c.lineTo(x + w * k + dx, y - h * 0.93); c.lineTo(x + w * k, y); c.closePath();
+        for (var i = 1; i < 7; i++) { var yy = y - h * i / 7.6, ox = dx * i / 7.6; c.moveTo(x - w * 0.42 + ox, yy); c.lineTo(x + w * 0.42 + ox, yy); c.lineTo(x + w * 0.42 + ox, yy - h * 0.012); c.lineTo(x - w * 0.42 + ox, yy - h * 0.012); c.closePath(); }
+      },
+      gothic: function (c, x, y, w, h) {   // a cathedral: a nave, pinnacles and a central spire
+        sym(c, x, y, w, h, [[.5, 0], [.5, .4], [.0, .62]]);
+        for (var i = 0; i < 9; i++) { var px = x - w * 0.46 + i * w * 0.115; c.moveTo(px - w * 0.02, y - h * 0.38); c.lineTo(px, y - h * (0.55 + (i % 2) * 0.06)); c.lineTo(px + w * 0.02, y - h * 0.38); c.closePath(); }
+        c.moveTo(x - w * 0.04, y - h * 0.55); c.lineTo(x - w * 0.03, y - h * 0.82); c.lineTo(x, y - h); c.lineTo(x + w * 0.03, y - h * 0.82); c.lineTo(x + w * 0.04, y - h * 0.55); c.closePath();
+      },
+      twinspire: function (c, x, y, w, h) {
+        rect(c, x, y, w, h * 0.42);
+        [-1, 1].forEach(function (s) { sym(c, x + s * w * 0.3, y, w * 0.32, h, [[.5, 0], [.5, .62], [.4, .64], [.0, 1]]); });
+      },
+      dome: function (c, x, y, w, h) {   // a drum, a dome, its lantern
+        rect(c, x, y, w * 0.62, h * 0.38); dome(c, x, y - h * 0.38, w * 0.33, h * 0.42);
+        rect(c, x, y - h * 0.8, w * 0.08, h * 0.12); c.moveTo(x - w * 0.02, y - h * 0.92); c.lineTo(x, y - h); c.lineTo(x + w * 0.02, y - h * 0.92); c.closePath();
+      },
+      capitol: function (c, x, y, w, h) { rect(c, x, y, w, h * 0.3); LM.dome(c, x, y - h * 0.28, w * 0.42, h * 0.72); },
+      mole: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .3], [.44, .33], [.38, .38], [.12, .7], [.08, .71], [.07, .78], [.04, .79], [.03, .92], [.006, 1]]); },
+      tv: function (c, x, y, w, h, p) {   // a TV tower: shaft, a pod (ball, disc or saucer), the antenna
+        var py = y - h * (p === "saucer" ? 0.8 : 0.66);
+        sym(c, x, y, w, h * 0.98, [[.12, 0], [.07, .3], [.05, .66], [.05, .8], [.02, .82], [.012, 1]]);
+        if (p === "ball") { c.moveTo(x + w * 0.34, py); c.arc(x, py, w * 0.34, 0, Math.PI * 2); }
+        else if (p === "saucer") { c.moveTo(x - w * 0.5, py); c.lineTo(x + w * 0.5, py); c.lineTo(x + w * 0.2, py - h * 0.05); c.lineTo(x - w * 0.2, py - h * 0.05); c.closePath(); c.moveTo(x - w * 0.18, py); c.lineTo(x + w * 0.18, py); c.lineTo(x + w * 0.1, py + h * 0.06); c.lineTo(x - w * 0.1, py + h * 0.06); c.closePath(); }
+        else { c.ellipse(x, py, w * 0.28, h * 0.035, 0, 0, Math.PI * 2); }
+      },
+      skytree: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.2, .3], [.1, .6], [.08, .8], [.03, .82], [.02, 1]]); c.ellipse(x, y - h * 0.5, w * 0.2, h * 0.02, 0, 0, Math.PI * 2); c.ellipse(x, y - h * 0.67, w * 0.15, h * 0.015, 0, 0, Math.PI * 2); },
+      pearl: function (c, x, y, w, h) {
+        [-1, 1].forEach(function (s) { c.moveTo(x + s * w * 0.4, y); c.lineTo(x + s * w * 0.1, y - h * 0.3); c.lineTo(x + s * w * 0.06, y - h * 0.3); c.lineTo(x + s * w * 0.32, y); c.closePath(); });
+        rect(c, x, y, w * 0.08, h * 0.95);
+        c.moveTo(x + w * 0.24, y - h * 0.3); c.arc(x, y - h * 0.3, w * 0.24, 0, Math.PI * 2);
+        c.moveTo(x + w * 0.15, y - h * 0.68); c.arc(x, y - h * 0.68, w * 0.15, 0, Math.PI * 2);
+        c.moveTo(x - w * 0.01, y - h * 0.9); c.lineTo(x, y - h); c.lineTo(x + w * 0.01, y - h * 0.9); c.closePath();
+      },
+      lattice: function (c, x, y, w, h) {   // an iron lattice tower, with its arch
+        sym(c, x, y, w, h, [[.5, 0], [.36, .18], [.23, .34], [.13, .54], [.07, .76], [.04, .9], [.012, .96], [.004, 1]]);
+        c.moveTo(x - w * 0.32, y); c.quadraticCurveTo(x, y - h * 0.3, x + w * 0.32, y); c.closePath();
+      },
+      wheel: function (c, x, y, w, h) {   // stroked
+        var r = Math.min(w, h) / 2, cy = y - h + r;
+        c.moveTo(x + r, cy); c.arc(x, cy, r, 0, Math.PI * 2);
+        for (var i = 0; i < 12; i++) { var a = i / 12 * Math.PI * 2; c.moveTo(x, cy); c.lineTo(x + Math.cos(a) * r, cy + Math.sin(a) * r); }
+        c.moveTo(x - r * 0.5, y); c.lineTo(x, cy); c.lineTo(x + r * 0.5, y);
+      },
+      bridge: function (c, x, y, w, h) {   // stroked: a suspension bridge
+        var t = [x - w * 0.3, x + w * 0.3], dy = y - h * 0.22;
+        c.moveTo(x - w / 2, dy); c.lineTo(x + w / 2, dy);
+        t.forEach(function (tx) { c.moveTo(tx - w * 0.015, y); c.lineTo(tx - w * 0.015, y - h); c.moveTo(tx + w * 0.015, y); c.lineTo(tx + w * 0.015, y - h); c.moveTo(tx - w * 0.015, y - h * 0.7); c.lineTo(tx + w * 0.015, y - h * 0.7); });
+        c.moveTo(t[0], y - h); c.quadraticCurveTo(x, dy + h * 0.1, t[1], y - h);
+        c.moveTo(x - w / 2, dy); c.quadraticCurveTo(x - w * 0.42, y - h * 0.62, t[0], y - h);
+        c.moveTo(x + w / 2, dy); c.quadraticCurveTo(x + w * 0.42, y - h * 0.62, t[1], y - h);
+      },
+      archbridge: function (c, x, y, w, h) {   // stroked
+        var dy = y - h * 0.45;
+        c.moveTo(x - w / 2, y); c.quadraticCurveTo(x, y - h * 2, x + w / 2, y);
+        c.moveTo(x - w / 2, dy); c.lineTo(x + w / 2, dy);
+        for (var i = 1; i < 10; i++) { var u = i / 10, px = x - w / 2 + u * w, py = y - 4 * h * u * (1 - u); if (py < dy) { c.moveTo(px, dy); c.lineTo(px, py); } }
+      },
+      arch: function (c, x, y, w, h) { rect(c, x, y, w, h); holeArch(c, x, y, w * 0.38, h * 0.62); },
+      gate: function (c, x, y, w, h) { rect(c, x, y - h * 0.72, w, h * 0.28); for (var i = 0; i < 6; i++) rect(c, x - w * 0.45 + i * w * 0.18, y, w * 0.07, h * 0.74); rect(c, x, y - h * 0.98, w * 0.16, h * 0.04); },
+      colosseum: function (c, x, y, w, h) {
+        c.moveTo(x - w / 2, y); c.lineTo(x - w / 2, y - h * 0.82); c.quadraticCurveTo(x, y - h * 1.08, x + w * 0.2, y - h); c.lineTo(x + w * 0.32, y - h * 0.7); c.lineTo(x + w / 2, y - h * 0.5); c.lineTo(x + w / 2, y); c.closePath();
+        for (var r = 0; r < 3; r++) for (var i = 0; i < 9; i++) { var ax = x - w * 0.44 + i * w * 0.105, top = y - h * (0.08 + r * 0.24); if (ax > x + w * 0.28 && r > 0) continue; holeArch(c, ax, top, w * 0.05, h * 0.17); }
+      },
+      temple: function (c, x, y, w, h) {   // a hill and a temple with columns
+        c.moveTo(x - w * 0.6, y); c.quadraticCurveTo(x, y - h * 0.7, x + w * 0.6, y); c.closePath();
+        var b = y - h * 0.48; rect(c, x, b, w * 0.6, h * 0.06);
+        for (var i = 0; i < 8; i++) rect(c, x - w * 0.27 + i * w * 0.077, b - h * 0.06, w * 0.03, h * 0.3);
+        c.moveTo(x - w * 0.32, b - h * 0.36); c.lineTo(x, b - h * 0.52); c.lineTo(x + w * 0.32, b - h * 0.36); c.closePath();
+      },
+      minaret: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.4, .74], [.7, .76], [.7, .8], [.35, .81], [.3, .92], [0, 1]]); },
+      mosque: function (c, x, y, w, h) { rect(c, x, y, w * 0.7, h * 0.28); dome(c, x, y - h * 0.28, w * 0.26, h * 0.32); [-1, 1].forEach(function (s) { LM.minaret(c, x + s * w * 0.46, y, w * 0.06, h); }); },
+      onion: function (c, x, y, w, h) {
+        [[0, 1, .16], [-.3, .72, .11], [.3, .76, .12], [-.15, .6, .1], [.16, .58, .09]].forEach(function (o) {
+          var tx = x + o[0] * w, th = h * o[1]; rect(c, tx, y, w * o[2] * 1.2, th * 0.72); onion(c, tx, y - th * 0.72, w * o[2], th * 0.26);
+          c.moveTo(tx - w * 0.008, y - th * 0.97); c.lineTo(tx, y - th); c.lineTo(tx + w * 0.008, y - th * 0.97); c.closePath();
+        });
+      },
+      pagoda: function (c, x, y, w, h) {
+        var n = 5;
+        for (var i = 0; i < n; i++) {
+          var b = y - h * i / n * 0.9, ww = w * (1 - i * 0.14);
+          rect(c, x, b, ww * 0.6, h * 0.12);
+          c.moveTo(x - ww * 0.55, b - h * 0.12); c.quadraticCurveTo(x - ww * 0.4, b - h * 0.13, x - ww * 0.3, b - h * 0.18); c.lineTo(x + ww * 0.3, b - h * 0.18); c.quadraticCurveTo(x + ww * 0.4, b - h * 0.13, x + ww * 0.55, b - h * 0.12); c.closePath();
+        }
+        rect(c, x, y - h * 0.9, w * 0.02, h * 0.1);
+      },
+      roundtemple: function (c, x, y, w, h) {
+        rect(c, x, y, w, h * 0.1);
+        for (var i = 0; i < 3; i++) { var b = y - h * (0.1 + i * 0.26), ww = w * (0.8 - i * 0.18); rect(c, x, b, ww * 0.7, h * 0.12); c.moveTo(x - ww / 2, b - h * 0.12); c.quadraticCurveTo(x, b - h * 0.32, x + ww / 2, b - h * 0.12); c.closePath(); }
+        c.moveTo(x - w * 0.03, y - h * 0.9); c.lineTo(x, y - h); c.lineTo(x + w * 0.03, y - h * 0.9); c.closePath();
+      },
+      twin: function (c, x, y, w, h) {
+        [-1, 1].forEach(function (s) { LM.tower(c, x + s * w * 0.28, y, w * 0.3, h * 0.92, 5); c.moveTo(x + s * w * 0.28 - w * 0.01, y - h * 0.9); c.lineTo(x + s * w * 0.28, y - h); c.lineTo(x + s * w * 0.28 + w * 0.01, y - h * 0.9); c.closePath(); });
+        c.rect(x - w * 0.15, y - h * 0.47, w * 0.3, h * 0.03);
+      },
+      mbs: function (c, x, y, w, h) { for (var i = -1; i <= 1; i++) { c.moveTo(x + i * w * 0.32 - w * 0.08, y); c.lineTo(x + i * w * 0.32 - w * 0.05, y - h * 0.9); c.lineTo(x + i * w * 0.32 + w * 0.06, y - h * 0.9); c.lineTo(x + i * w * 0.32 + w * 0.09, y); c.closePath(); } c.moveTo(x - w * 0.5, y - h * 0.9); c.lineTo(x + w * 0.56, y - h * 0.92); c.lineTo(x + w * 0.5, y - h); c.lineTo(x - w * 0.46, y - h * 0.98); c.closePath(); },
+      taipei: function (c, x, y, w, h) { rect(c, x, y, w * 0.7, h * 0.22); for (var i = 0; i < 8; i++) { var b = y - h * (0.22 + i * 0.075); c.moveTo(x - w * 0.3, b); c.lineTo(x - w * 0.4, b - h * 0.075); c.lineTo(x + w * 0.4, b - h * 0.075); c.lineTo(x + w * 0.3, b); c.closePath(); } sym(c, x, y - h * 0.82, w, h * 0.18, [[.2, 0], [.1, .5], [.02, .6], [.01, 1]]); },
+      sail: function (c, x, y, w, h) { c.moveTo(x - w * 0.45, y); c.lineTo(x - w * 0.45, y - h); c.bezierCurveTo(x + w * 0.2, y - h * 0.85, x + w * 0.55, y - h * 0.5, x + w * 0.5, y); c.closePath(); },
+      shells: function (c, x, y, w, h) { [[-.38, .55, .22], [-.18, .8, .26], [.05, 1, .3], [.28, .7, .24], [.42, .45, .16]].forEach(function (s) { var sx = x + s[0] * w; c.moveTo(sx - w * s[2] / 2, y); c.quadraticCurveTo(sx - w * s[2] * 0.3, y - h * s[1], sx + w * s[2] * 0.55, y - h * s[1]); c.quadraticCurveTo(sx + w * s[2] * 0.2, y - h * s[1] * 0.4, sx + w * s[2] / 2, y); c.closePath(); }); },
+      castle: function (c, x, y, w, h) {   // a star fort: low walls and pointed bastions
+        c.moveTo(x - w / 2, y); var n = 6;
+        for (var i = 0; i < n; i++) { var u = i / n; c.lineTo(x - w / 2 + u * w, y - h * 0.55); c.lineTo(x - w / 2 + (u + 0.5 / n) * w, y - h * (i % 2 ? 0.78 : 1)); c.lineTo(x - w / 2 + (u + 1 / n) * w, y - h * 0.55); }
+        c.lineTo(x + w / 2, y); c.closePath();
+      },
+      hill: function (c, x, y, w, h) { c.moveTo(x - w / 2, y); c.bezierCurveTo(x - w * 0.3, y - h * 0.4, x - w * 0.15, y - h, x + w * 0.02, y - h); c.bezierCurveTo(x + w * 0.2, y - h, x + w * 0.3, y - h * 0.3, x + w / 2, y); c.closePath(); },
+      mesa: function (c, x, y, w, h) { c.moveTo(x - w / 2, y); c.lineTo(x - w * 0.36, y - h); c.lineTo(x + w * 0.38, y - h * 0.97); c.lineTo(x + w / 2, y); c.closePath(); },
+      volcano: function (c, x, y, w, h) { c.moveTo(x - w / 2, y); c.quadraticCurveTo(x - w * 0.2, y - h * 0.8, x - w * 0.06, y - h); c.lineTo(x + w * 0.04, y - h * 0.94); c.lineTo(x + w * 0.1, y - h * 0.97); c.quadraticCurveTo(x + w * 0.25, y - h * 0.7, x + w / 2, y); c.closePath(); },
+      frame: function (c, x, y, w, h) { rect(c, x, y, w, h); c.rect(x - w * 0.38, y - h * 0.9, w * 0.76, h * 0.82); },
+      bottle: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.42, .6], [.3, .94], [.3, 1]]); c.rect(x - w * 0.16, y - h * 0.94, w * 0.32, h * 0.08); },
+      kingdom: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .55], [.34, .7], [.3, 1]]); c.moveTo(x - w * 0.24, y - h); c.quadraticCurveTo(x, y - h * 0.62, x + w * 0.24, y - h); c.closePath(); },
+      cctv: function (c, x, y, w, h) { c.moveTo(x - w / 2, y); c.lineTo(x - w * 0.5, y - h); c.lineTo(x + w * 0.5, y - h); c.lineTo(x + w * 0.5, y - h * 0.3); c.lineTo(x + w * 0.2, y - h * 0.3); c.lineTo(x + w * 0.2, y); c.lineTo(x - w * 0.05, y); c.lineTo(x - w * 0.05, y - h * 0.75); c.lineTo(x - w * 0.25, y - h * 0.75); c.lineTo(x - w * 0.25, y); c.closePath(); },
+      boc: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .5], [.34, .62], [.2, .82], [.06, .9], [.03, .92], [.01, 1]]); },
+      willis: function (c, x, y, w, h) { LM.tower(c, x, y, w, h * 0.86, 4); [-1, 1].forEach(function (s) { c.rect(x + s * w * 0.06 - w * 0.008, y - h, w * 0.016, h * 0.16); }); },
+      gherkin: function (c, x, y, w, h) { c.moveTo(x - w * 0.34, y); c.bezierCurveTo(x - w * 0.6, y - h * 0.55, x - w * 0.25, y - h, x, y - h); c.bezierCurveTo(x + w * 0.25, y - h, x + w * 0.6, y - h * 0.55, x + w * 0.34, y); c.closePath(); },
+      sagrada: function (c, x, y, w, h) { rect(c, x, y, w, h * 0.3); [[-.38, .7], [-.22, .86], [-.08, .94], [.08, 1], [.22, .88], [.38, .72]].forEach(function (s) { sym(c, x + s[0] * w, y - h * 0.28, w * 0.1, h * (s[1] - 0.28), [[.5, 0], [.42, .7], [.2, .92], [0, 1]]); }); },
+      lighthouse: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.4, .45], [.5, .46], [.5, .5], [.36, .5], [.32, .86], [.42, .87], [.42, .9], [.2, .92], [.05, 1]]); },
+      twotowers: function (c, x, y, w, h) { c.rect(x - w * 0.3, y - h, w * 0.18, h); c.rect(x + w * 0.12, y - h * 0.48, w * 0.2, h * 0.48); },
+      parliament: function (c, x, y, w, h) { rect(c, x, y, w, h * 0.34); LM.dome(c, x, y - h * 0.32, w * 0.2, h * 0.68); for (var i = 0; i < 10; i++) { var px = x - w * 0.46 + i * w * 0.1; if (Math.abs(px - x) < w * 0.1) continue; c.moveTo(px - w * 0.012, y - h * 0.34); c.lineTo(px, y - h * 0.5); c.lineTo(px + w * 0.012, y - h * 0.34); c.closePath(); } },
+      stalin: function (c, x, y, w, h) { sym(c, x, y, w, h, [[.5, 0], [.5, .3], [.36, .3], [.36, .48], [.24, .48], [.24, .62], [.15, .63], [.13, .78], [.05, .8], [.006, 1]]); },
+      blocks: function (c, x, y, w, h, p) { var R = rnd(p || 7); for (var i = 0; i < 7; i++) { var bw = w * (0.08 + R() * 0.08), bx = x - w / 2 + i * w / 7; var hh = h * (0.35 + R() * 0.65); c.rect(bx, y - hh, bw, hh); } },
+      houses: function (c, x, y, w, h) { for (var i = 0; i < 7; i++) { var bx = x - w / 2 + i * w / 7, bw = w / 7 * 0.92, hh = h * (0.7 + ((i * 37) % 5) / 15); c.moveTo(bx, y); c.lineTo(bx, y - hh); c.lineTo(bx + bw * 0.2, y - hh); c.lineTo(bx + bw * 0.2, y - hh - h * 0.12); c.lineTo(bx + bw * 0.5, y - hh - h * 0.3); c.lineTo(bx + bw * 0.8, y - hh - h * 0.12); c.lineTo(bx + bw * 0.8, y - hh); c.lineTo(bx + bw, y - hh); c.lineTo(bx + bw, y); c.closePath(); } },
+    };
+    var STROKED = { wheel: 1, bridge: 1, archbridge: 1 };
+    // [shape, x (-1 left .. 1 right of the core), height, width, extra]
+    var CITIES = {
+      // Italy
+      "rome": [["colosseum", -0.55, .13, .3], ["dome", 0.4, .24, .16], ["obelisk", 0.75, .16, .02], ["blocks", -0.95, .07, .2]],
+      "milan": [["gothic", -0.45, .24, .44], ["taper", 0.3, .3, .06], ["needle", 0.5, .34, .05], ["tower", 0.7, .22, .07, 2], ["blocks", 0.92, .1, .18]],
+      "turin": [["mole", -0.35, .36, .1], ["dome", 0.55, .18, .16], ["hill", 0.8, .1, .4], ["blocks", -0.8, .08, .2]],
+      "alessandria": [["campanile", -0.35, .3, .06], ["archbridge", 0.45, .09, .32], ["castle", -0.8, .05, .34], ["dome", 0.85, .14, .12], ["blocks", 0.15, .07, .18]],
+      "florence": [["dome", -0.3, .26, .2], ["campanile", 0.2, .24, .05], ["campanile", 0.6, .2, .045], ["hill", 0.9, .08, .4]],
+      "venice": [["campanile", -0.3, .3, .06], ["dome", 0.3, .14, .14], ["dome", 0.55, .12, .12], ["houses", -0.75, .07, .3]],
+      "naples": [["volcano", 0.55, .2, .7], ["castle", -0.4, .06, .26], ["dome", -0.75, .12, .1], ["blocks", 0.15, .07, .2]],
+      "pisa": [["leaning", -0.3, .24, .07], ["dome", 0.3, .16, .2], ["campanile", 0.7, .12, .05]],
+      "bologna": [["twotowers", -0.25, .34, .12], ["gothic", 0.45, .16, .24], ["houses", -0.75, .07, .3]],
+      "genoa": [["lighthouse", -0.4, .3, .05], ["blocks", 0.3, .12, .3], ["hill", 0.8, .1, .4]],
+      // Europe
+      "london": [["clock", -0.35, .3, .06], ["wheel", -0.75, .2, .2], ["shard", 0.35, .34, .09], ["gherkin", 0.6, .2, .07], ["dome", 0.85, .16, .14]],
+      "paris": [["lattice", -0.3, .4, .16], ["arch", 0.4, .12, .1], ["tower", 0.75, .2, .07, 1], ["dome", -0.75, .14, .12]],
+      "berlin": [["tv", -0.3, .4, .12, "ball"], ["gate", 0.4, .1, .18], ["dome", 0.75, .15, .16], ["blocks", -0.8, .1, .22]],
+      "madrid": [["tower", -0.5, .28, .06, 2], ["tower", -0.32, .3, .06, 1], ["taper", 0.3, .3, .06], ["gate", 0.7, .09, .18], ["dome", -0.85, .12, .12]],
+      "barcelona": [["sagrada", -0.3, .32, .22], ["gherkin", 0.45, .22, .07], ["hill", 0.85, .08, .4], ["blocks", -0.85, .08, .2]],
+      "lisbon": [["bridge", 0.45, .18, .6], ["castle", -0.5, .08, .3], ["tower", -0.85, .1, .05, 3]],
+      "amsterdam": [["houses", -0.5, .08, .45], ["campanile", 0.3, .2, .05], ["houses", 0.7, .07, .4]],
+      "brussels": [["gothic", -0.35, .26, .26], ["tower", 0.4, .18, .08, 2], ["blocks", 0.8, .1, .22]],
+      "vienna": [["gothic", -0.35, .3, .2], ["wheel", 0.45, .18, .18], ["dome", 0.85, .14, .14], ["blocks", -0.85, .08, .2]],
+      "prague": [["twinspire", -0.4, .26, .16], ["castle", -0.75, .07, .34], ["dome", 0.4, .13, .12], ["campanile", 0.75, .18, .05]],
+      "budapest": [["parliament", -0.3, .24, .45], ["dome", 0.5, .2, .16], ["bridge", 0.85, .1, .3]],
+      "warsaw": [["stalin", -0.3, .38, .14], ["taper", 0.4, .3, .06], ["blocks", 0.75, .14, .22]],
+      "moscow": [["onion", -0.4, .26, .22], ["stalin", 0.45, .34, .14], ["campanile", 0.8, .22, .05]],
+      "athens": [["temple", -0.3, .22, .42], ["hill", 0.6, .12, .5]],
+      "istanbul": [["mosque", -0.35, .3, .3], ["mosque", 0.4, .26, .26], ["tower", 0.85, .14, .04, 1]],
+      "dublin": [["needle", -0.2, .36, .015], ["dome", 0.4, .12, .14], ["houses", -0.7, .07, .35]],
+      "stockholm": [["campanile", -0.3, .26, .07], ["twinspire", 0.4, .18, .12], ["houses", 0.8, .07, .3]],
+      "copenhagen": [["campanile", -0.3, .24, .05], ["dome", 0.3, .16, .14], ["houses", -0.75, .07, .32]],
+      "oslo": [["twotowers", -0.3, .2, .14], ["shells", 0.45, .1, .3], ["hill", 0.85, .08, .4]],
+      "helsinki": [["dome", -0.3, .22, .2], ["onion", 0.45, .18, .16], ["houses", 0.85, .06, .3]],
+      "zurich": [["twinspire", -0.3, .2, .12], ["campanile", 0.3, .2, .05], ["hill", 0.8, .14, .5]],
+      "munich": [["twinspire", -0.35, .24, .14], ["tv", 0.4, .34, .07, "disc"], ["blocks", 0.85, .08, .2]],
+      "cologne": [["twinspire", -0.25, .36, .18], ["archbridge", 0.5, .07, .35]],
+      "frankfurt": [["tower", -0.4, .32, .07, 2], ["taper", -0.2, .3, .06], ["tv", 0.35, .32, .06, "disc"], ["blocks", 0.7, .2, .25]],
+      "kyiv": [["onion", -0.3, .2, .2], ["dome", 0.4, .18, .14], ["blocks", 0.8, .1, .2]],
+      "bern": [["campanile", -0.3, .24, .05], ["dome", 0.35, .16, .2], ["hill", 0.85, .1, .4]],
+      "reykjavik": [["stalin", -0.25, .3, .16], ["houses", 0.45, .06, .35], ["mesa", 0.85, .08, .35]],
+      "edinburgh": [["castle", -0.4, .14, .36], ["hill", -0.4, .07, .5], ["needle", 0.35, .2, .04], ["houses", 0.75, .07, .3]],
+      // Americas
+      "new-york": [["empire", -0.35, .36, .08], ["chrysler", -0.6, .3, .06], ["onewtc", 0.35, .42, .08], ["bridge", 0.75, .14, .4], ["blocks", -0.85, .16, .2]],
+      "washington": [["obelisk", -0.2, .36, .035], ["capitol", 0.45, .2, .3], ["blocks", -0.75, .07, .2]],
+      "chicago": [["willis", -0.3, .4, .08], ["taper", 0.3, .34, .07], ["blocks", 0.65, .2, .25], ["blocks", -0.75, .18, .22]],
+      "los-angeles": [["tower", -0.3, .3, .08, 2], ["taper", -0.1, .26, .05], ["hill", 0.6, .12, .6], ["blocks", -0.7, .14, .24]],
+      "san-francisco": [["pyramid", -0.35, .3, .07], ["bridge", 0.5, .2, .55], ["blocks", -0.75, .12, .2]],
+      "seattle": [["tv", -0.3, .34, .14, "saucer"], ["blocks", 0.3, .16, .3], ["volcano", 0.8, .14, .45]],
+      "las-vegas": [["tv", -0.4, .38, .07, "disc"], ["lattice", 0.4, .2, .08], ["pyramid", 0.75, .1, .16], ["blocks", -0.8, .1, .22]],
+      "miami": [["blocks", -0.5, .2, .4], ["tower", 0.4, .26, .06, 3], ["blocks", 0.75, .16, .3]],
+      "boston": [["tower", -0.3, .28, .07, 1], ["obelisk", 0.35, .14, .03], ["blocks", 0.7, .12, .25]],
+      "toronto": [["tv", -0.25, .42, .07, "disc"], ["blocks", 0.3, .2, .35], ["blocks", -0.7, .12, .22]],
+      "montreal": [["hill", 0.5, .1, .6], ["needle", -0.3, .2, .08], ["blocks", -0.75, .12, .25]],
+      "vancouver": [["blocks", -0.4, .14, .4], ["mesa", 0.6, .16, .6], ["tower", 0.2, .2, .05, 2]],
+      "mexico-city": [["tower", -0.3, .26, .06, 3], ["needle", 0.3, .2, .02], ["volcano", 0.8, .14, .45], ["blocks", -0.75, .1, .22]],
+      "sao-paulo": [["blocks", -0.5, .18, .45], ["tower", 0.35, .24, .06, 2], ["blocks", 0.75, .16, .3]],
+      "rio-de-janeiro": [["hill", -0.4, .22, .25], ["hill", 0.5, .16, .4], ["blocks", 0.0, .07, .2]],
+      "buenos-aires": [["obelisk", -0.2, .3, .035], ["capitol", 0.45, .18, .24], ["blocks", -0.7, .12, .24]],
+      "ottawa": [["campanile", -0.25, .3, .06], ["gothic", -0.6, .16, .3], ["blocks", 0.5, .1, .3]],
+      "havana": [["capitol", -0.3, .24, .3], ["lighthouse", 0.5, .16, .04], ["houses", 0.85, .06, .3]],
+      "lima": [["twinspire", -0.3, .16, .14], ["blocks", 0.4, .14, .35], ["hill", 0.85, .1, .4]],
+      "bogota": [["taper", -0.3, .26, .06], ["hill", 0.55, .2, .7], ["blocks", -0.75, .12, .22]],
+      "santiago": [["taper", -0.25, .4, .06], ["mesa", 0.55, .22, .8], ["blocks", -0.7, .12, .25]],
+      // Asia and the Middle East
+      "tokyo": [["lattice", -0.35, .34, .12], ["skytree", 0.35, .44, .08], ["blocks", 0.75, .16, .25], ["volcano", -0.85, .1, .3]],
+      "beijing": [["roundtemple", -0.35, .22, .2], ["cctv", 0.35, .26, .14], ["pagoda", 0.8, .16, .1], ["blocks", -0.8, .1, .2]],
+      "shanghai": [["pearl", -0.35, .36, .12], ["taper", 0.25, .44, .08], ["bottle", 0.5, .4, .07], ["tower", 0.72, .34, .06, 4]],
+      "hong-kong": [["taper", -0.3, .38, .07], ["boc", 0.25, .34, .07], ["blocks", 0.6, .2, .3], ["hill", -0.75, .16, .5]],
+      "shenzhen": [["taper", -0.3, .42, .07], ["tower", 0.2, .34, .07, 3], ["blocks", 0.65, .2, .3]],
+      "seoul": [["tv", -0.4, .32, .07, "disc"], ["taper", 0.35, .42, .07], ["pagoda", 0.75, .1, .14], ["hill", -0.8, .1, .35]],
+      "singapore": [["mbs", -0.3, .2, .26], ["wheel", 0.35, .18, .16], ["blocks", 0.75, .2, .28]],
+      "kuala-lumpur": [["twin", -0.25, .4, .2], ["tv", 0.4, .32, .06, "disc"], ["blocks", 0.8, .14, .22]],
+      "taipei": [["taipei", -0.2, .44, .1], ["hill", 0.6, .1, .5], ["blocks", -0.7, .1, .22]],
+      "osaka": [["pagoda", -0.3, .2, .16], ["tv", 0.3, .24, .05, "disc"], ["blocks", 0.7, .16, .3]],
+      "kyoto": [["pagoda", -0.3, .26, .12], ["tv", 0.35, .18, .05, "disc"], ["hill", 0.8, .1, .4]],
+      "hanoi": [["pagoda", -0.3, .16, .12], ["tower", 0.35, .3, .06, 3], ["blocks", 0.75, .12, .25]],
+      "manila": [["blocks", -0.45, .2, .4], ["dome", 0.35, .14, .14], ["tower", 0.7, .22, .06, 2]],
+      "jakarta": [["obelisk", -0.25, .3, .04], ["blocks", 0.4, .2, .4], ["mosque", -0.75, .16, .24]],
+      "kathmandu": [["pagoda", -0.3, .18, .14], ["dome", 0.3, .12, .14], ["mesa", 0.8, .16, .5]],
+      "tehran": [["tv", -0.3, .4, .08, "disc"], ["arch", 0.35, .14, .12], ["mesa", 0.8, .16, .5]],
+      "ankara": [["tv", -0.3, .3, .06, "disc"], ["mosque", 0.4, .2, .3]],
+      "bangkok": [["prang", -0.3, .26, .14], ["tower", 0.35, .3, .07, 3], ["blocks", 0.75, .14, .25]],
+      "mumbai": [["arch", -0.35, .14, .12], ["blocks", 0.3, .22, .35], ["dome", -0.75, .14, .12]],
+      "delhi": [["arch", -0.3, .16, .08], ["minaret", 0.3, .24, .05], ["mosque", 0.75, .18, .24]],
+      "dubai": [["burj", -0.2, .48, .07], ["sail", 0.4, .26, .08], ["frame", 0.75, .16, .1], ["blocks", -0.7, .18, .25]],
+      "abu-dhabi": [["mosque", -0.3, .22, .36], ["blocks", 0.45, .18, .3]],
+      "doha": [["gherkin", -0.3, .3, .07], ["blocks", 0.3, .2, .35]],
+      "riyadh": [["kingdom", -0.3, .34, .08], ["taper", 0.3, .32, .06], ["blocks", 0.7, .12, .25]],
+      "tel-aviv": [["blocks", -0.4, .2, .4], ["tower", 0.4, .24, .06, 2]],
+      "cairo": [["pyramid", -0.5, .2, .3], ["pyramid", -0.2, .16, .24], ["tv", 0.45, .3, .06, "disc"], ["minaret", 0.8, .2, .04]],
+      // Oceania and Africa
+      "sydney": [["shells", -0.35, .14, .3], ["archbridge", 0.4, .14, .45], ["tv", 0.85, .26, .05, "disc"]],
+      "melbourne": [["taper", -0.3, .34, .06], ["blocks", 0.35, .2, .35], ["tower", -0.7, .2, .05, 2]],
+      "auckland": [["tv", -0.2, .4, .08, "disc"], ["volcano", 0.6, .1, .4], ["blocks", -0.7, .1, .22]],
+      "cape-town": [["mesa", 0.45, .2, .6], ["blocks", -0.5, .08, .3]],
+      "johannesburg": [["tv", -0.3, .3, .06, "ball"], ["blocks", 0.3, .2, .35]],
+      "lagos": [["blocks", -0.45, .18, .4], ["tower", 0.35, .24, .06, 2], ["archbridge", 0.75, .06, .3]],
+      "nairobi": [["tower", -0.3, .22, .07, 2], ["roundtemple", 0.3, .14, .1], ["blocks", 0.7, .12, .24]],
+    };
+    var city = "", cityTops = [];
+    function drawCity(b, hz, cx, R) {
+      cityTops = [];
+      var list = CITIES[city];
+      if (!list) return;
+      var ex = R * 1.25, left = [band[0], cx - ex], right = [cx + ex, band[1]];
+      var body = mix(COL.bg, COL.accent2, 0.3), R2 = rnd(97);
+      list.forEach(function (l) {
+        var side = l[1] < 0 ? left : right, u = Math.abs(l[1]);
+        var x = l[1] < 0 ? side[1] - u * (side[1] - side[0]) : side[0] + u * (side[1] - side[0]);
+        var nat = l[0] === "hill" || l[0] === "mesa" || l[0] === "volcano", flat = nat || l[0] === "blocks" || l[0] === "houses";
+        var h = (flat ? l[2] * 1.1 : 0.05 + l[2] * 1.2) * H, w = l[3] * H * (flat ? 1 : 1.2);
+        b.beginPath();
+        LM[l[0]](b, x, hz, w, h, l[4]);
+        // a soft glow behind it, so the outline reads against the sky
+        b.save(); b.shadowColor = rgba(COL.accent2, 0.55); b.shadowBlur = H / 60;
+        if (STROKED[l[0]]) { b.strokeStyle = rgba(mix(body, COL.fg, 0.45), 1); b.lineWidth = Math.max(1.2, H / 420); b.stroke(); b.restore(); }
+        else {
+          var gr = b.createLinearGradient(0, hz - h, 0, hz);
+          gr.addColorStop(0, rgba(mix(body, COL.accent2, 0.35), 1)); gr.addColorStop(1, rgba(mix(body, [0, 0, 0], 0.3), 1));
+          b.fillStyle = gr; b.fill("evenodd"); b.restore();
+          b.strokeStyle = rgba(mix(COL.accent2, COL.fg, 0.35), 0.75); b.lineWidth = Math.max(1, H / 800); b.stroke();
+          // lit windows, only inside the outline
+          var nwin = nat ? 0 : flat ? 30 : Math.round(12 + 90 * w * h / (H * H) * 10);
+          for (var k = 0; k < nwin; k++) {
+            var px = x + (R2() - 0.5) * w, py = hz - R2() * h * 0.9, ws = Math.max(1, H / 500);
+            if (b.isPointInPath(px, py, "evenodd")) { b.fillStyle = rgba(R2() < 0.3 ? COL.warn : COL.accent, 0.35 + R2() * 0.45); b.fillRect(px, py, ws, ws * 1.4); }
+          }
+        }
+        if (l[0] !== "blocks" && l[0] !== "houses" && l[0] !== "hill" && l[0] !== "mesa" && l[0] !== "volcano" && l[2] > 0.15) cityTops.push([x, hz - h]);
+      });
     }
     // what never moves is painted once: sky, floor, the far ridge and the far city
     var bgc = document.createElement("canvas");
@@ -542,12 +848,13 @@
       b.strokeStyle = rgba(a2, 0.35); b.lineWidth = Math.max(1, H / 900); b.stroke();
       var R = H * (kind === "sphere" ? 0.18 : 0.15);
       b.fillStyle = rgba(mix(bg, a2, 0.18), 1);
-      for (i = 0; i < far.length; i++) { var f = far[i]; if (kind !== "sphere" && f[0] + f[1] > cx - R * 1.1 && f[0] < cx + R * 1.1) continue; b.fillRect(f[0], hz - f[2], f[1], f[2]); }
+      for (i = 0; i < far.length; i++) { var f = far[i]; if (kind !== "sphere" && f[0] + f[1] > cx - R * 1.1 && f[0] < cx + R * 1.1) continue; b.fillRect(f[0], hz - f[2], f[1], f[2] * (CITIES[city] ? 0.6 : 1)); }
+      drawCity(b, hz, cx, H * (kind === "sphere" ? 0.165 : kind === "orbit" ? 0.3 : 0.14));   // your city, in front of the far blocks
     }
     function reset() { resize(); }
 
     function beat(now) {
-      var bpm = 46 + cpu * 0.95;
+      var bpm = heartBpm || 46 + cpu * 0.95;   // your heart, when you connect one; else the CPU
       if ((now - beatAt) / 1000 > 60 / bpm) {
         beatAt = now;
         spikes.push({ born: now, col: null, amp: 0.6 + cpu / 140 });
@@ -625,6 +932,9 @@
     }
     function faceMood(t) {
       var a = mainAgent();
+      if (listenSt && listenSt.state === "listening") return "listen";
+      if (listenSt && listenSt.state === "thinking") return "think";
+      if (speakingOn) return "talk";
       if (away && face !== "off") return "sleep";
       if (face !== "off" && performance.now() - wakeAt < 2600) return "wake";
       if (typing) return "talk";
@@ -638,6 +948,7 @@
       var blink = mood === "idle" || mood === "think" ? ((t % 4.2) < 0.13 ? 0.12 : 1) : 1;
       if (mood === "wake") blink = Math.min(1, Math.max(0.1, (performance.now() - wakeAt) / 1100));
       if (mood === "alert") { eyeW *= 1.15; eyeH *= 1.2; if (!fixed) ec = COL.warn; }
+      if (mood === "listen") { eyeW *= 1.1; eyeH *= 1.12; lookY -= s * 0.03; }
       if (mood === "sad" && !fixed) ec = COL.crit;
       c.fillStyle = rgba(ec, 0.95); c.strokeStyle = rgba(ec, 0.95); c.lineWidth = Math.max(1.5, s * 0.07); c.lineCap = "round";
       [-1, 1].forEach(function (side) {
@@ -669,6 +980,10 @@
       else if (mood === "sad") c.arc(x, my + s * 0.08, s * 0.13, Math.PI * 1.2, Math.PI * 1.8);
       else if (mood === "alert") { c.arc(x, my, s * 0.06, 0, Math.PI * 2); }
       else if (mood === "talk") { var o = (0.3 + 0.7 * Math.abs(Math.sin(t * 9))) * s * 0.09; c.ellipse(x, my, s * 0.1, o, 0, 0, Math.PI * 2); c.fill(); return; }
+      else if (mood === "listen") {   // listening: a small level meter where the mouth is
+        for (var li = -2; li <= 2; li++) { var lh = s * (0.03 + 0.07 * Math.abs(Math.sin(t * 7 + li * 1.3))); c.fillRect(x + li * s * 0.05 - s * 0.015, my - lh / 2, s * 0.03, lh); }
+        return;
+      }
       else { c.moveTo(x - s * 0.08, my); c.lineTo(x + s * 0.08, my); }
       c.stroke();
       if (mood === "think") {   // thinking dots
@@ -682,6 +997,9 @@
     function sphereProgram(t) {
       if (Q.get("prog")) return Q.get("prog");
       if (alertEnv > 0.25) return "alert";
+      if (listenSt || speakingOn) return "face";
+      var Lc = space && space.launch, tlc = Lc ? Lc.net - Date.now() / 1000 : -1;
+      if (Lc && Lc.status === "Go" && tlc > 0 && tlc < 3600) return "launch";
       if (away && face !== "off") return "face";
       if (focus) return "focus";
       if (faceMood(t)) return "face";
@@ -743,6 +1061,11 @@
         var pulse = 0.55 + 0.45 * Math.sin(t * 8);
         c.fillStyle = rgba(COL.crit, 0.55 * pulse + 0.2); c.fillRect(0, 0, TW, TH);
         at(function (x) { txt2("!", x, TH * 0.52, 56, fg); });
+      } else if (prog === "launch") {   // the countdown of the next launch
+        var L = space.launch, tl = Math.max(0, L.net - Date.now() / 1000), lm = Math.floor(tl / 60), ls = Math.floor(tl % 60);
+        at(function (x) { txt2("T-MINUS", x, TH * 0.2, 9, fg, 700);
+          txt2((lm < 10 ? "0" : "") + lm + ":" + (ls < 10 ? "0" : "") + ls, x, TH * 0.5, 26, fg);
+          txt2(String(L.rocket || "").toUpperCase().slice(0, 12), x, TH * 0.76, 9, fg, 700); });
       } else if (prog === "focus") {
         var left = Math.max(0, focus.until - Date.now() / 1000), tot = Math.max(1, focus.until - focus.start);
         var mm = Math.floor(left / 60), ss = Math.floor(left % 60);
@@ -918,7 +1241,7 @@
         });
         g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.35), 1);
         g.beginPath(); g.ellipse(0, 0, s * 0.62, s * 0.3, 0, 0, Math.PI * 2); g.fill();
-        g.strokeStyle = rgba(col, 0.95); g.lineWidth = Math.max(1, s * 0.07); g.stroke();
+        g.strokeStyle = rgba(a.crew ? COL.accent2 : col, 0.95); g.lineWidth = Math.max(1, s * (a.crew ? 0.12 : 0.07)); g.stroke();
         g.fillStyle = rgba(col, blinkOn ? 1 : 0.3); g.beginPath(); g.arc(0, s * 0.12, s * 0.16, 0, Math.PI * 2); g.fill();   // its eye
         if ((t * 1.3 + d.ph) % 1 < 0.15) {   // navigation lights
           g.fillStyle = rgba(COL.crit, 1); g.fillRect(-s * 1.32, -s * 0.5, s * 0.14, s * 0.14);
@@ -928,7 +1251,7 @@
         if (d.land > 0.95 && !d.boom) { d.boom = 1; burst(x, y, col, COL.fg, 40, H * 0.004); }
         if (!down) d.boom = 0;
         var mins = Math.max(0, Math.floor((Date.now() / 1000 - (a.since || a.t)) / 60));
-        var html = '<i style="background:' + rgba(col, 1) + '"></i>' + esc(a.name) + (a.text ? ' <span>' + esc(a.text) + "</span>" : "") +
+        var html = '<i style="background:' + rgba(col, 1) + '"></i>' + (a.crew ? "<u>crew</u> " : "") + esc(a.name) + (a.text && !a.crew ? ' <span>' + esc(a.text) + "</span>" : "") +
           (a.state === "working" && mins ? ' <b>' + mins + "m</b>" : "") + (a.state === "waiting" ? " <b>!</b>" : "");
         if (d.el._h !== html) { d.el.innerHTML = html; d.el._h = html; }
         d.el.style.transform = "translate(" + (x * sx | 0) + "px," + ((y + s * 0.9) * sx | 0) + "px) translateX(-50%)";
@@ -975,6 +1298,94 @@
       }
       g.globalCompositeOperation = "source-over";
     }
+    // ---------------- the Git city: your repositories are towers; this week's commits make them tall
+    function drawGit(t, hz, cx, R) {
+      if (!gitRepos.length || kind === "orbit" || kind === "calm") return;
+      var n = Math.min(gitRepos.length, 8), ex = R * 1.2, sideW = [cx - ex - band[0], band[1] - cx - ex], half = Math.ceil(n / 2);
+      var maxW = 1; gitRepos.forEach(function (r) { if (r.week > maxW) maxW = r.week; });
+      gitPos = {};
+      for (var i = 0; i < n; i++) {
+        var r = gitRepos[i], right = i % 2 === 1, k = i >> 1;
+        var slotW = sideW[right ? 1 : 0] / half, bw = Math.min(slotW * 0.42, H * 0.05);
+        var x = right ? cx + ex + (k + 0.5) * slotW : cx - ex - (k + 0.5) * slotW;
+        var hh = H * (0.09 + 0.22 * Math.log(1 + r.week) / Math.log(1 + maxW)) * (CITIES[city] ? 0.85 : 1);
+        var fl = Math.max(0, 1 - (t - (gitFlash[r.name] || -99)) / 2.5);
+        var gr = g.createLinearGradient(0, hz - hh, 0, hz);
+        gr.addColorStop(0, rgba(mix(mix(COL.bg, COL.accent, 0.22), COL.fg, fl * 0.5), 1)); gr.addColorStop(1, rgba(mix(COL.bg, [0, 0, 0], 0.2), 1));
+        g.fillStyle = gr; g.fillRect(x - bw / 2, hz - hh, bw, hh);
+        g.strokeStyle = rgba(COL.accent, 0.55 + fl * 0.45); g.lineWidth = Math.max(1, H / 700); g.strokeRect(x - bw / 2, hz - hh, bw, hh);
+        // windows: one row per day of work; uncommitted changes flicker amber
+        var rows = Math.min(14, Math.floor(hh / (H * 0.018))), cols = 3;
+        for (var ry = 0; ry < rows; ry++) for (var cxi = 0; cxi < cols; cxi++) {
+          var on = ((i * 31 + ry * 7 + cxi * 3) % 5) < 3, dirty = r.dirty && ry < 2 && (t * 2 + cxi) % 2 < 1;
+          if (!on && !dirty) continue;
+          g.fillStyle = rgba(dirty ? COL.warn : COL.accent, dirty ? 0.9 : 0.35 + 0.4 * fl + 0.2 * ((ry + cxi) % 2));
+          g.fillRect(x - bw / 2 + bw * (0.15 + cxi * 0.27), hz - hh + H * 0.012 + ry * H * 0.018, bw * 0.16, H * 0.008);
+        }
+        // the beacon on top: green CI, red failed (blinking), amber running
+        var bc = r.ci === "ok" ? COL.ok : r.ci === "fail" ? COL.crit : r.ci === "run" ? COL.warn : COL.accent2;
+        var blink = r.ci === "fail" || r.ci === "run" ? (t * 2 % 1) < 0.5 : true;
+        g.fillStyle = rgba(bc, blink ? 1 : 0.25); g.fillRect(x - H / 600, hz - hh - H * 0.022, H / 300, H * 0.022);
+        var bg2 = g.createRadialGradient(x, hz - hh - H * 0.022, 0, x, hz - hh - H * 0.022, H * 0.025);
+        bg2.addColorStop(0, rgba(bc, blink ? 0.6 : 0.1)); bg2.addColorStop(1, rgba(bc, 0));
+        g.fillStyle = bg2; g.fillRect(x - H * 0.025, hz - hh - H * 0.047, H * 0.05, H * 0.05);
+        if (r.name) {
+          g.font = "600 " + Math.round(H * 0.013) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "center";
+          g.fillStyle = rgba(COL.fg, 0.55 + fl * 0.45); g.fillText(r.name + (r.week ? " · " + r.week : ""), x, hz - hh - H * 0.03);
+        }
+        gitPos[r.name] = [x, hz - hh];
+      }
+    }
+    // ---------------- the ISS, when it really passes over you (its place in your sky, from its orbit)
+    function drawISS(t, hz) {
+      var iss = space && space.iss;
+      if (!iss) { issPos = null; issTrail = []; return; }
+      var tx = W / 2 + Math.max(-1.05, Math.min(1.05, (iss.az - 180) / 90)) * W * 0.44, ty = hz - H * 0.05 - (iss.el / 90) * hz * 0.6;
+      issPos = issPos ? [issPos[0] + (tx - issPos[0]) * 0.08, issPos[1] + (ty - issPos[1]) * 0.08] : [tx, ty];
+      issTrail.push(issPos.slice()); if (issTrail.length > 60) issTrail.shift();
+      g.globalCompositeOperation = "lighter";
+      for (var i = 1; i < issTrail.length; i++) { g.strokeStyle = rgba(COL.fg, 0.4 * i / issTrail.length); g.lineWidth = Math.max(1, H / 600); g.beginPath(); g.moveTo(issTrail[i - 1][0], issTrail[i - 1][1]); g.lineTo(issTrail[i][0], issTrail[i][1]); g.stroke(); }
+      var lit = iss.lit !== false, gl = g.createRadialGradient(issPos[0], issPos[1], 0, issPos[0], issPos[1], H * 0.03);
+      gl.addColorStop(0, rgba(lit ? COL.fg : COL.accent2, 0.95)); gl.addColorStop(0.15, rgba(lit ? COL.fg : COL.accent2, 0.5)); gl.addColorStop(1, rgba(COL.fg, 0));
+      g.fillStyle = gl; g.fillRect(issPos[0] - H * 0.03, issPos[1] - H * 0.03, H * 0.06, H * 0.06);
+      g.globalCompositeOperation = "source-over";
+      g.fillStyle = rgba(COL.fg, 1); g.fillRect(issPos[0] - H / 220, issPos[1] - H / 1400, H / 110, H / 700);   // the solar wings
+      g.fillRect(issPos[0] - H / 1400, issPos[1] - H / 450, H / 700, H / 225);
+      g.font = "600 " + Math.round(H * 0.014) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "left";
+      g.fillStyle = rgba(COL.fg, 0.85); g.fillText("ISS · " + iss.alt + " km · " + Math.round(iss.el) + "°", issPos[0] + H * 0.02, issPos[1] - H * 0.012);
+    }
+    // ---------------- liftoff: a rocket climbs from your horizon, arcs over, leaves its trail
+    function drawLiftoffs(t, hz) {
+      var keep = [];
+      for (var i = 0; i < liftoffs.length; i++) {
+        var L = liftoffs[i], age = t - L.t;
+        if (age > 16) continue;
+        keep.push(L);
+        var big = L.big ? 1.6 : 1, x0 = band[0] + (band[1] - band[0]) * 0.14, climb = Math.min(1, age / 15);
+        var y = hz - H * 0.9 * Math.pow(climb, 1.6), x = x0 + W * 0.3 * Math.pow(climb, 2.4);
+        var ang = Math.atan2(W * 0.3 * 2.4 * Math.pow(climb, 1.4), H * 0.9 * 1.6 * Math.pow(climb, 0.6) + 1e-3);
+        L.trail.push([x, y]); if (L.trail.length > 140) L.trail.shift();
+        g.globalCompositeOperation = "lighter";
+        for (var k = 1; k < L.trail.length; k++) {   // the trail, warm near the engine, then smoke
+          var u = k / L.trail.length;
+          g.strokeStyle = rgba(u > 0.85 ? COL.warn : mix(COL.fg, COL.accent2, 0.4), (u > 0.85 ? 0.8 : 0.25) * u);
+          g.lineWidth = Math.max(1, H / 400) * (1 + (1 - u) * 5) * big;
+          g.beginPath(); g.moveTo(L.trail[k - 1][0], L.trail[k - 1][1]); g.lineTo(L.trail[k][0], L.trail[k][1]); g.stroke();
+        }
+        if (age < 1.2) { var fl = g.createRadialGradient(x0, hz, 0, x0, hz, H * 0.15 * big); fl.addColorStop(0, rgba(COL.warn, 0.7 * (1 - age / 1.2))); fl.addColorStop(1, rgba(COL.warn, 0)); g.fillStyle = fl; g.fillRect(x0 - H * 0.15 * big, hz - H * 0.15 * big, H * 0.3 * big, H * 0.3 * big); }
+        var fg2 = g.createRadialGradient(x, y + H * 0.02 * big, 0, x, y + H * 0.02 * big, H * 0.045 * big);   // the flame
+        fg2.addColorStop(0, rgba(COL.fg, 0.95)); fg2.addColorStop(0.3, rgba(COL.warn, 0.8)); fg2.addColorStop(1, rgba(COL.warn, 0));
+        g.fillStyle = fg2; g.fillRect(x - H * 0.045 * big, y - H * 0.025 * big, H * 0.09 * big, H * 0.09 * big);
+        g.globalCompositeOperation = "source-over";
+        g.save(); g.translate(x, y); g.rotate(ang);
+        var rw = H * 0.006 * big, rh = H * 0.05 * big;
+        g.fillStyle = rgba(mix(COL.fg, COL.bg, 0.1), 1); g.fillRect(-rw / 2, -rh, rw, rh);
+        g.beginPath(); g.moveTo(-rw / 2, -rh); g.lineTo(0, -rh - rw * 1.6); g.lineTo(rw / 2, -rh); g.fill();
+        g.restore();
+        if (age < 6) { g.font = "600 " + Math.round(H * 0.016) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "left"; g.fillStyle = rgba(COL.fg, 0.9 * (1 - age / 6)); g.fillText(L.name, x + H * 0.03, y); }
+      }
+      liftoffs = keep;
+    }
     function drawShooting() {
       var keep = [];
       for (var i = 0; i < shooting.length; i++) {
@@ -1006,6 +1417,8 @@
         var gl2 = Math.sqrt(gx * gx + gy * gy); if (gl2 > 1) { gx /= gl2; gy /= gl2; }
       }
       gaze.x += (gx - gaze.x) * 0.18; gaze.y += (gy - gaze.y) * 0.18;
+      // the red lights on top of your city's landmarks
+      if ((t % 1.7) < 0.22) { g.fillStyle = rgba(COL.crit, 0.95); for (var ci = 0; ci < cityTops.length; ci++) g.fillRect(cityTops[ci][0] - H / 700, cityTops[ci][1] - H / 300, H / 350, H / 350); }
       // stars (fewer when it is cloudy, none by day)
       var starA = phase === "day" ? 0.1 : phase !== "night" ? 0.45 : wx === "clear" || wx === "part" ? 1 : 0.35;
       for (var i = 0; i < stars.length; i++) {
@@ -1015,10 +1428,11 @@
         g.fillRect(st[0], st[1], ss, ss);
       }
       // aurora = network traffic
-      var na = Math.max(Math.min(1, Math.log10(1 + net) / 7.5), mid * 0.9);
+      var kp = space && space.kp || 0, kpA = kp >= 4 ? Math.min(1, (kp - 3) / 5) : 0;   // a geomagnetic storm: a real aurora
+      var na = Math.max(Math.min(1, Math.log10(1 + net) / 7.5), mid * 0.9, kpA);
       g.globalCompositeOperation = "lighter";
-      for (var k = 0; k < 2; k++) {
-        var col = k ? a2 : ac, base = H * (0.16 + k * 0.09);
+      for (var k = 0; k < (kpA ? 3 : 2); k++) {
+        var col = k === 2 ? COL.ok : k ? a2 : ac, base = H * (0.16 + k * 0.09) - (k === 2 ? H * 0.12 : 0);
         g.beginPath();
         for (var x = 0; x <= W; x += 14) {
           var y = base + Math.sin(x * 0.004 + t * (0.25 + k * 0.1) + k * 2) * H * 0.04 + Math.sin(x * 0.011 - t * 0.4) * H * 0.015;
@@ -1036,6 +1450,8 @@
       g.globalCompositeOperation = "source-over";
 
       drawShooting();
+      drawISS(t, hz);
+      if (now - flareAt < 2500) { g.fillStyle = rgba(COL.warn, 0.18 * (1 - (now - flareAt) / 2500)); g.fillRect(0, 0, W, hz); }   // a solar flare
       // the core: a wireframe sphere rising on the horizon, beating with the load (or the LED sphere)
       var R = H * (kind === "orbit" ? 0.15 : kind === "sphere" ? 0.165 : 0.135) * (1 + (kind === "sphere" ? 0.012 : 0.035) * beatEnv);
       var cy = kind === "orbit" ? hz - R * 1.02 : kind === "sphere" ? hz - R * 0.97 : hz;
@@ -1084,6 +1500,7 @@
           g.beginPath(); g.arc(px, py, Math.max(1.5, H / 300) * (front ? 1.4 : 0.9), 0, Math.PI * 2); g.fill();
         }
       } else {
+        drawGit(t, hz, cx, R);
         // far city (still), then the skyline: one tower per CPU core, its lit windows follow the RAM
         var nc = Math.min(Math.max(cores.length, 8), 32), side = Math.ceil(nc / 2);
         var inner = R * (kind === "sphere" ? 1.08 : 1.18), outer = Math.min(cx - band[0], band[1] - cx);
@@ -1092,7 +1509,7 @@
           var load = cores.length ? cores[i % cores.length] || 0 : cpu;
           if (music) load = Math.min(100, load * 0.4 + (audio[Math.min(audio.length - 1, (i / 2) | 0)] || 0) * 0.9);   // the city dances
           heights[i] = (heights[i] == null ? load : heights[i] + (load - heights[i]) * (music ? 0.35 : 0.06));
-          var hh = H * 0.035 + (heights[i] / 100) * H * 0.2 + ((i * 37) % 11) / 11 * H * 0.03;
+          var hh = (H * 0.035 + (heights[i] / 100) * H * 0.2 + ((i * 37) % 11) / 11 * H * 0.03) * (CITIES[city] ? 0.62 : 1);   // lower in front of a real city
           var s2 = i % 2 ? 1 : -1, idx = (i / 2) | 0;
           var bx = s2 > 0 ? cx + inner + idx * slot : cx - inner - idx * slot - bw;
           var tg = g.createLinearGradient(0, hz - hh, 0, hz);
@@ -1180,6 +1597,7 @@
       if (wx === "storm" && Math.random() < 0.004) flash = 1;
       if (flash > 0.02) { g.fillStyle = rgba(COL.fg, flash * 0.16); g.fillRect(0, 0, W, H); flash *= 0.8; }
       drawFireworks();
+      drawLiftoffs(t, hz);
       // an alert: a shockwave from the core
       if (alertEnv > 0.02 && alertCol) {
         var ar = R * (1 + (1 - alertEnv) * 6);
@@ -1211,7 +1629,7 @@
       if (covered) return;
       frameId = requestAnimationFrame(frame);
       if (paused && last) return;
-      var want = Math.min(Math.max(fps, (parts.length || rockets.length || music) && !paused ? 24 : 0), cap);
+      var want = Math.min(Math.max(fps, (parts.length || rockets.length || liftoffs.length || music) && !paused ? 24 : 0), cap);
       if (now - last < 1000 / want - 2) return;
       if (last) gap = gap * 0.9 + (now - last) * 0.1;
       last = now;
@@ -1238,6 +1656,15 @@
       },
       fx: function (f) {
         if (f.kind === "shooting") { shooting.push({ x: Math.random() * W * 0.6, y: H * 0.05, vx: W * 0.012, vy: H * 0.006, life: 1 }); return; }
+        var tnow = (performance.now() - t0) / 1000;
+        if (f.kind === "push" || f.kind === "commit") {   // a tower of the Git city lights up
+          var nm = String(f.text || "").split(" · ")[0]; gitFlash[nm] = tnow;
+          if (f.kind === "push") { var gp = gitPos[nm]; if (gp && fxOn) burst(gp[0], gp[1], COL.accent, COL.fg, 70, H * 0.006); fxText(f.text); }
+          return;
+        }
+        if (f.kind === "iss") { shooting.push({ x: W * 0.1, y: H * 0.08, vx: W * 0.01, vy: H * 0.002, life: 1 }); fxText(f.text); return; }
+        if (f.kind === "flare") { flareAt = performance.now(); fxText(f.text); return; }
+        if (f.kind === "launch") { var nmL = String(f.text || "").split(" · liftoff")[0]; liftoffs.push({ t: tnow, name: nmL, big: /starship/i.test(nmL), trail: [] }); fxText(f.text); return; }
         if (fxOn || f.kind !== "burst") fireworks(!!f.small, f.kind);
         if (f.text) fxText(f.text);
       },
@@ -1261,10 +1688,12 @@
         agents = st.agents || []; face = ui.face || "agents"; fxOn = ui.fireworks !== false; focus = st.focus || null;
         if (away && !st.away) wakeAt = performance.now();
         away = !!st.away; lan = st.lan || []; carsOn = ui.cars !== false; eyesOn = ui.eyes !== false; privacyOn = !!st.privacy;
+        gitRepos = st.git || []; space = st.space || {}; heartBpm = st.heart || null; listenSt = st.listen || null; speakingOn = !!st.speaking;
         deskEmpty = !(m && m.windows > 0);
         weatherNow = w && !w.error ? w : null; sunOn = ui.sun !== false;
         var ph = sunOn ? sunPhase(w) : "night";
-        if (ph + kind !== phaseKey) { phaseKey = ph + kind; phase = ph; paintStatic(); }
+        city = window.PULSE_CITY != null ? window.PULSE_CITY : Q.get("city") || ui.skyline || "";
+        if (ph + kind + city !== phaseKey) { phaseKey = ph + kind + city; phase = ph; paintStatic(); }
         var nw = (st.widgets || []).filter(function (x) { return x.id === "news" || x.id === "ai"; })[0];
         newsText = nw && nw.data ? (nw.data.items && nw.data.items[0] ? nw.data.items[0].title : String(nw.data.text || "").split("\n")[0]) : "";
         var cam = (st.widgets || []).filter(function (x) { return x.type === "image" && x.data && x.data.frame; })[0];

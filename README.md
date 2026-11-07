@@ -12,6 +12,8 @@ Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of
 - **it sees you**: the face's eyes follow your pointer, it falls asleep when you leave and, when you are back, tells
   you **what happened while you were away** (also aloud, with an offline voice)
 - **your network drives on the grid**: every device is a car of light; a new one blinks and raises an alert
+- **your real city** (90+, every continent), **your repositories as towers**, **the ISS over your house**, your
+  **heartbeat** on the horizon, a **crew** of friends in your sky, and **"hey sphere"**: talk to it
 - **the skyline is your CPU**: one tower per core, as tall as its load; the lit windows follow your RAM
 - **the horizon is your pulse**: it beats faster when the PC works, and every beat runs from the core to the edges
 - **the aurora is your network**, **the sky is your real weather** (rain, snow, fog, storms), and an alert sends a
@@ -107,6 +109,41 @@ Nothing leaves the PC. ([section 20](docs/GUIDE.md#20-your-network-on-the-grid))
 **News**: a panel with the Omarchy releases and DHH's posts, on by default (`pulse-feed` reads any RSS/Atom feed).
 **Click** a panel to run its `click = "..."` command. **The sky follows the sun**: dawn, day, dusk and night from
 your weather. **Shooting stars** cross the sky when a notification or a news item arrives.
+
+## New in 1.2
+
+**Your real city.** Behind the towers stands the skyline of your city, with its landmarks: the Colosseum in Rome,
+the Duomo in Milan, the One World Trade Center in New York, the Eiffel Tower, Big Ben, the Burj Khalifa, the Petronas
+Towers and 90+ cities from every continent. It follows the city of your weather, or pick one: `skyline = "tokyo"`.
+([guide, section 22](docs/GUIDE.md#22-your-real-city))
+
+**The Git city.** Your repositories are towers: as tall as this week's commits, with a green, red or amber beacon
+for their CI. A push lights the tower up with fireworks. ([section 23](docs/GUIDE.md#23-the-git-city))
+
+**Space over your city.** When the ISS really passes over you, you see it cross your sky. Every SpaceX launch
+(Starlink, ISS crews, Starship) counts down in the ticker and on the sphere, then lifts off from your horizon. A
+geomagnetic storm paints a green aurora, a solar flare flashes the sky. ([section 24](docs/GUIDE.md#24-space-over-your-city))
+
+**Your heartbeat.** Connect your watch (Home Assistant, a script) and the horizon beats with your heart, never leaving
+your PC. ([section 25](docs/GUIDE.md#25-your-heartbeat))
+
+**The crew.** Share a code with friends: their agents fly in your sky, yours in theirs, and you celebrate each other's
+finished tasks, end-to-end sealed with the code. ([section 26](docs/GUIDE.md#26-the-crew))
+
+**Hey sphere.** Hold a key and talk: "focus 25 minutes", "how are my servers?", "what did I miss?". Offline speech to
+text (whisper), only safe commands, the answer out loud, in English or Italian. ([section 27](docs/GUIDE.md#27-hey-sphere))
+
+Try them in a minute:
+
+```
+sed -i 's/^skyline = .*/skyline = "tokyo"/' ~/.config/omarchy-pulse/pulse.toml   # your city (no line yet? add skyline = "tokyo" under [pulse])
+omarchy-pulse listen                  # say "hey sphere, how are my servers?" (needs whisper.cpp or faster-whisper)
+omarchy-pulse crew new                # a code for your friends
+omarchy-pulse fireworks "1.2 shipped"
+```
+
+**Faster updates, smoother frames.** `omarchy-pulse perf` shows how smooth every monitor is; on NVIDIA with 4K or two
+monitors, `dmabuf = "on"` (guide section 12).
 
 ## Put anything on your wallpaper
 
