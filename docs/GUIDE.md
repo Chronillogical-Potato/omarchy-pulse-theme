@@ -42,6 +42,17 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [34. The wind](#34-the-wind)
   [35. Your electric car](#35-your-electric-car)
 - [36. Every command](#36-every-command)
+- New in 1.4:
+  [37. The real night sky](#37-the-real-night-sky) ·
+  [38. Starlink trains](#38-starlink-trains) ·
+  [39. Every kind of weather](#39-every-kind-of-weather) ·
+  [40. The air you breathe](#40-the-air-you-breathe) ·
+  [41. The sound of your city](#41-the-sound-of-your-city) ·
+  [42. The lights of your room, and Alexa](#42-the-lights-of-your-room-and-alexa) ·
+  [43. Your phone](#43-your-phone) ·
+  [44. Pulse Wrapped](#44-pulse-wrapped) ·
+  [45. Robots on the floor](#45-robots-on-the-floor) ·
+  [46. The banner plane](#46-the-banner-plane)
 
 ---
 
@@ -449,6 +460,12 @@ In `[builtin]` (`false` hides one):
 - Sources run as you, with your permissions: only put commands you trust in `pulse.toml`.
 - In privacy mode the drones, the names and addresses of the cars and the private lines of "while you were away"
   are hidden, and the voice is silent. MAC addresses never leave the hub; the pointer position never leaves the PC.
+- 1.4: the night sky is computed on your PC (nothing is sent). Starlink orbits are downloaded from CelesTrak (nothing
+  about you is sent). Storms and air quality ask Open-Meteo about your city's coordinates, like the weather. The
+  lights and the speakers are driven on your network (Home Assistant, the Hue bridge). Phone notifications go through
+  ntfy.sh (or your own server) to your topic: anyone who knows the topic can read them, so keep it secret, and
+  `details = false` leaves meeting titles and focus names out. The year's numbers stay in `stats.json`, planes only
+  as short hashes.
 - 1.3: the timelapse pictures are the scene alone, drawn without names (no repositories, devices, flights or events)
   and without an "auto" city; none are taken while you share the screen. The door camera never shows while you share
   the screen. Your Home Assistant token stays in `pulse.toml`; calendar titles are hidden in privacy mode.
@@ -522,6 +539,11 @@ In `[builtin]` (`false` hides one):
 | No timelapse at midnight | `ffmpeg` must be installed; the pictures are taken only while you see the wallpaper; `omarchy-pulse timelapse today`. |
 | No trains | `[calendar] ics = [...]` (the secret iCal address) or `command`; only timed events in the next `hours`, no all-day ones. |
 | The doorbell does nothing | `[home] url`, `token`, `doorbell` (a binary sensor or an event entity); `journalctl --user -u omarchy-pulse` shows HA errors. |
+| No stars at night | the sky follows the real clouds (`cloud_cover`); on a clear night they come out after the Sun is 6° under the horizon. `[night] enabled = true`. Many stars may be behind your panels: `omarchy-pulse sky` says what is up. |
+| No Starlink train | they are visible only a few days after a launch, at dusk or dawn, when the satellites are in the Sun and you are in the dark: `omarchy-pulse sky` shows the next one. Install the `sgp4` Python package for the most precise orbits (section 38). |
+| No sound | `[sound] enabled = true`; it is silent in a meeting, in the quiet hours (`quiet`), while sharing or with an app full screen; only the main monitor plays it. |
+| The lights do nothing | `[lights] enabled = true`, the `lights` list, and `[home] url` and `token` (or the Hue bridge with `omarchy-pulse lights pair`); `only_if_on = true` leaves the lights that are off alone; try `omarchy-pulse lights test`. |
+| Nothing on my phone | `omarchy-pulse phone test`; the ntfy app must be subscribed to the same topic. |
 | The car does not appear | `[car] enabled = true` and the Tessie `token` (or the Home Assistant entities); the log says `car: ...`. A car being driven is hidden. |
 | No tsunami wave | it only comes when USGS marks an earthquake with a tsunami message; try `curl -X POST -H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" "localhost:47800/api/fx?kind=quake&mag=7&tsunami=1"`. |
 | The city looks soft | `quality = "full"` in `[pulse]` (section 12); `auto` draws it at half on battery and on screens above 2560x1440. |
@@ -568,6 +590,8 @@ browser; `omarchy-pulse serve --demo` does the same with demo data (no personal 
 ~/.local/state/omarchy-pulse/listen.wav    a "hey sphere" recording, deleted as soon as it is understood (1.2)
 ~/.local/state/omarchy-pulse/city.json     the buildings of your district: when, how long (1.3)
 ~/.local/state/omarchy-pulse/timelapse/    today's pictures of the scene, made into a video at midnight (1.3)
+~/.local/state/omarchy-pulse/stats.json    the numbers of your year, for Pulse Wrapped (1.4)
+~/.local/state/omarchy-pulse/starlink.json the orbits of the last Starlink launches, from CelesTrak (1.4)
 ~/Videos/omarchy-pulse/pulse-DATE.mp4      your days as videos (1.3)
 ```
 
@@ -1147,6 +1171,12 @@ generic one, of no brand.
 | `omarchy-pulse city` | your city: buildings, streak, monuments (28) |
 | `omarchy-pulse calendar` | the next events, the trains (31) |
 | `omarchy-pulse timelapse [today \| DATE]` | your day as a video (30) |
+| `omarchy-pulse sky` | tonight: the Moon, the planets, the meteor shower, the next Starlink train, the air (37-40) |
+| `omarchy-pulse wrapped [YEAR]` | Pulse Wrapped, your year as a video (44) |
+| `omarchy-pulse lights pair [IP] \| test \| alert \| lightning \| quake` | the lights of your room (42) |
+| `omarchy-pulse phone new \| test` | notifications on your phone (43) |
+| `omarchy-pulse banner [TEXT]` | a little plane tows a banner across the sky (46) |
+| `omarchy-pulse robot NAME ok \| working \| waiting \| failed \| gone` | an AI bot of yours as a robot on the floor (45) |
 | `omarchy-pulse car [charge \| stop \| lock \| unlock \| climate on \| climate off \| flash]` | your car (35) |
 | `omarchy-pulse doorbell` | ring the doorbell, to try it (32) |
 | `omarchy-pulse notifications clear` | empty the notifications panel (a click on it does the same) |
@@ -1165,6 +1195,9 @@ generic one, of no brand.
 | "how is my city?" · "com'è la mia città?" | buildings and streak |
 | "how is my car?" · "come sta la mia auto?" | battery, range, charging |
 | "next meeting?" · "prossima riunione?" | the next event |
+| "how is the moon?" · "com'è la luna?" | its phase, and whether it is up (37) |
+| "next Starlink?" · "starlink" | the next train over you (38) |
+| "my year" · "il mio anno" | the numbers of your year (44) |
 | "where is the ISS?" · "stazione spaziale" | the ISS |
 | "weather" · "che tempo fa?" | the weather |
 | "what time is it?" · "che ore sono?" | the time |
@@ -1188,3 +1221,409 @@ curl -H "$T" "localhost:47800/api/state"                            # everything
 **Try the scene** by adding to the page address (`omarchy-pulse serve` prints it): `&wx=rain` (clear, part, cloud,
 rain, snow, storm, fog), `&wind=50` (km/h), `&scene=orbit`, `&prog=weather` (what the sphere shows: clock, weather,
 cpu, news, car, launch...).
+
+## 37. The real night sky
+
+At night your sky is the real one, over your city, at this minute:
+
+- **the stars you know and their constellations**, with their names: Orion, Canis Major (Sirius), Canis Minor,
+  Gemini, Taurus (Aldebaran, the Pleiades), Leo, Scorpius (Antares), the Summer Triangle (Vega in Lyra, Deneb in
+  Cygnus, Altair in Aquila), Pegasus, Cassiopeia, the Big Dipper, Polaris, Arcturus, Spica, Capella, Fomalhaut.
+  They rise in the east and set in the west through the night, as they really do;
+- **the planets**: Venus, Mars, Jupiter and Saturn where they are, steady and a little coloured (Mars reddish,
+  Saturn golden), with their names;
+- **the Moon**, rising and setting at its real time, with its real phase: a thin crescent, the first quarter, full,
+  waning... lit on the side where the Sun is;
+- **the Sun** by day, where it is, redder near the horizon;
+- **meteor showers**: in the nights of the Quadrantids, Lyrids, Eta Aquariids, Perseids, Draconids, Orionids,
+  Leonids, Geminids and Ursids, more shooting stars fall, all from the shower's radiant (the point of the sky they seem
+  to come from), more near the peak. The voice tells you in the evening ("Tonight, the Perseids meteor shower. Look
+  up!").
+
+**How it works.** Everything is computed on your PC from the position of your city (`city` in `[pulse]`, the same as
+the weather): the time, your latitude and longitude, and astronomical formulas (the Moon's orbit with its main
+perturbations, the planets' orbits from NASA JPL's elements, the stars' positions). No internet, nothing sent. The
+positions are good to a fraction of a degree for the Sun and the planets and about a degree for the Moon, far more
+than the eye can tell on a wallpaper.
+
+**What you see, and when.** The stars come out when the Sun is 6° under the horizon and are all there after 12°;
+they fade behind the real clouds (the weather's cloud cover), and so does the Moon. You look south, like with the
+planes: east on the left, west on the right, the top of the screen straight above you. The stars behind you (north)
+show only when they are almost overhead; many may be behind your panels, which is why `omarchy-pulse sky` says what
+is up.
+
+**Use it.**
+
+```bash
+omarchy-pulse sky
+#   Moon: waxing crescent, 33% lit, 13° up, south
+#   Saturn: 29° up, south-east
+#   Meteor shower: Leonids (37% of its peak)
+#   Next Starlink train: 18:38, 41° up, west, 22 satellites
+#   Air: fair (AQI 28)
+```
+
+Ask the sphere: "hey sphere, how is the moon?" · "ehi sfera, com'è la luna?". With `[voice] enabled = true` it also
+announces the meteor showers.
+
+```toml
+[night]
+enabled = true
+```
+
+## 38. Starlink trains
+
+**What it is.** SpaceX launches Starlink satellites in batches of 20-30. For a few days after a launch they fly in a
+line, one after the other: a "train" of lights crossing the sky in a couple of minutes. It is one of the most
+beautiful things you can see with your eyes, and it is visible only at dusk or dawn, when the satellites are still
+in the sunlight and you are already in the dark.
+
+**What Pulse does.**
+
+1. Every 6 hours it downloads the real orbits (the official element sets) of the objects launched in the last 30
+   days from [CelesTrak](https://celestrak.org), and keeps the Starlink batches (one per launch). Nothing about you is
+   sent; the file is kept in `~/.local/state/omarchy-pulse/starlink.json`, so a restart does not download it again.
+2. Every hour it works out, for your city, the passes of the next 24 hours that you can really see: the train more
+   than 10° above your horizon, lit by the Sun, while the Sun is more than 6° under your horizon.
+3. Five minutes before a pass (`warn`) it tells you on the wallpaper ("Starlink train at 18:38 · west · 22
+   satellites"), aloud (with the voice), on your phone (section 43) and with a chime (with the sound, section 41).
+4. During the pass every satellite of the train is drawn where it is, every few seconds: a line of lights moving
+   across your sky, with "STARLINK · 22" next to the first one.
+
+**Precision.** With the `sgp4` Python package installed, Pulse uses SGP4, the same orbit model as the satellite
+trackers. Without it, a simpler orbit (Kepler with the Earth's flattening), within about 15 km of SGP4, a degree or
+two in your sky and a few seconds in time. To install it:
+
+```bash
+pip install --user --break-system-packages sgp4    # or the python-sgp4 package of the AUR
+systemctl --user restart omarchy-pulse
+```
+
+**Use it.**
+
+```bash
+omarchy-pulse sky          # the last line: the next train, its time, height, side and size
+```
+
+Ask the sphere: "hey sphere, next Starlink?". If there is no train in the next 24 hours, it says so: there are none
+when no batch was launched in the last days, or when the passes fall in daylight or in the middle of the night (when
+the satellites are in the Earth's shadow).
+
+```toml
+[starlink]
+enabled = true
+warn = 5           # minutes before; 0 = no warning
+```
+
+## 39. Every kind of weather
+
+The sky is your real weather, all of it, from [Open-Meteo](https://open-meteo.com) (updated every few minutes):
+
+| Weather | On your wallpaper |
+|---|---|
+| clear, sunny | the Sun where it is; at night the stars and the Moon |
+| partly cloudy, overcast | clouds as many as the real cloud cover (%), drifting with the real wind |
+| drizzle, rain, showers | drops as many as it really rains (mm per hour), slanted by the wind |
+| freezing rain | rain (Pulse does not draw ice) |
+| snow, snow grains, snow showers | flakes drifting with the wind, as many as it snows |
+| hail (in a thunderstorm) | white pellets bouncing on the ground |
+| fog | a veil over the city, the stars hidden |
+| thunderstorm | dark clouds, bolts down to the city and the thunder after them |
+| wind | gust lines, rain and snow blown sideways (section 34) |
+
+**Thunderstorms come from where they really are.** Every 10 minutes Pulse asks the weather of 8 points 30 km around
+you (north, north-east, east...) and of your city. A storm 30 km to the west lights the clouds on the west of your
+horizon from inside (you see it, you would not hear it); when the storm is over you, bolts fall on the city, the sky
+flashes and, with the sound on, the thunder comes a few seconds later (about 3 seconds for every kilometre, as in
+reality). In Central Europe Open-Meteo also gives the lightning potential of its model: the more charged the air, the
+more often it flashes. With the room lights on (section 42), your lights flash too.
+
+The single strokes measured by lightning networks (Blitzortung) need the network's permission to be used in an app;
+Pulse uses the weather models, which have no such limit.
+
+```toml
+[storms]
+enabled = true
+km = 30            # how far around you it looks
+```
+
+To see every weather on your screen now, add it to the page address (`omarchy-pulse serve` prints it):
+`&wx=clear`, `part`, `cloud`, `rain`, `snow`, `storm`, `fog`.
+
+## 40. The air you breathe
+
+The air quality of your city, from Open-Meteo's air quality model, every 30 minutes:
+
+| European AQI | Level | On your wallpaper |
+|---|---|---|
+| 0-20 | good | clear |
+| 20-40 | fair | clear |
+| 40-60 | moderate | a light haze over the city |
+| 60-80 | poor | a haze; noted in "while you were away" |
+| 80-100 | very poor | a thick haze |
+| 100+ | extremely poor | a thick haze |
+
+And the pollen (Europe, in its season: alder, birch, grass, mugwort, olive, ragweed): its grains float in the light
+of the city, as many as the real ones (low, moderate, high, very high). The weather panel adds a line: "air fair · 28
+· grass pollen high".
+
+```toml
+[air]
+enabled = true
+```
+
+## 41. The sound of your city
+
+A quiet soundscape, off unless you turn it on, made live in the page (nothing is downloaded):
+
+- the real rain, louder when it rains harder; the real wind, stronger with the gusts;
+- the rumble of a plane flying over you (higher than 25°), louder when it is lower;
+- the thunder of a storm over you, a few seconds after the flash;
+- a chime when a meeting's train comes into the station (section 31) or a Starlink train is near;
+- the earth rumbling in an earthquake.
+
+It plays only on the main monitor, and it is silent in a meeting, in the quiet hours, while you share the screen,
+while you are away and when an app is full screen.
+
+```toml
+[sound]
+enabled = true
+volume = 0.25          # 0..1
+quiet = "23:00-08:00"
+# rain = true, wind = true, planes = true, thunder = true, events = true   (false turns one off)
+```
+
+The wallpaper window of 1.4 plays sound without a click: after updating, restart Pulse
+(`systemctl --user restart omarchy-pulse`). If you hear nothing,
+check that the sound of the session works (`pw-play` something) and that `[sound] enabled = true`.
+
+## 42. The lights of your room, and Alexa
+
+Your room's lights follow Pulse:
+
+| What happens | Your lights |
+|---|---|
+| lightning strikes near you (a storm over your city) | a white flash, now and then while it lasts |
+| a red alert (`crit`; `warn_too = true` for amber ones) | red, three times |
+| the doorbell rings (section 32) | two white flashes |
+| an earthquake near you (section 33) | an orange flicker |
+| you start a focus (section 17) | a calm blue, until the focus ends |
+
+After every effect each light goes back exactly as it was: on or off, brightness, colour or white. By default only the
+lights that are already on take part (`only_if_on = true`), so Pulse never wakes a dark room at night.
+
+### With Home Assistant (any light, and the Ambilight of a Philips TV)
+
+1. In Home Assistant, open your profile (bottom left), **Security**, **Long-lived access tokens**, **Create token**;
+   copy it.
+2. Put the address and the token in `[home]` (the same as for the doorbell, section 32):
+   ```toml
+   [home]
+   url = "http://homeassistant.local:8123"
+   token = "eyJ..."
+   ```
+3. Find the entity ids of your lights: **Settings**, **Devices & services**, **Entities**, filter by "light."; or
+   **Developer tools**, **States**. They look like `light.living_room`. Philips Hue, IKEA, Shelly, WiZ, Govee...
+   every light Home Assistant knows works.
+4. **Ambilight**: add the **Philips TV** integration in Home Assistant (Settings, Devices & services, Add
+   integration, Philips TV; the TV must be on). Its Ambilight appears as a light, for example
+   `light.living_room_tv_ambilight`: put it in the list like any other light.
+5. Turn it on:
+   ```toml
+   [lights]
+   enabled = true
+   source = "homeassistant"
+   lights = ["light.living_room", "light.living_room_tv_ambilight"]
+   ```
+
+### With a Philips Hue bridge, directly
+
+1. Press the round button on top of the Hue bridge.
+2. Within 30 seconds:
+   ```bash
+   omarchy-pulse lights pair            # finds the bridge on your network
+   omarchy-pulse lights pair 192.168.1.20   # or give its address (Hue app, Settings, My Hue system, the bridge)
+   ```
+3. It prints the lines to paste in `pulse.toml`, with the number and name of every light:
+   ```toml
+   [lights]
+   enabled = true
+   source = "hue"
+   bridge = "192.168.1.20"
+   user = "aBcD..."
+   lights = ["1", "3", "4"]      # keep only the ones of the room with your PC
+   ```
+
+### Try it, and choose
+
+```bash
+omarchy-pulse lights test        # the doorbell effect
+omarchy-pulse lights alert       # or lightning, quake
+```
+
+```toml
+[lights]
+only_if_on = true                # false: also the lights that are off (they go back off after)
+focus = true                     # alert, doorbell, lightning, quake = true too; false turns one off
+focus_brightness = 90            # 0..255
+warn_too = false                 # true: amber alerts flash too
+```
+
+### Alexa, Google Home, Sonos: Pulse speaks from your speakers
+
+Everything Pulse says aloud (section 21) can come out of your Echo too: the doorbell, a meeting in 5 minutes, an
+earthquake, your car charged, a Starlink train. Amazon has no official way for a PC to make an Echo speak, so this goes
+through Home Assistant:
+
+1. Install [HACS](https://hacs.xyz) in Home Assistant, then the **Alexa Media Player** integration from HACS, and
+   add it (Settings, Devices & services) with your Amazon account.
+2. In **Developer tools**, **Actions**, find the action of your Echo: `notify.alexa_media_kitchen_echo` (the name
+   follows the Echo's name).
+3. Put it in `[voice]`:
+   ```toml
+   [voice]
+   enabled = true
+   speakers = ["notify.alexa_media_kitchen_echo"]   # several are fine
+   speakers_type = "announce"                       # "announce" (with the chime) or "tts"
+   ```
+
+A Google Home, Sonos or any `media_player` works with Home Assistant's text to speech:
+
+```toml
+[voice]
+speakers = ["media_player.living_room"]
+tts = "tts.google_translate_say"                   # your TTS entity (Settings, Voice assistants)
+```
+
+The quiet hours, privacy and "away" apply to the speakers too.
+
+## 43. Your phone
+
+The moments that matter as a notification on your phone, with the free [ntfy](https://ntfy.sh) app (iOS, Android):
+
+| Event (`events`) | Notification |
+|---|---|
+| `focus` | "Focus done · +1 building" |
+| `doorbell` | "Someone is at the door" (high priority) |
+| `car` | "car charged · 80%", "car at 18% and not plugged in" |
+| `earth` | "Earthquake near you · M4.6", "Tsunami message · M7.1" (high priority) |
+| `calendar` | "In 5 minutes · standup" |
+| `space` | "Starlink train at 18:38 · look west, 41° high" |
+| `alerts` | your red alerts (high priority) |
+| `wrapped` | "Your 2026 · Pulse Wrapped" |
+
+1. Make a secret topic (a random name only you know):
+   ```bash
+   omarchy-pulse phone new
+   ```
+2. Install the ntfy app on your phone, tap **+** (Subscribe to topic) and type that topic. On iOS, allow
+   notifications.
+3. Put the lines it printed in `pulse.toml`, then:
+   ```bash
+   omarchy-pulse phone test      # "Hello from your city" on your phone
+   ```
+
+```toml
+[phone]
+enabled = true
+topic = "pulse-..."              # keep it secret: anyone who knows it can read the messages
+details = true                   # false: no meeting titles, focus names or alert texts on the phone
+# events = ["focus", "doorbell", "car", "earth", "calendar", "space", "alerts", "wrapped"]
+# server = "https://ntfy.example.com"   # your own ntfy server
+# token = "tk_..."                      # for a server with access control
+```
+
+The messages go through ntfy.sh, which is free and open source; for full control run your own ntfy server.
+
+## 44. Pulse Wrapped
+
+From the day you update to 1.4, Pulse counts your year in `~/.local/state/omarchy-pulse/stats.json`: focus sessions
+and their hours, the buildings and your best streak, the planes that flew over you (each one once a day, kept only as
+a short hash), the launches and Starlink trains, the earthquakes, the meetings and their hours, the doorbell.
+
+On 31 December, in the evening, it makes your year into a video: a moment of each day of your city (from the daily
+timelapses, section 30: keep `[timelapse] enabled = true`), and a card for each number, ending with "see you in 2027".
+It goes to `~/Videos/omarchy-pulse/pulse-wrapped-2026.mp4`, with a notification (and on your phone), ready to share:
+like the timelapse it has no names, no panels, no private data.
+
+```bash
+omarchy-pulse wrapped          # this year so far, any time
+omarchy-pulse wrapped 2026
+```
+
+Ask the sphere: "hey sphere, my year" · "ehi sfera, il mio anno". It needs `ffmpeg` (and `fc-match` for the font,
+part of fontconfig).
+
+```toml
+[wrapped]
+enabled = true                 # false: no video on 31 December (omarchy-pulse wrapped still works)
+```
+
+## 45. Robots on the floor
+
+Little humanoid robots walk on the floor of the city, in front of the towers.
+
+**Your containers**, by themselves. Every running Docker or Podman container is a robot; its eyes tell its health:
+green when it is fine, amber while it restarts, red when it is unhealthy (then it stops and blinks). A container you
+start walks in, one you stop leaves; at most 12. Pulse runs `docker ps` (or `podman ps`) every 10 seconds, so your
+user must be able to: for Docker, `sudo usermod -aG docker $USER` and log in again; rootless Podman works as it is.
+
+**Your AI bots**, the ones that always run: Grok Bot, a Discord or Telegram bot, an n8n flow, a home server job...
+A robot with a light on its antenna and a glowing core, in the accent colour. The bot says how it is, from its own
+code, hooks or a script:
+
+```bash
+omarchy-pulse robot grok-bot working    # it hurries
+omarchy-pulse robot grok-bot ok         # it strolls
+omarchy-pulse robot grok-bot waiting    # amber eyes
+omarchy-pulse robot grok-bot failed     # it stops, red eyes
+omarchy-pulse robot grok-bot gone       # it leaves (it also leaves by itself after an hour with no news)
+```
+
+From another program, the same with HTTP:
+
+```bash
+curl -X POST -H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" "localhost:47800/api/robot/grok-bot?state=working"
+```
+
+For example, a systemd service of your bot: `ExecStartPost=omarchy-pulse robot mybot ok` and
+`ExecStopPost=omarchy-pulse robot mybot gone`.
+
+**Your AI agents** (Claude Code, Codex, Grok, Hermes or any other, section 16) are the drones in the sky; with
+`agents_as = "robots"` they walk on the floor instead, with `"both"` they fly and walk. Claude Code and Codex tell
+Pulse by themselves through their hooks (`omarchy-pulse hook claude`, `omarchy-pulse hook codex`); any other agent can
+call `omarchy-pulse agent NAME working|waiting|done|failed` from its hooks or tools.
+
+Names are hidden in privacy mode.
+
+```toml
+[robots]
+enabled = true
+source = "auto"      # "docker", "podman", or "auto"
+
+[pulse]
+agents_as = "drones" # "robots", "both"
+```
+
+## 46. The banner plane
+
+A thank-you to Omarchy. Now and then (about every 45 minutes, at random, while you are at the PC) a little propeller
+plane crosses the whole sky from left to right, towing a big banner that waves in the wind: the Omarchy icon and
+"OMARCHY · WE CAN FIX EVERYTHING", in your theme's font and colours.
+
+And with real data: when a new version of Omarchy is released, Pulse reads it from the releases of basecamp/omarchy
+on GitHub (the github panel, section 10) and the plane flies right away with the news: "OMARCHY 4.6 IS OUT".
+
+```toml
+[pulse]
+banner = "OMARCHY · WE CAN FIX EVERYTHING"   # your own words; "" = never
+banner_every = 45                            # minutes, more or less
+```
+
+```bash
+omarchy-pulse banner                 # now, with your words
+omarchy-pulse banner "SHIPPED!"      # now, with these (from a script, a git hook, a CI job)
+```
+
+The Omarchy icon comes from [Dashboard Icons](https://dashboardicons.com/icons/omarchy) (Apache-2.0). Omarchy is a
+project by Basecamp; Pulse is a community theme that thanks it, not an official Omarchy project.

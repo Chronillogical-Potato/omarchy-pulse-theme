@@ -4,6 +4,9 @@
 
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
+- **new in 1.4: the real night sky** (stars, constellations, the Moon's phase, the planets, meteor showers),
+  **Starlink trains**, **every kind of weather**, the air, sound, your room's lights, Alexa, your phone, **Pulse
+  Wrapped** ([what's new](#new-in-14))
 - **new in 1.3: a city that grows with your work**, the real **planes** over you, **your day as a video**, your
   **calendar** as trains, your **doorbell** on the sphere, **earthquakes** ([what's new](#new-in-13))
 - **new in 1.2: your real city** (90+, every continent), **your repositories as towers**, **the ISS and every SpaceX
@@ -19,7 +22,8 @@ Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of
 - **your network drives on the grid**: every device is a car of light; a new one blinks and raises an alert
 - **the skyline is your CPU**: one tower per core, as tall as its load; the lit windows follow your RAM
 - **the horizon is your pulse**: it beats faster when the PC works, and every beat runs from the core to the edges
-- **the aurora is your network**, **the sky is your real weather** (rain, snow, fog, storms), and an alert sends a
+- **the aurora is your network**, **the sky is your real sky**: the stars, the Moon and the planets where they are,
+  and your real weather (sun, clouds, rain, snow, fog, storms), and an alert sends a
   shockwave through the city with an **INCOMING** banner
 
 Around it, Omarchy-style panels show **any live data you want**: a command, a JSON API, a file, a stream, a camera
@@ -27,6 +31,50 @@ or anything you push from a script. Camera feeds, AI briefs, Home Assistant, ser
 
 Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author of
 [OmarchyTV](https://github.com/piermark/omarchytv) (the Live screen of OmarchyTV, now on your desktop).
+
+## New in 1.4
+
+**The real night sky.** The stars you know and their constellations, Venus, Jupiter, Mars and Saturn where they
+really are, the Moon with its real phase, more shooting stars in the nights of a meteor shower. Computed for your
+city, right now. ([guide, section 37](docs/GUIDE.md#37-the-real-night-sky))
+
+**Starlink trains.** A few days after a launch, the train of satellites crosses your sky when it really does, lit by
+the Sun while you are in the dark, and Pulse tells you five minutes before. ([section 38](docs/GUIDE.md#38-starlink-trains))
+
+**Every kind of weather.** The Sun, clouds as many as the real ones, rain as hard as it really rains, snow, hail, fog,
+and thunderstorms from where they really are, with bolts on your city and the thunder after them.
+([section 39](docs/GUIDE.md#39-every-kind-of-weather))
+
+**The air you breathe.** A haze over the city when the air is poor, pollen floating in the light, the air quality in
+the weather panel. ([section 40](docs/GUIDE.md#40-the-air-you-breathe))
+
+**The sound of your city.** A quiet soundscape, if you want it: the real rain and wind, a plane over you, thunder,
+the station. ([section 41](docs/GUIDE.md#41-the-sound-of-your-city))
+
+**Your room joins in.** Your lights flash with the lightning, turn red for an alert, blink for the doorbell (Home
+Assistant, Philips Hue, a Philips TV's Ambilight), and your Echo speaks with Pulse.
+([section 42](docs/GUIDE.md#42-the-lights-of-your-room-and-alexa))
+
+**Your phone.** A focus done, the doorbell, your car charged, a quake near you: on your phone with the ntfy app.
+([section 43](docs/GUIDE.md#43-your-phone))
+
+**Pulse Wrapped.** On 31 December, your year as a video: your city day by day and the numbers of your year.
+([section 44](docs/GUIDE.md#44-pulse-wrapped))
+
+**Robots on the floor.** Your Docker or Podman containers, and your AI bots, walk in the city as little robots; their
+eyes tell how they are. ([section 45](docs/GUIDE.md#45-robots-on-the-floor))
+
+**The banner plane.** Now and then a little plane tows a banner across your sky, "♥ OMARCHY · WE CAN FIX
+EVERYTHING", and when a new Omarchy is out it flies to tell you. ([section 46](docs/GUIDE.md#46-the-banner-plane))
+
+Also: plane labels keep clear of your panels and of the sphere.
+
+```bash
+omarchy-pulse sky            # tonight: the Moon, the planets, the meteor shower, the next Starlink train, the air
+omarchy-pulse phone new      # notifications on your phone
+omarchy-pulse lights pair    # your Philips Hue lights (or use Home Assistant)
+omarchy-pulse wrapped        # your year so far, as a video
+```
 
 ## New in 1.3
 
@@ -306,4 +354,6 @@ Pulse is free and MIT-licensed. If you find it useful and want to support develo
 ## License
 
 MIT, © 2026 Marco Porro ([x.com/MarcoPorro](https://x.com/MarcoPorro)). Weather data by
-[Open-Meteo](https://open-meteo.com) (CC BY 4.0).
+[Open-Meteo](https://open-meteo.com) (CC BY 4.0). Satellite orbits by [CelesTrak](https://celestrak.org). The Omarchy icon on the
+banner plane comes from [Dashboard Icons](https://dashboardicons.com/icons/omarchy) (Apache-2.0); Omarchy is a
+project by Basecamp, and Pulse is a community theme, not an official one.

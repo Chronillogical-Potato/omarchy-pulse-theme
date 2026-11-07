@@ -9,9 +9,12 @@
   omarchy-pulse privacy on|off|auto|toggle
   omarchy-pulse agent NAME STATE [TEXT]   an AI agent (or any job) as a drone over the city:
                                  STATE = working | waiting | done | failed | idle | gone
+  omarchy-pulse robot NAME STATE           an AI bot of yours as a robot walking on the floor (ok, working, waiting,
+                                 failed, gone); your Docker or Podman containers walk there by themselves
   omarchy-pulse watch NAME -- COMMAND...  a drone while COMMAND runs; lands green or red with its exit code
   omarchy-pulse hook claude|codex         for the hooks of Claude Code / Codex CLI (reads what they send)
   omarchy-pulse fireworks [TEXT]          fireworks over the city
+  omarchy-pulse banner [TEXT]             a little plane crosses the sky towing a banner
   omarchy-pulse focus MINUTES [LABEL]     focus mode: the desktop calms down, a countdown, fireworks at the end
   omarchy-pulse focus off
   omarchy-pulse away | back      you left / you are back (hypridle can call these): the face sleeps, then a digest
@@ -27,6 +30,10 @@
   omarchy-pulse city             your city: the buildings your focus sessions built, your streak
   omarchy-pulse calendar         the next events (the trains)
   omarchy-pulse timelapse [DATE] your day as a video (by itself at midnight; DATE = today or 2026-11-07)
+  omarchy-pulse phone new|test    your phone: the moments that matter as push notifications (the ntfy app)
+  omarchy-pulse lights pair|test  the lights of your room follow Pulse (pair a Philips Hue bridge, or try an effect)
+  omarchy-pulse wrapped [YEAR]   Pulse Wrapped: your year as a video, with its numbers (by itself on 31 December)
+  omarchy-pulse sky              tonight: the Moon, the planets, the meteor shower, the next Starlink train, the air
   omarchy-pulse car [charge | stop | lock | unlock | climate on | climate off | flash]
                                  your electric car (Tessie or Home Assistant): its battery, or a command
   omarchy-pulse doorbell         ring the doorbell (a test: the sphere shows the door camera, the chime rings)
@@ -76,7 +83,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -419,6 +426,12 @@ class Hub:
         self.car: dict | None = None   # 1.3: your electric car (Tessie or Home Assistant)
         self.car_cmds: list = []
         self.notes_cleared = 0.0   # a click on the notifications panel clears it
+        self.night: dict | None = None      # 1.4: the real sky (Moon, planets, stars, meteor showers)
+        self.starlink: dict = {"sats": [], "next": None}
+        self.storms: dict | None = None     # thunderstorms around you (where, how far)
+        self.air: dict | None = None        # air quality and pollen
+        self.robots: list = []              # your containers, walking on the floor
+        self.bots: dict = {}                # your AI bots (omarchy-pulse robot NAME STATE), walking too
         self.quake_seen: set = set()
 
     # -- config
@@ -526,6 +539,10 @@ class Hub:
             self.alerts.append({"seq": self.alert_seq, "id": wid, "title": title, "text": text, "level": level,
                                 "t": time.time()})
         self.note("alert", f"{title}" + (f" · {text}" if text else ""), level)
+        if level == "crit" or (level == "warn" and self.room().get("warn_too")):
+            self.room_effect("alert")
+        if level == "crit":
+            self.phone("alerts", title, text, "rotating_light", private_text=True)
         if speak:
             self.say(f"{title}. {text}", "alerts")
 
@@ -601,17 +618,22 @@ class Hub:
     def set_focus(self, minutes: float, label: str = "") -> None:
         with self.lock:
             if minutes <= 0:
-                self.focus = None
+                was, self.focus = self.focus, None
+                if was:
+                    self.room_effect("focus_end")
                 return
             now = time.time()
             self.focus = {"start": now, "until": now + minutes * 60, "label": str(label or "focus")[:40]}
+        self.room_effect("focus")
 
     def check_focus(self) -> None:
         f = self.focus
         if f and time.time() >= f["until"]:
             self.focus = None
+            self.room_effect("focus_end")
             self.add_fx("fireworks", f"{f['label']} · done")
             self.grow((f["until"] - f["start"]) / 60, f["label"])
+            self.phone("focus", "Focus done · +1 building", f["label"], "building_construction", private_text=True)
             self.say(self.T("focus_done", label=f['label']), "focus")
             if shutil.which("notify-send"):
                 subprocess.Popen(["notify-send", "Pulse", f"{f['label']}: done"], stdout=subprocess.DEVNULL,
@@ -632,6 +654,8 @@ class Hub:
             return
         g = self.growth()
         g["buildings"] = (g["buildings"] + [{"t": int(time.time()), "m": int(round(minutes)), "label": str(label)[:24]}])[-2000:]
+        self.stat("focus")
+        self.stat("focus_min", round(minutes))
         streak = growth_streak([b["t"] for b in g["buildings"]])
         new_monument = streak > g.get("best", 0) and streak % 7 == 0
         g["best"] = max(g.get("best", 0), streak)
@@ -716,6 +740,8 @@ class Hub:
                     for pl in planes:
                         pl.update(self.flight_route(pl["flight"]))
                 self.sky = {"planes": planes, "t": time.time()}
+                for pl in planes:
+                    self.stat("planes", unique=pl["id"] + time.strftime("%Y%m%d"))
             except Exception as e:   # noqa: BLE001
                 if time.time() - warned > 3600:
                     warned = time.time()
@@ -758,6 +784,7 @@ class Hub:
                         mins = max(1, round((e["start"] - now) / 60))
                         self.add_fx("train", f"{e['title'][:30]} · in {mins} min")
                         self.say(self.T("meeting_in", title=e['title'], mins=mins), "calendar")
+                        self.phone("calendar", f"In {mins} minutes", e["title"], "calendar", private_text=True)
                         self.note("calendar", f"{e['title']} at {time.strftime('%H:%M', time.localtime(e['start']))}", "info")
                 self.calendar = nxt
                 self.cal_all = cache
@@ -771,6 +798,10 @@ class Hub:
                 if at and self.summary_day != day and time.localtime().tm_hour * 60 + time.localtime().tm_min >= int(at[1]) * 60 + int(at[2]):
                     self.summary_day = day
                     text = day_summary(cache, now)
+                    n_today, secs_today = day_totals(cache, now)
+                    if n_today:
+                        self.stat("meetings", n_today)
+                        self.stat("meeting_min", round(secs_today / 60))
                     if text:
                         self.add_fx("summary", text)
                         self.note("calendar", text, "info")
@@ -838,6 +869,9 @@ class Hub:
 
     def doorbell(self) -> None:
         self.ring = {"t": time.time()}
+        self.stat("doorbell")
+        self.room_effect("doorbell")
+        self.phone("doorbell", "Someone is at the door", "", "bell")
         if self.demo:   # the demo: a camera picture of the demo data at the door
             d = Path(os.environ.get("PULSE_DEMO_DIR", HERE / "demo"))
             pics = sorted(d.glob("cam*/*.jpg")) if d.is_dir() else []
@@ -922,6 +956,7 @@ class Hub:
                     if v["battery"] is not None and v["battery"] < float(c.get("low", 30) or 30) and v["state"] == "Disconnected":
                         self.note("car", f"{v['name']} at {v['battery']:.0f}% and not plugged in", "warn")
                         self.say(self.T("car_low", name=v['name'], b=f"{v['battery']:.0f}"), "car")
+                        self.phone("car", f"{v['name']} at {v['battery']:.0f}% and not plugged in", "", "electric_plug")
             except Exception as e:   # noqa: BLE001
                 if now - warned > 900:
                     warned = now
@@ -938,6 +973,7 @@ class Hub:
             self.add_fx("car", f"{v['name']} charged · {v['battery']:.0f}% · {v['range']:.0f} {v['unit']}")
             self.note("car", f"{v['name']} charged: {v['battery']:.0f}%", "ok")
             self.say(self.T("car_done", name=v['name'], b=f"{v['battery']:.0f}"), "car")
+            self.phone("car", f"{v['name']} charged · {v['battery']:.0f}%", f"{v['range']:.0f} {v['unit']}" if v.get("range") is not None else "", "battery")
 
     def car_widget(self, c: dict) -> None:
         v = self.car or {}
@@ -1009,6 +1045,363 @@ class Hub:
         self.ha(f"/api/services/{dom}/{svc}", {"entity_id": e})
         return True
 
+    # -- your phone: the moments that matter, as a push notification (the ntfy app, free on iOS and Android)
+    def phone(self, kind: str, title: str, text: str = "", tags: str = "", private_text: bool = False) -> None:
+        c = self.conf("phone", default={}) or {}
+        if not c.get("topic") or c.get("enabled") is False or self.demo:
+            return
+        if kind not in (c.get("events") or ["focus", "doorbell", "car", "earth", "calendar", "space", "alerts", "wrapped"]):
+            return
+        if private_text and c.get("details") is False:
+            text = ""
+
+        def send():
+            server = str(c.get("server") or "https://ntfy.sh").rstrip("/")
+            msg = {"topic": str(c["topic"]), "title": title[:120], "message": (text or title)[:400],
+                   "tags": [tags or "city_sunset"], "priority": 4 if kind in ("doorbell", "alerts", "earth") else 3}
+            headers = {"Content-Type": "application/json"}
+            if c.get("token"):
+                headers["Authorization"] = "Bearer " + str(c["token"])
+            try:   # JSON publishing: titles in any language
+                urllib.request.urlopen(urllib.request.Request(server, data=json.dumps(msg).encode(), method="POST",
+                                                              headers=headers), timeout=10).read()
+            except Exception as e:   # noqa: BLE001
+                log(f"phone: {e}")
+        threading.Thread(target=send, daemon=True).start()
+
+    # -- the lights of your room follow Pulse (Home Assistant, Philips Hue, a Philips TV's Ambilight through HA)
+    def room(self) -> dict:
+        return self.conf("lights", default={}) or {}
+
+    def room_lights(self) -> list:
+        c = self.room()
+        return [str(x) for x in (c.get("lights") or [])][:12] if c.get("enabled") else []
+
+    def hue(self, path: str, body: dict | None = None):
+        c = self.room()
+        req = urllib.request.Request(f"http://{c.get('bridge')}/api/{c.get('user')}{path}",
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     method="PUT" if body is not None else "GET", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read() or b"null")
+
+    def light_get(self, ent: str) -> dict:
+        """A light as it is now: on or off, brightness 0..255, colour (rgb) or white (mired)."""
+        if str(self.room().get("source", "homeassistant")) == "hue":
+            st = (self.hue(f"/lights/{ent}") or {}).get("state") or {}
+            return {"on": bool(st.get("on")), "bri": st.get("bri"), "xy": st.get("xy"), "ct": st.get("ct")}
+        st = self.ha("/api/states/" + urllib.parse.quote(ent)) or {}
+        a = st.get("attributes") or {}
+        return {"on": st.get("state") == "on", "bri": a.get("brightness"), "rgb": a.get("rgb_color"),
+                "mired": a.get("color_temp")}
+
+    def light_set(self, ent: str, on: bool = True, rgb=None, bri=None, back: dict | None = None, flash_ms: int = 0) -> None:
+        hue = str(self.room().get("source", "homeassistant")) == "hue"
+        if back is not None:   # put it back exactly as it was
+            if hue:
+                body = {"on": back["on"]}
+                if back["on"]:
+                    body.update({k: back[k] for k in ("bri", "xy", "ct") if back.get(k) is not None})
+                    if body.get("xy") is not None:
+                        body.pop("ct", None)
+                self.hue(f"/lights/{ent}/state", {**body, "transitiontime": 2})
+            elif not back["on"]:
+                self.ha("/api/services/light/turn_off", {"entity_id": ent})
+            else:
+                body = {"entity_id": ent, "transition": 0.3}
+                if back.get("bri") is not None:
+                    body["brightness"] = back["bri"]
+                if back.get("rgb"):
+                    body["rgb_color"] = back["rgb"]
+                elif back.get("mired"):
+                    body["color_temp"] = back["mired"]
+                self.ha("/api/services/light/turn_on", body)
+            return
+        if hue:
+            body: dict = {"on": on, "transitiontime": 0}
+            if on and rgb:
+                body["xy"] = rgb_to_xy(rgb)
+            if on and bri is not None:
+                body["bri"] = max(1, min(254, int(bri)))
+            self.hue(f"/lights/{ent}/state", body)
+        else:
+            body = {"entity_id": ent, "transition": 0}
+            if on and rgb:
+                body["rgb_color"] = list(rgb)
+            if on and bri is not None:
+                body["brightness"] = max(1, min(255, int(bri)))
+            self.ha("/api/services/light/" + ("turn_on" if on else "turn_off"), body)
+
+    def room_effect(self, kind: str) -> None:
+        """A short effect on the room's lights (in its own thread), then every light goes back as it was."""
+        c, ents = self.room(), self.room_lights()
+        if not ents or self.demo or c.get(kind, True) is False:
+            return
+        if not self.__dict__.setdefault("room_lock", threading.Lock()).acquire(blocking=False):
+            return   # one effect at a time
+
+        def run():
+            try:
+                before = {e: self.light_get(e) for e in ents}
+                use = [e for e in ents if before[e]["on"] or c.get("only_if_on", True) is False]
+                steps = {"lightning": [((255, 255, 255), 255, 0.12), (None, None, 0.08), ((235, 240, 255), 200, 0.1)],
+                         "alert": [((255, 30, 40), 255, 0.5), (None, None, 0.35)] * 3,
+                         "doorbell": [((255, 255, 255), 255, 0.35), (None, None, 0.3)] * 2,
+                         "quake": [((255, 150, 40), 255, 0.15), ((255, 150, 40), 60, 0.15)] * 5}.get(kind)
+                if kind == "focus":   # a calm colour while you focus; back when it ends
+                    for e in use:
+                        self.light_set(e, True, (90, 110, 255), int(c.get("focus_brightness", 90) or 90))
+                    self.room_before = before
+                    return
+                for rgb, bri, secs in steps or []:
+                    for e in use:
+                        if rgb is None:
+                            self.light_set(e, back=before[e])
+                        else:
+                            self.light_set(e, True, rgb, bri)
+                    time.sleep(secs)
+                for e in use:
+                    self.light_set(e, back=before[e])   # as it was just before (the focus colour, if a focus runs)
+            except Exception as ex:   # noqa: BLE001
+                log(f"lights: {ex}")
+            finally:
+                self.room_lock.release()
+
+        def end_focus():
+            try:
+                b = self.__dict__.pop("room_before", None) or {}
+                for e, st in b.items():
+                    if st["on"] or c.get("only_if_on", True) is False:
+                        self.light_set(e, back=st)
+            except Exception as ex:   # noqa: BLE001
+                log(f"lights: {ex}")
+            finally:
+                self.room_lock.release()
+        threading.Thread(target=end_focus if kind == "focus_end" else run, daemon=True).start()
+
+    # -- the real sky at night: computed here every minute for where you are (no internet needed)
+    def loop_night(self) -> None:
+        while True:
+            try:
+                if self.location and self.conf("night", "enabled", default=True) is not False:
+                    self.night = night_sky(*self.location, time.time() + float(os.environ.get("PULSE_DEMO_SKY_OFFSET") or 0))
+                    fl = os.environ.get("PULSE_DEMO_SHOWER", "")
+                    if self.demo and fl and os.path.exists(fl):   # the demo video: a strong shower while its flag file exists
+                        sh0 = meteor_shower(time.time() + float(os.environ.get("PULSE_DEMO_SKY_OFFSET") or 0)) or {}
+                        self.night["shower"] = {"name": sh0.get("name", "Leonids"), "zhr": 1000.0, "strength": 1.0, "az": 110.0, "el": 25.0}
+                    sh = self.night.get("shower")
+                    day = time.strftime("%Y-%m-%d")
+                    if sh and sh["strength"] > 0.7 and self.night["sun"]["el"] < -12 and self.__dict__.get("shower_said") != day:
+                        self.shower_said = day
+                        self.note("space", f"{sh['name']} meteor shower tonight", "info")
+                        self.say(self.T("shower", name=sh["name"]), "space")
+            except Exception as e:   # noqa: BLE001
+                log(f"night: {e}")
+            time.sleep(60 if not self.demo else 1)
+
+    # -- Starlink trains: the satellites of the last launches, when they really pass over you, lit by the Sun
+    def loop_starlink(self) -> None:
+        groups, fetched, planned, passes, warned, told = {}, 0.0, 0.0, [], 0.0, set()
+        cache = STATE_DIR / "starlink.json"
+        while True:
+            c = self.conf("starlink", default={}) or {}
+            if c.get("enabled") is False or self.demo or not self.location:
+                time.sleep(30)
+                continue
+            now = time.time()
+            try:
+                if now - fetched > 6 * 3600:   # CelesTrak asks for no more than every few hours
+                    fetched = now
+                    rows = None
+                    try:
+                        if cache.exists() and now - cache.stat().st_mtime < 6 * 3600:
+                            rows = json.loads(cache.read_text())
+                    except (OSError, ValueError):
+                        rows = None
+                    if rows is None:
+                        rows = http_json("https://celestrak.org/NORAD/elements/gp.php?GROUP=last-30-days&FORMAT=json")
+                        STATE_DIR.mkdir(parents=True, exist_ok=True)
+                        cache.write_text(json.dumps(rows))
+                    groups = starlink_groups(rows)
+                    planned = 0
+                lat, lon = self.location
+                if groups and now - planned > 3600:
+                    planned = now
+                    passes = starlink_passes(groups, lat, lon, now, 24)
+                passes = [p for p in passes if p["end"] > now]
+                nxt = passes[0] if passes else None
+                sats = []
+                if nxt and nxt["start"] - 120 <= now <= nxt["end"] + 60:   # the train is over you: every satellite
+                    for o in groups.get(nxt["group"], []):
+                        az, el, lit = sat_look(o, lat, lon, now)
+                        if el > 0 and lit:
+                            sats.append({"az": round(az, 2), "el": round(el, 2)})
+                warn = float(c.get("warn", 5) or 0) * 60
+                if nxt and warn and 0 < nxt["start"] - now <= warn and nxt["group"] + str(int(nxt["start"])) not in told:
+                    told.add(nxt["group"] + str(int(nxt["start"])))
+                    at = time.strftime("%H:%M", time.localtime(nxt["start"]))
+                    side = compass(nxt["az"])
+                    self.add_fx("starlink", f"Starlink train at {at} · {side} · {nxt['n']} satellites")
+                    self.note("space", f"a Starlink train passes at {at}, {nxt['max_el']}° high", "info")
+                    self.say(self.T("starlink", at=at, side=side), "space")
+                    self.phone("space", f"Starlink train at {at}", f"look {side}, {nxt['max_el']}° high · {nxt['n']} satellites", "satellite")
+                    self.stat("starlink")
+                self.starlink = {"sats": sats, "next": {k: nxt[k] for k in ("start", "end", "max_el", "az", "n")} if nxt else None}
+            except Exception as e:   # noqa: BLE001
+                if now - warned > 3600:
+                    warned = now
+                    log(f"starlink: {e}")
+            time.sleep(4 if self.starlink.get("sats") else 20)
+
+    # -- thunderstorms around you: the weather of 8 points around you, so a storm comes from where it really is
+    def loop_storms(self) -> None:
+        warned = 0.0
+        while True:
+            c = self.conf("storms", default={}) or {}
+            if c.get("enabled") is False or self.demo or not self.location:
+                time.sleep(60)
+                continue
+            try:
+                lat, lon = self.location
+                km = float(c.get("km", 30) or 30)
+                pts = [ring_point(lat, lon, b, km) for b in range(0, 360, 45)] + [(lat, lon)]
+                q = ("https://api.open-meteo.com/v1/forecast?latitude=" + ",".join(f"{p[0]:.3f}" for p in pts)
+                     + "&longitude=" + ",".join(f"{p[1]:.3f}" for p in pts) + "&current=weather_code,precipitation")
+                j = http_json(q)
+                rows = j if isinstance(j, list) else [j]
+                cells = []
+                for b, row in zip(list(range(0, 360, 45)) + [None], rows):
+                    code = (row.get("current") or {}).get("weather_code")
+                    if isinstance(code, (int, float)) and code >= 95:
+                        cells.append({"az": b, "km": 0 if b is None else km, "hail": code in (96, 99)})
+                lpi = None
+                try:   # the lightning potential (Central Europe, ICON): how charged the air really is
+                    lj = http_json(f"https://api.open-meteo.com/v1/forecast?latitude={lat:.3f}&longitude={lon:.3f}"
+                                   "&hourly=lightning_potential&forecast_hours=1")
+                    lpi = ((lj.get("hourly") or {}).get("lightning_potential") or [None])[0]
+                except Exception:   # noqa: BLE001 - outside Europe there is none
+                    pass
+                self.storms = {"cells": cells, "lpi": lpi, "t": time.time()}
+                if any(not c_["km"] for c_ in cells) and not self.__dict__.get("room_storm"):
+                    self.room_storm = True
+                    threading.Thread(target=self.loop_room_storm, daemon=True).start()
+            except Exception as e:   # noqa: BLE001
+                if time.time() - warned > 3600:
+                    warned = time.time()
+                    log(f"storms: {e}")
+            time.sleep(max(300, int(c.get("every", 600) or 600)))
+
+    def loop_room_storm(self) -> None:
+        """While the thunderstorm is over you, now and then a flash of lightning in your room too."""
+        import random
+        try:
+            while self.storms and any(not c_["km"] for c_ in self.storms.get("cells", [])):
+                time.sleep(random.uniform(25, 90))
+                if not self.privacy() and not self.in_meeting:
+                    self.room_effect("lightning")
+        finally:
+            self.room_storm = False
+
+    def set_bot(self, name: str, state: str) -> None:
+        """An AI bot of yours (Grok Bot, an n8n flow, a Discord bot...) as a robot on the floor, until it says gone."""
+        name = re.sub(r"[^\w.:@\- ]", "", str(name or ""))[:20].strip() or "bot"
+        st = {"ok": "ok", "idle": "ok", "working": "busy", "busy": "busy", "waiting": "restart", "restart": "restart",
+              "failed": "bad", "bad": "bad", "error": "bad"}.get(str(state).lower(), "gone")
+        with self.lock:
+            if st == "gone":
+                self.bots.pop(name, None)
+            else:
+                self.bots[name] = {"health": "ok" if st == "busy" else st, "busy": st == "busy", "t": time.time()}
+
+    def all_robots(self) -> list:
+        now = time.time()
+        bots = [{"id": "b" + __import__("hashlib").sha1(n.encode()).hexdigest()[:7], "name": n, "health": b["health"],
+                 "bot": True, "busy": b.get("busy", False)} for n, b in list(self.bots.items()) if now - b["t"] < 3600]
+        return (bots + list(self.robots))[:12]
+
+    # -- your containers (Docker or Podman) are robots walking on the floor of the city
+    def loop_robots(self) -> None:
+        while True:
+            c = self.conf("robots", default={}) or {}
+            src = str(c.get("source", "auto"))
+            if c.get("enabled") is False or self.demo:
+                time.sleep(30)
+                continue
+            tool = next((t for t in ([src] if src in ("docker", "podman") else ["docker", "podman"]) if shutil.which(t)), None)
+            if not tool:
+                self.robots = []
+                time.sleep(120)
+                continue
+            try:
+                r = subprocess.run([tool, "ps", "--format", "{{json .}}"], capture_output=True, text=True, timeout=10)
+                self.robots = containers(r.stdout) if r.returncode == 0 else []
+            except (OSError, subprocess.TimeoutExpired):
+                self.robots = []
+            time.sleep(max(5, int(c.get("every", 10) or 10)))
+
+    # -- the air you breathe: air quality (European AQI) and pollen, from Open-Meteo
+    def loop_air(self) -> None:
+        warned, said = 0.0, ""
+        while True:
+            c = self.conf("air", default={}) or {}
+            if c.get("enabled") is False or self.demo or not self.location:
+                time.sleep(60)
+                continue
+            try:
+                lat, lon = self.location
+                j = http_json(f"https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat:.3f}&longitude={lon:.3f}"
+                              "&current=european_aqi,us_aqi,pm2_5,pm10,alder_pollen,birch_pollen,grass_pollen,"
+                              "mugwort_pollen,olive_pollen,ragweed_pollen")
+                self.air = air_view(j.get("current") or {})
+                lvl = self.air["level"]
+                if lvl in ("poor", "very poor", "extremely poor") and said != time.strftime("%Y-%m-%d"):
+                    said = time.strftime("%Y-%m-%d")
+                    self.note("air", f"air quality {lvl} · AQI {self.air['aqi']}", "warn")
+            except Exception as e:   # noqa: BLE001
+                if time.time() - warned > 3600:
+                    warned = time.time()
+                    log(f"air: {e}")
+            time.sleep(max(600, int(c.get("every", 1800) or 1800)))
+
+    # -- your year, counted: Pulse Wrapped
+    def stat(self, key: str, n: float = 1, unique: str = "") -> None:
+        try:
+            year = time.strftime("%Y")
+            f = STATE_DIR / "stats.json"
+            with self.lock:
+                d = json.loads(f.read_text()) if f.exists() else {}
+                y = d.setdefault(year, {})
+                if unique:   # count each one once (a plane's code, a quake's id), kept only as a short hash
+                    import hashlib
+                    h = hashlib.sha1(unique.encode()).hexdigest()[:10]
+                    seen = y.setdefault("_" + key, [])
+                    if h in seen:
+                        return
+                    seen.append(h)
+                    if len(seen) > 20000:
+                        del seen[:5000]
+                y[key] = round(y.get(key, 0) + n, 1)
+                STATE_DIR.mkdir(parents=True, exist_ok=True)
+                f.write_text(json.dumps(d))
+        except (OSError, ValueError) as e:
+            log(f"stats: {e}")
+
+    def loop_wrapped(self) -> None:
+        while True:
+            time.sleep(300)
+            lt = time.localtime()
+            if (self.conf("wrapped", "enabled", default=True) is not False and lt.tm_mon == 12 and lt.tm_mday == 31
+                    and lt.tm_hour >= 20 and self.__dict__.get("wrapped_done") != lt.tm_year):
+                self.wrapped_done = lt.tm_year
+                out = make_wrapped(str(lt.tm_year), self.conf("timelapse", default={}) or {})
+                if out:
+                    self.add_fx("fireworks", f"your {lt.tm_year} · Pulse Wrapped")
+                    self.note("timelapse", "your year as a video: " + out.name, "ok")
+                    self.phone("wrapped", f"Your {lt.tm_year} · Pulse Wrapped", str(out), "tada")
+                    if shutil.which("notify-send"):
+                        subprocess.Popen(["notify-send", f"Pulse · your {lt.tm_year}", str(out)],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     # -- earthquakes (USGS): the city shakes, a wave comes from where it happened
     def loop_quakes(self) -> None:
         first, warned = True, 0.0
@@ -1047,6 +1440,11 @@ class Hub:
                     tsunami_km: float = 1500) -> None:
         place, near = place[:40], dist < near_km
         sea_near = tsunami and dist < tsunami_km
+        self.stat("quakes")
+        if near or sea_near:
+            self.room_effect("quake")
+            self.phone("earth", ("Tsunami message · " if sea_near else "Earthquake near you · ") + f"M{mag:.1f}",
+                       f"{place} · {dist:.0f} km", "ocean" if sea_near else "warning")
         self.add_fx("quake", f"M{mag:.1f} · {place} · {dist:,.0f} km" + (" · TSUNAMI" if tsunami else ""),
                     mag=mag, az=az, near=1 if near else 0, tsunami=1 if tsunami else 0)
         self.note("earth", f"M{mag:.1f} earthquake · {place}" + (" · tsunami message" if tsunami else ""),
@@ -1341,6 +1739,23 @@ class Hub:
             self.voice_q.put_nowait(re.sub(r"\s+", " ", str(text))[:240])
         except queue.Full:
             pass
+        sp = v.get("speakers")   # Alexa (or any speaker Home Assistant knows) says it too
+        if sp and not self.demo:
+            threading.Thread(target=self.speakers_say, args=(str(text)[:240], sp, v), daemon=True).start()
+
+    def speakers_say(self, text: str, speakers, v: dict) -> None:
+        """Through Home Assistant: an Echo with Alexa Media Player (notify.alexa_media_...), or a tts.* / media_player."""
+        for sp in ([speakers] if isinstance(speakers, str) else list(speakers))[:6]:
+            sp = str(sp)
+            try:
+                if sp.startswith("notify."):
+                    self.ha("/api/services/notify/" + sp.split(".", 1)[1],
+                            {"message": text, "data": {"type": str(v.get("speakers_type", "announce"))}})
+                elif sp.startswith("media_player."):
+                    self.ha("/api/services/tts/speak", {"entity_id": str(v.get("tts", "tts.home_assistant_cloud")),
+                                                        "media_player_entity_id": sp, "message": text})
+            except Exception as e:   # noqa: BLE001
+                log(f"speakers: {e}")
 
     def loop_voice(self) -> None:
         while True:
@@ -1515,6 +1930,7 @@ class Hub:
                     if x["id"] not in self.launched and x["net"] <= now < x["net"] + 90 and x["status"] in ("Go", "In Flight", "Success"):
                         self.launched.add(x["id"])
                         self.add_fx("launch", f"{x['rocket']} · {x['mission']} · liftoff")
+                        self.stat("launches")
                         self.note("space", f"{x['rocket']} {x['mission']} lifted off", "info")
                         self.say(self.T("liftoff", rocket=x['rocket'], mission=x['mission']), "space")
                 nxt = next((x for x in ls if x["net"] > now - 60), None)
@@ -1745,6 +2161,27 @@ class Hub:
             items = "; ".join((x["text"].split(" · ")[0] if x["kind"] == "alert" else x["text"].replace("·", ","))
                               for x in d["lines"][:4] if not x.get("private"))
             return L(f"While you were away: {items}.", f"Mentre eri via: {items}.")
+        if re.search(r"my year|this year|il mio anno|quest'anno|wrapped", t):
+            st, y = year_stats(time.strftime("%Y")), time.strftime("%Y")
+            return L(f"Your {y}: {int(st.get('focus', 0))} focus sessions, {int(st.get('planes', 0))} planes over you, "
+                     f"{int(st.get('launches', 0))} launches, {int(st.get('quakes', 0))} earthquakes.",
+                     f"Il tuo {y}: {int(st.get('focus', 0))} focus, {int(st.get('planes', 0))} aerei sopra di te, "
+                     f"{int(st.get('launches', 0))} lanci, {int(st.get('quakes', 0))} terremoti.")
+        if re.search(r"\b(moon|luna)\b", t) and self.night:
+            m = self.night["moon"]
+            it_names = {"new moon": "luna nuova", "full moon": "luna piena", "first quarter": "primo quarto", "last quarter": "ultimo quarto",
+                        "waxing crescent": "luna crescente", "waning crescent": "luna calante", "waxing gibbous": "gibbosa crescente",
+                        "waning gibbous": "gibbosa calante"}
+            return L(f"The Moon is a {m['name']}, {round(m['lit'] * 100)} percent lit" + (", above you now." if m["el"] > 0 else "."),
+                     f"La Luna è {it_names.get(m['name'], m['name'])}, illuminata al {round(m['lit'] * 100)} per cento"
+                     + (", ed è sopra di te adesso." if m["el"] > 0 else "."))
+        if re.search(r"starlink", t):
+            nx = (self.starlink or {}).get("next")
+            if not nx:
+                return L("No Starlink train over you in the next day.", "Nessun treno Starlink sopra di te nelle prossime 24 ore.")
+            at = time.strftime("%H:%M", time.localtime(nx["start"]))
+            return L(f"Next Starlink train at {at}, {nx['max_el']} degrees up, from the {compass(nx['az'])}.",
+                     f"Prossimo treno Starlink alle {at}, alto {nx['max_el']} gradi.")
         if re.search(r"my city|la mia citt|streak|serie", t):
             g = self.growth_state()
             return L(f"Your city has {g['n']} buildings. Streak: {g['streak']} days, best {g['best']}.",
@@ -2150,7 +2587,7 @@ class Hub:
                         imperial = self.conf("pulse", "units", default="metric") == "imperial"
                         q = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                              "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,"
-                             "relative_humidity_2m,is_day,precipitation"
+                             "relative_humidity_2m,is_day,precipitation,cloud_cover"
                              "&hourly=temperature_2m,precipitation_probability,weather_code"
                              "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=2")
                         if imperial:
@@ -2168,6 +2605,7 @@ class Hub:
                         self.weather = {"city": label, "temp": cur["temperature_2m"], "feels": cur["apparent_temperature"],
                                         "code": cur["weather_code"], "wind": cur["wind_speed_10m"],
                                         "windDir": cur.get("wind_direction_10m"), "gust": cur.get("wind_gusts_10m"),
+                                        "cloud": cur.get("cloud_cover"),
                                         "hum": cur["relative_humidity_2m"], "day": cur["is_day"],
                                         "rain": cur.get("precipitation", 0),
                                         "hi": j["daily"]["temperature_2m_max"][0], "lo": j["daily"]["temperature_2m_min"][0],
@@ -2189,6 +2627,20 @@ class Hub:
         while time.time() < end and self.gen == g:
             time.sleep(1)
 
+    def omarchy_release(self, tag: str) -> None:
+        """A new Omarchy is out: a plane crosses the sky with a banner (the first look only remembers the version)."""
+        f = STATE_DIR / "omarchy-release.txt"
+        try:
+            old = f.read_text().strip() if f.exists() else ""
+            if tag and tag != old:
+                STATE_DIR.mkdir(parents=True, exist_ok=True)
+                f.write_text(tag)
+                if old:
+                    self.add_fx("banner", f"OMARCHY {tag.lstrip('v')} IS OUT")
+                    self.note("news", f"Omarchy {tag} is out", "info")
+        except OSError as e:
+            log(f"omarchy release: {e}")
+
     def loop_github(self) -> None:
         while True:
             repos = self.builtin("github", default=["basecamp/omarchy"])
@@ -2201,6 +2653,8 @@ class Hub:
                     rel = gh_api(f"repos/{repo}/releases?per_page=1")
                     if rel:
                         r = rel[0]
+                        if repo == "basecamp/omarchy":
+                            self.omarchy_release(str(r.get("tag_name") or ""))
                         items.append({"title": f"{repo} · {r.get('tag_name', '')}", "text": (r.get("name") or "release")[:80],
                                       "t": iso_ts(r.get("published_at")), "level": "info"})
                     for c in (gh_api(f"repos/{repo}/commits?per_page=3") or [])[:3]:
@@ -2381,6 +2835,11 @@ class Hub:
                     "sky": self.sky.get("planes", []) if time.time() - self.sky.get("t", 0) < 120 else [],
                     "calendar": [{**e, "title": "" if self.privacy() else e["title"]} for e in self.calendar],
                     "meeting": self.in_meeting,
+                    "night": self.night,
+                    "starlink": self.starlink,
+                    "storms": self.storms,
+                    "air": self.air,
+                    "robots": [{**x, "name": "" if self.privacy() else x["name"]} for x in self.all_robots()],
                     "car": ({k: self.car.get(k) for k in ("battery", "range", "unit", "state", "limit", "minutes", "power", "driving")}
                             if self.car and time.time() - self.car.get("t", 0) < 3600 else None),
                     "ring": bool(self.ring) and time.time() - self.ring["t"] < float(os.environ.get("PULSE_DEMO_RING_SECS") or 60)
@@ -2400,10 +2859,14 @@ class Hub:
                            "dim_with_windows": self.conf("pulse", "dim_with_windows", default=True),
                            "system": self.builtin("system") is not False, "network": self.builtin("network") is not False,
                            "face": self.conf("pulse", "face", default="agents"),
+                           "agentsAs": str(self.conf("pulse", "agents_as", default="drones")),
+                           "banner": str(self.conf("pulse", "banner", default="OMARCHY · WE CAN FIX EVERYTHING"))[:48],
+                           "bannerEvery": float(self.conf("pulse", "banner_every", default=45) or 0),
                            "fireworks": self.conf("pulse", "celebrate", default=True) is not False,
                            "music": self.conf("music", "enabled", default="auto") not in (False, "off"),
                            "sun": self.conf("pulse", "sun", default=True) is not False,
                            "quality": quality_mode(self.conf("pulse", "quality", default="auto")),
+                           "sound": sound_conf(self.conf("sound", default={}) or {}, self.in_meeting, self.privacy()),
                            "sphere": self.conf("pulse", "sphere", default="real"),
                            "cars": self.conf("lan", "cars", default=True) is not False,
                            "eyes": self.conf("presence", "eyes", default=True) is not False}}
@@ -2447,7 +2910,9 @@ class Hub:
                    self.loop_theme, self.loop_hypr, self.loop_music, self.loop_presence, self.loop_lan,
                    self.loop_voice, self.loop_git, self.loop_space, self.loop_heart, self.loop_crew,
                    self.loop_crew_send, self.loop_launches, self.loop_sky, self.loop_calendar, self.loop_home,
-                   self.loop_car, self.loop_quakes, self.loop_timelapse):
+                   self.loop_car, self.loop_quakes, self.loop_timelapse,
+                   self.loop_night, self.loop_starlink, self.loop_storms, self.loop_air, self.loop_wrapped,
+                   self.loop_robots):
             threading.Thread(target=fn, daemon=True).start()
 
 
@@ -2486,6 +2951,21 @@ def read_temp():
             except Exception:   # noqa: BLE001
                 pass
     return round(best, 1) if best is not None else None
+
+
+def sound_conf(c: dict, meeting: bool = False, private: bool = False) -> dict | None:
+    """The soundscape for the page: off unless you turn it on; silent in a meeting, in the quiet hours, while sharing."""
+    if c.get("enabled") is not True:
+        return None
+    if meeting or private or in_quiet_hours(str(c.get("quiet", "23:00-08:00") or "")):
+        return {"volume": 0}
+    try:
+        vol = max(0.0, min(1.0, float(c.get("volume", 0.25))))
+    except (TypeError, ValueError):
+        vol = 0.25
+    return {"volume": vol, "rain": c.get("rain", True) is not False, "wind": c.get("wind", True) is not False,
+            "planes": c.get("planes", True) is not False, "thunder": c.get("thunder", True) is not False,
+            "events": c.get("events", True) is not False}
 
 
 def quality_mode(v) -> str:
@@ -2784,6 +3264,12 @@ PHRASES = {
                  "fr": "Aujourd'hui : une réunion, {dur}.", "de": "Heute: ein Termin, {dur}."},
     "ci_fail": {"en": "The build failed on {name}.", "it": "La CI di {name} è fallita.", "es": "La CI de {name} ha fallado.",
                 "fr": "La CI de {name} a échoué.", "de": "Die CI von {name} ist fehlgeschlagen."},
+    "starlink": {"en": "A Starlink train passes over you at {at}, from the {side}.", "it": "Un treno Starlink passa sopra di te alle {at}, da {side}.",
+                 "es": "Un tren de Starlink pasa sobre ti a las {at}, desde el {side}.", "fr": "Un train Starlink passe au-dessus de toi à {at}, depuis le {side}.",
+                 "de": "Ein Starlink-Zug fliegt um {at} über dich, aus Richtung {side}."},
+    "shower": {"en": "Tonight, the {name} meteor shower. Look up!", "it": "Stanotte lo sciame delle {name}. Guarda in alto!",
+               "es": "Esta noche, la lluvia de estrellas de las {name}. ¡Mira arriba!", "fr": "Cette nuit, la pluie d'étoiles filantes des {name}. Lève les yeux !",
+               "de": "Heute Nacht: der Meteorstrom der {name}. Schau nach oben!"},
     "door": {"en": "Someone is at the door.", "it": "C'è qualcuno alla porta.", "es": "Hay alguien en la puerta.",
              "fr": "Quelqu'un est à la porte.", "de": "Jemand ist an der Tür."},
     "car_low": {"en": "Your {name} is at {b} percent and not plugged in.", "it": "L'auto è al {b} per cento e non è in carica.",
@@ -2930,6 +3416,329 @@ def iss_at(track: list, now: float) -> dict | None:
                     "longitude": (a["longitude"] + dl * u + 540) % 360 - 180,
                     "altitude": a["altitude"] + (b["altitude"] - a["altitude"]) * u}
     return None
+
+
+
+# ---------------------------------------------------------------- the real night sky (1.4): computed here, offline
+# Low-precision formulas, good to a fraction of a degree for the Sun and the planets, about a degree for the Moon:
+# far better than the eye needs on a wallpaper. Stars: J2000 positions of the bright ones you can recognise.
+
+def julian(t: float) -> float:
+    return t / 86400.0 + 2440587.5
+
+
+def gmst_deg(jd: float) -> float:
+    return (280.46061837 + 360.98564736629 * (jd - 2451545.0)) % 360
+
+
+def altaz(ra: float, dec: float, lat: float, lon: float, jd: float) -> tuple:
+    """Right ascension and declination (degrees) to azimuth (0 = north, 90 = east) and elevation, for (lat, lon)."""
+    import math
+    h = math.radians((gmst_deg(jd) + lon - ra) % 360)
+    la, d = math.radians(lat), math.radians(dec)
+    el = math.asin(max(-1.0, min(1.0, math.sin(la) * math.sin(d) + math.cos(la) * math.cos(d) * math.cos(h))))
+    az = math.atan2(-math.sin(h) * math.cos(d), math.cos(la) * math.sin(d) - math.sin(la) * math.cos(d) * math.cos(h))
+    return (math.degrees(az) + 360) % 360, math.degrees(el)
+
+
+def ecl_to_eq(lon: float, lat: float, eps: float = 23.4393) -> tuple:
+    import math
+    lo, la, e = math.radians(lon), math.radians(lat), math.radians(eps)
+    x = math.cos(la) * math.cos(lo)
+    y = math.cos(e) * math.cos(la) * math.sin(lo) - math.sin(e) * math.sin(la)
+    z = math.sin(e) * math.cos(la) * math.sin(lo) + math.cos(e) * math.sin(la)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360, math.degrees(math.asin(max(-1.0, min(1.0, z))))
+
+
+def sun_ecl(jd: float) -> float:
+    """The Sun's ecliptic longitude (degrees)."""
+    import math
+    n = jd - 2451545.0
+    L, g = (280.460 + 0.9856474 * n) % 360, math.radians((357.528 + 0.9856003 * n) % 360)
+    return (L + 1.915 * math.sin(g) + 0.020 * math.sin(2 * g)) % 360
+
+
+def sun_radec(jd: float) -> tuple:
+    return ecl_to_eq(sun_ecl(jd), 0.0, 23.439 - 0.0000004 * (jd - 2451545.0))
+
+
+def moon_ecl(jd: float) -> tuple:
+    """The Moon's geocentric ecliptic longitude and latitude (degrees), with its main perturbations."""
+    import math
+    rad, d = math.radians, jd - 2451543.5
+    N, i, w = 125.1228 - 0.0529538083 * d, 5.1454, 318.0634 + 0.1643573223 * d
+    e, M = 0.054900, (115.3654 + 13.0649929509 * d) % 360
+    E = rad(M)
+    for _ in range(8):
+        E = E - (E - e * math.sin(E) - rad(M)) / (1 - e * math.cos(E))
+    xv, yv = math.cos(E) - e, math.sqrt(1 - e * e) * math.sin(E)
+    v, r = math.atan2(yv, xv), math.hypot(xv, yv)
+    vw, Nr, ir = v + rad(w), rad(N), rad(i)
+    xh = r * (math.cos(Nr) * math.cos(vw) - math.sin(Nr) * math.sin(vw) * math.cos(ir))
+    yh = r * (math.sin(Nr) * math.cos(vw) + math.cos(Nr) * math.sin(vw) * math.cos(ir))
+    zh = r * math.sin(vw) * math.sin(ir)
+    lon, lat = math.degrees(math.atan2(yh, xh)), math.degrees(math.atan2(zh, math.hypot(xh, yh)))
+    Ms = rad((356.0470 + 0.9856002585 * d) % 360)
+    Mm = rad(M)
+    Ls = (Ms + rad(282.9404 + 4.70935e-5 * d))
+    Lm = Nr + rad(w) + rad(M)
+    D, F = Lm - Ls, Lm - Nr
+    s = math.sin
+    lon += (-1.274 * s(Mm - 2 * D) + 0.658 * s(2 * D) - 0.186 * s(Ms) - 0.059 * s(2 * Mm - 2 * D) - 0.057 * s(Mm - 2 * D + Ms)
+            + 0.053 * s(Mm + 2 * D) + 0.046 * s(2 * D - Ms) + 0.041 * s(Mm - Ms) - 0.035 * s(D) - 0.031 * s(Mm + Ms)
+            - 0.015 * s(2 * F - 2 * D) + 0.011 * s(Mm - 4 * D))
+    lat += (-0.173 * s(F - 2 * D) - 0.055 * s(Mm - F - 2 * D) - 0.046 * s(Mm + F - 2 * D) + 0.033 * s(F + 2 * D) + 0.017 * s(2 * Mm + F))
+    return lon % 360, lat
+
+
+def moon_phase(jd: float) -> dict:
+    """How much of the Moon is lit (0..1), whether it grows, its age in days and its name."""
+    import math
+    elong = (moon_ecl(jd)[0] - sun_ecl(jd)) % 360
+    lit = (1 - math.cos(math.radians(elong))) / 2
+    waxing = elong < 180
+    age = elong / 360 * 29.530589
+    name = ("new moon" if lit < 0.03 else "full moon" if lit > 0.97 else
+            ("first quarter" if waxing else "last quarter") if abs(lit - 0.5) < 0.06 else
+            ("waxing crescent" if waxing else "waning crescent") if lit < 0.5 else ("waxing gibbous" if waxing else "waning gibbous"))
+    return {"lit": round(lit, 3), "waxing": waxing, "age": round(age, 1), "name": name}
+
+
+# JPL approximate Keplerian elements (Standish, valid 1800-2050): a, e, I, L, long. perihelion, long. node, and rates/century
+PLANETS = {
+    "venus": ((0.72333566, 0.00677672, 3.39467605, 181.97909950, 131.60246718, 76.67984255),
+              (0.00000390, -0.00004107, -0.00078890, 58517.81538729, 0.00268329, -0.27769418), -4.2),
+    "earth": ((1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0),
+              (0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0), 0),
+    "mars": ((1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891),
+             (0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343), 0.6),
+    "jupiter": ((5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909),
+                (-0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106), -2.3),
+    "saturn": ((9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448),
+               (-0.00125060, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794), 0.6),
+}
+
+
+def helio(name: str, jd: float) -> tuple:
+    import math
+    el0, rate, _ = PLANETS[name]
+    T = (jd - 2451545.0) / 36525
+    a, e, I, L, wb, Om = (el0[k] + rate[k] * T for k in range(6))
+    w, M = math.radians(wb - Om), math.radians(((L - wb) + 180) % 360 - 180)
+    E = M + e * math.sin(M)
+    for _ in range(10):
+        E = E - (E - e * math.sin(E) - M) / (1 - e * math.cos(E))
+    xp, yp = a * (math.cos(E) - e), a * math.sqrt(1 - e * e) * math.sin(E)
+    I, Om = math.radians(I), math.radians(Om)
+    cw, sw, cO, sO, cI, sI = math.cos(w), math.sin(w), math.cos(Om), math.sin(Om), math.cos(I), math.sin(I)
+    return ((cw * cO - sw * sO * cI) * xp + (-sw * cO - cw * sO * cI) * yp,
+            (cw * sO + sw * cO * cI) * xp + (-sw * sO + cw * cO * cI) * yp,
+            (sw * sI) * xp + (cw * sI) * yp)
+
+
+def planet_radec(name: str, jd: float) -> tuple:
+    import math
+    p, g = helio(name, jd), helio("earth", jd)
+    x, y, z = p[0] - g[0], p[1] - g[1], p[2] - g[2]
+    lon, lat = math.degrees(math.atan2(y, x)) % 360, math.degrees(math.atan2(z, math.hypot(x, y)))
+    return ecl_to_eq(lon, lat)
+
+
+# The bright stars of the constellations you know: name, right ascension, declination (degrees, J2000), magnitude
+STARS = [
+    ("Betelgeuse", 88.79, 7.41, 0.5), ("Rigel", 78.63, -8.20, 0.1), ("Bellatrix", 81.28, 6.35, 1.6), ("Saiph", 86.94, -9.67, 2.1),
+    ("Alnitak", 85.19, -1.94, 1.8), ("Alnilam", 84.05, -1.20, 1.7), ("Mintaka", 83.00, -0.30, 2.2),
+    ("Sirius", 101.29, -16.72, -1.5), ("Mirzam", 95.67, -17.96, 2.0), ("Wezen", 107.10, -26.39, 1.8), ("Adhara", 104.66, -28.97, 1.5),
+    ("Procyon", 114.83, 5.22, 0.3), ("Gomeisa", 111.79, 8.29, 2.9),
+    ("Castor", 113.65, 31.89, 1.6), ("Pollux", 116.33, 28.03, 1.1), ("Alhena", 99.43, 16.40, 1.9),
+    ("Aldebaran", 68.98, 16.51, 0.9), ("Elnath", 81.57, 28.61, 1.7), ("Alcyone", 56.87, 24.11, 2.9), ("Capella", 79.17, 46.00, 0.1),
+    ("Regulus", 152.09, 11.97, 1.4), ("Algieba", 154.99, 19.84, 2.0), ("Zosma", 168.53, 20.52, 2.6), ("Denebola", 177.26, 14.57, 2.1),
+    ("Chertan", 168.56, 15.43, 3.3), ("Spica", 201.30, -11.16, 1.0), ("Arcturus", 213.92, 19.18, 0.0),
+    ("Antares", 247.35, -26.43, 1.0), ("Dschubba", 240.08, -22.62, 2.3), ("Acrab", 241.36, -19.81, 2.6), ("Shaula", 263.40, -37.10, 1.6),
+    ("Sargas", 264.33, -43.00, 1.9), ("Epsilon Sco", 252.54, -34.29, 2.3),
+    ("Vega", 279.23, 38.78, 0.0), ("Deneb", 310.36, 45.28, 1.3), ("Sadr", 305.56, 40.26, 2.2), ("Albireo", 292.68, 27.96, 3.1),
+    ("Gienah", 311.55, 33.97, 2.5), ("Delta Cyg", 296.24, 45.13, 2.9), ("Altair", 297.70, 8.87, 0.8), ("Tarazed", 296.56, 10.61, 2.7),
+    ("Alshain", 298.83, 6.41, 3.7), ("Markab", 346.19, 15.21, 2.5), ("Scheat", 345.94, 28.08, 2.4), ("Algenib", 3.31, 15.18, 2.8),
+    ("Alpheratz", 2.10, 29.09, 2.1), ("Caph", 2.29, 59.15, 2.3), ("Schedar", 10.13, 56.54, 2.2), ("Gamma Cas", 14.18, 60.72, 2.2),
+    ("Ruchbah", 21.45, 60.24, 2.7), ("Segin", 28.60, 63.67, 3.4), ("Dubhe", 165.93, 61.75, 1.8), ("Merak", 165.46, 56.38, 2.4),
+    ("Phecda", 178.46, 53.69, 2.4), ("Megrez", 183.86, 57.03, 3.3), ("Alioth", 193.51, 55.96, 1.8), ("Mizar", 200.98, 54.93, 2.2),
+    ("Alkaid", 206.89, 49.31, 1.9), ("Polaris", 37.95, 89.26, 2.0), ("Fomalhaut", 344.41, -29.62, 1.2),
+]
+CONSTELLATIONS = {   # the lines, and where the name goes
+    "ORION": [("Betelgeuse", "Bellatrix"), ("Betelgeuse", "Alnitak"), ("Bellatrix", "Mintaka"), ("Alnitak", "Alnilam"),
+              ("Alnilam", "Mintaka"), ("Alnitak", "Saiph"), ("Mintaka", "Rigel")],
+    "CANIS MAJOR": [("Sirius", "Mirzam"), ("Sirius", "Wezen"), ("Wezen", "Adhara")],
+    "CANIS MINOR": [("Procyon", "Gomeisa")], "GEMINI": [("Castor", "Pollux"), ("Pollux", "Alhena")],
+    "TAURUS": [("Aldebaran", "Elnath")], "LEO": [("Regulus", "Algieba"), ("Algieba", "Zosma"), ("Zosma", "Denebola"),
+                                                 ("Denebola", "Chertan"), ("Chertan", "Regulus")],
+    "SCORPIUS": [("Acrab", "Dschubba"), ("Dschubba", "Antares"), ("Antares", "Epsilon Sco"), ("Epsilon Sco", "Shaula"),
+                 ("Shaula", "Sargas")],
+    "CYGNUS": [("Deneb", "Sadr"), ("Sadr", "Albireo"), ("Gienah", "Sadr"), ("Sadr", "Delta Cyg")],
+    "AQUILA": [("Tarazed", "Altair"), ("Altair", "Alshain")], "LYRA": [],
+    "PEGASUS": [("Markab", "Scheat"), ("Scheat", "Alpheratz"), ("Alpheratz", "Algenib"), ("Algenib", "Markab")],
+    "CASSIOPEIA": [("Caph", "Schedar"), ("Schedar", "Gamma Cas"), ("Gamma Cas", "Ruchbah"), ("Ruchbah", "Segin")],
+    "URSA MAJOR": [("Dubhe", "Merak"), ("Merak", "Phecda"), ("Phecda", "Megrez"), ("Megrez", "Dubhe"), ("Megrez", "Alioth"),
+                   ("Alioth", "Mizar"), ("Mizar", "Alkaid")],
+}
+# The meteor showers: name, peak (month, day), days of activity on each side, peak rate per hour, radiant (ra, dec)
+SHOWERS = [("Quadrantids", 1, 3, 1, 110, 230, 49), ("Lyrids", 4, 22, 2, 18, 271, 34), ("Eta Aquariids", 5, 6, 3, 50, 338, -1),
+           ("Perseids", 8, 12, 3, 100, 48, 58), ("Draconids", 10, 8, 1, 10, 262, 54), ("Orionids", 10, 21, 3, 20, 95, 16),
+           ("Leonids", 11, 17, 2, 15, 152, 22), ("Geminids", 12, 14, 2, 150, 112, 33), ("Ursids", 12, 22, 1, 10, 217, 76)]
+
+
+def meteor_shower(t: float) -> dict | None:
+    """The meteor shower of these nights, if any: its name and how strong it is now (0..1 of its peak)."""
+    import datetime as dt
+    d = dt.datetime.fromtimestamp(t)
+    for name, mo, day, span, zhr, ra, dec in SHOWERS:
+        for y in (d.year - 1, d.year, d.year + 1):
+            peak = dt.datetime(y, mo, day, 3)
+            off = abs((d - peak).total_seconds()) / 86400
+            if off <= span + 0.5:
+                return {"name": name, "zhr": zhr, "ra": ra, "dec": dec, "strength": round(max(0.15, 1 - off / (span + 1)), 2)}
+    return None
+
+
+def night_sky(lat: float, lon: float, t: float | None = None) -> dict:
+    """Everything in your sky right now: the Sun's height, the Moon (where, how lit), the planets, the stars and the
+    lines between them, and the meteor shower of these nights with its radiant."""
+    t = t if t is not None else time.time()
+    jd = julian(t)
+    s_az, s_el = altaz(*sun_radec(jd), lat, lon, jd)
+    m_ra, m_dec = ecl_to_eq(*moon_ecl(jd))
+    m_az, m_el = altaz(m_ra, m_dec, lat, lon, jd)
+    import math
+    m_el -= 0.95 * math.cos(math.radians(m_el))   # parallax: from the surface, the Moon is a little lower
+    stars = []
+    for name, ra, dec, mag in STARS:
+        az, el = altaz(ra, dec, lat, lon, jd)
+        if el > -2:
+            stars.append({"n": name, "az": round(az, 2), "el": round(el, 2), "m": mag})
+    seen = {s["n"]: i for i, s in enumerate(stars)}
+    lines, names = [], []
+    for cname, pairs in CONSTELLATIONS.items():
+        members = [seen[n] for n in {n for p in pairs for n in p} | ({"Vega"} if cname == "LYRA" else set()) if n in seen]
+        for a, b in pairs:
+            if a in seen and b in seen:
+                lines.append([seen[a], seen[b]])
+        if members:
+            names.append({"n": cname, "i": members})
+    planets = []
+    for p in ("venus", "mars", "jupiter", "saturn"):
+        az, el = altaz(*planet_radec(p, jd), lat, lon, jd)
+        if el > -2:
+            planets.append({"n": p, "az": round(az, 2), "el": round(el, 2), "m": PLANETS[p][2]})
+    sh = meteor_shower(t)
+    if sh:
+        sh["az"], sh["el"] = (round(v, 1) for v in altaz(sh.pop("ra"), sh.pop("dec"), lat, lon, jd))
+    return {"t": t, "sun": {"az": round(s_az, 2), "el": round(s_el, 2)},
+            "moon": {"az": round(m_az, 2), "el": round(m_el, 2), **moon_phase(jd)},
+            "planets": planets, "stars": stars, "lines": lines, "names": names, "shower": sh}
+
+
+# ---------------------------------------------------------------- Starlink trains (1.4): the satellites of the last
+# launches, from their real orbits (CelesTrak). SGP4 when python-sgp4 is installed, else a J2 orbit: close enough for
+# a pass in the first days after a launch, when the satellites still fly in a line, like a train of lights.
+
+def omm_epoch(s: str) -> float:
+    import datetime as dt
+    return dt.datetime.fromisoformat(str(s).replace("Z", "")).replace(tzinfo=dt.timezone.utc).timestamp()
+
+
+def sat_eci(o: dict, t: float) -> tuple:
+    """Where a satellite is (km, Earth-centred inertial) at time t, from its CelesTrak OMM elements."""
+    import math
+    try:
+        from sgp4 import omm as _omm
+        from sgp4.api import Satrec
+        sat = o.get("_sgp4")
+        if sat is None:
+            sat = Satrec()
+            _omm.initialize(sat, o)
+            o["_sgp4"] = sat
+        jd = julian(t)
+        e, r, _v = sat.sgp4(math.floor(jd - 0.5) + 0.5, jd - (math.floor(jd - 0.5) + 0.5))
+        if e == 0:
+            return tuple(r)
+    except ImportError:
+        pass
+    mu, Re, J2 = 398600.4418, 6378.137, 1.08263e-3
+    nk = float(o["MEAN_MOTION"]) * 2 * math.pi / 86400           # rad/s, Kozai mean motion (as in a TLE)
+    e, i = float(o["ECCENTRICITY"]), math.radians(float(o["INCLINATION"]))
+    a1 = (mu / (nk * nk)) ** (1 / 3)                               # back to Brouwer's mean motion, as SGP4 does
+    k2 = 0.5 * J2 * Re * Re
+    d1 = 1.5 * k2 * (3 * math.cos(i) ** 2 - 1) / (1 - e * e) ** 1.5
+    dl = d1 / (a1 * a1)
+    a0 = a1 * (1 - dl / 3 - dl * dl - 134 / 81 * dl ** 3)
+    n0 = nk / (1 + d1 / (a0 * a0))
+    a = (mu / (n0 * n0)) ** (1 / 3)
+    dt_s = t - omm_epoch(o["EPOCH"])
+    p = a * (1 - e * e)
+    k = 1.5 * J2 * (Re / p) ** 2 * n0
+    raan = math.radians(float(o["RA_OF_ASC_NODE"])) - k * math.cos(i) * dt_s
+    argp = math.radians(float(o["ARG_OF_PERICENTER"])) + k * (2 - 2.5 * math.sin(i) ** 2) * dt_s
+    M = (math.radians(float(o["MEAN_ANOMALY"])) + (n0 + k * math.sqrt(1 - e * e) * (1 - 1.5 * math.sin(i) ** 2)) * dt_s
+         + 2 * math.pi * float(o.get("MEAN_MOTION_DOT") or 0) * (dt_s / 86400) ** 2)
+    E = M
+    for _ in range(8):
+        E = E - (E - e * math.sin(E) - M) / (1 - e * math.cos(E))
+    nu = 2 * math.atan2(math.sqrt(1 + e) * math.sin(E / 2), math.sqrt(1 - e) * math.cos(E / 2))
+    r = a * (1 - e * math.cos(E))
+    u = argp + nu
+    cO, sO, cu, su, ci, si = math.cos(raan), math.sin(raan), math.cos(u), math.sin(u), math.cos(i), math.sin(i)
+    return (r * (cO * cu - sO * su * ci), r * (sO * cu + cO * su * ci), r * su * si)
+
+
+def sat_look(o: dict, lat: float, lon: float, t: float) -> tuple:
+    """Azimuth, elevation and whether the Sun lights it (as seen from the ground, the satellite shines only when lit)."""
+    import math
+    x, y, z = sat_eci(o, t)
+    g = math.radians(gmst_deg(julian(t)))
+    xe, ye = x * math.cos(g) + y * math.sin(g), -x * math.sin(g) + y * math.cos(g)   # inertial -> Earth-fixed
+    r = math.sqrt(x * x + y * y + z * z)
+    slat, slon = math.degrees(math.asin(z / r)), math.degrees(math.atan2(ye, xe))
+    az, el = look_angles(lat, lon, slat, slon, r - 6371.0)
+    lam = math.radians(sun_ecl(julian(t)))
+    eps = math.radians(23.439)
+    s = (math.cos(lam), math.cos(eps) * math.sin(lam), math.sin(eps) * math.sin(lam))   # the Sun's direction (inertial)
+    along = x * s[0] + y * s[1] + z * s[2]
+    perp = math.sqrt(max(0.0, r * r - along * along))
+    lit = along > 0 or perp > 6371.0   # outside the Earth's shadow cylinder
+    return az, el, lit
+
+
+def starlink_groups(rows: list) -> dict:
+    """The Starlink satellites of each launch (international designator 2026-123), the ones that still fly together."""
+    groups: dict = {}
+    for o in rows or []:
+        if not isinstance(o, dict) or not str(o.get("OBJECT_NAME", "")).upper().startswith("STARLINK"):
+            continue
+        gid = str(o.get("OBJECT_ID") or "")[:8]
+        if gid:
+            groups.setdefault(gid, []).append(o)
+    return {g: sorted(v, key=lambda o: str(o.get("OBJECT_ID"))) for g, v in groups.items() if len(v) >= 5}
+
+
+def starlink_passes(groups: dict, lat: float, lon: float, t0: float, hours: float = 24, step: float = 30) -> list:
+    """The visible passes of each train in the next hours: lit by the Sun, high enough, while it is dark where you are."""
+    out = []
+    for gid, sats in groups.items():
+        lead = sats[len(sats) // 2]   # the middle of the train
+        best, start = None, None
+        t = t0
+        while t < t0 + hours * 3600:
+            az, el, lit = sat_look(lead, lat, lon, t)
+            sun_el = altaz(*sun_radec(julian(t)), lat, lon, julian(t))[1]
+            ok = el > 10 and lit and sun_el < -6
+            if ok:
+                start = start or t
+                if not best or el > best[1]:
+                    best = (t, el, az)
+            elif start:
+                out.append({"group": gid, "start": start, "end": t, "max_el": round(best[1]), "az": round(best[2]), "n": len(sats)})
+                start, best = None, None
+            t += step
+    return sorted(out, key=lambda p: p["start"])
 
 
 def look_angles(lat: float, lon: float, slat: float, slon: float, alt_km: float) -> tuple:
@@ -3203,6 +4012,175 @@ def make_timelapse(day: str, conf: dict, keep: bool = False) -> Path | None:
     if not keep:
         shutil.rmtree(root, ignore_errors=True)
     return out
+
+
+def year_stats(year: str) -> dict:
+    try:
+        d = json.loads((STATE_DIR / "stats.json").read_text())
+    except (OSError, ValueError):
+        d = {}
+    return {k: v for k, v in (d.get(year) or {}).items() if not k.startswith("_")}
+
+
+def wrapped_cards(year: str, st: dict, g: dict) -> list:
+    """The numbers of your year, one card each (only the ones that happened)."""
+    n = lambda k: int(st.get(k, 0) or 0)   # noqa: E731
+    cards = [f"YOUR {year}\nOMARCHY PULSE"]
+    if n("focus"):
+        cards.append(f"{n('focus')} focus sessions\n{int(st.get('focus_min', 0) // 60)} hours of deep work")
+    if g.get("n"):
+        cards.append(f"{g['n']} buildings in your city\nbest streak {g.get('best', 0)} days")
+    if n("planes"):
+        cards.append(f"{n('planes'):,} planes flew over you")
+    if n("launches") or n("starlink"):
+        cards.append(f"{n('launches')} rocket launches\n{n('starlink')} Starlink trains overhead")
+    if n("quakes"):
+        cards.append(f"{n('quakes')} earthquakes felt in your city")
+    if n("meetings"):
+        cards.append(f"{n('meetings')} meetings\n{int(st.get('meeting_min', 0) // 60)} hours")
+    if n("doorbell"):
+        cards.append(f"{n('doorbell')} times someone rang")
+    cards.append(f"see you in {int(year) + 1}")
+    return cards
+
+
+def make_wrapped(year: str, conf: dict, keep_parts: bool = False) -> Path | None:
+    """Pulse Wrapped: your year as a short video, the days of your city and the numbers of your year (ffmpeg)."""
+    if not shutil.which("ffmpeg"):
+        return None
+    out_dir = Path(str(conf.get("dir") or (HOME / "Videos" / "omarchy-pulse"))).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    days = sorted(out_dir.glob(f"pulse-{year}-*.mp4"))
+    pick = [days[round(i * (len(days) - 1) / 23)] for i in range(min(24, len(days)))] if days else []
+    work = STATE_DIR / "wrapped"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    font = ""
+    if shutil.which("fc-match"):
+        font = subprocess.run(["fc-match", "-f", "%{file}", "monospace:bold"], capture_output=True, text=True).stdout.strip()
+    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30"]
+    parts = []
+
+    def card(i, text):
+        tf = work / f"card{i}.txt"
+        tf.write_text(text.replace("\\n", "\n"))
+        out = work / f"part{len(parts):03d}.mp4"
+        dt_ = (f"drawtext=textfile='{tf}':fontcolor=white:fontsize=54:line_spacing=18:x=(w-text_w)/2:y=(h-text_h)/2"
+               + (f":fontfile='{font}'" if font else ""))
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x0b0f1a:s=1280x720:d=2.6",
+                            "-vf", dt_ + ",fade=t=in:d=0.4,fade=t=out:st=2.2:d=0.4", *enc, str(out)], capture_output=True, timeout=120)
+        if r.returncode == 0:
+            parts.append(out)
+
+    g = growth_from_file()
+    cards = wrapped_cards(year, year_stats(year), g)
+    card(0, cards[0])
+    for k, f in enumerate(pick):   # a moment of each day: the middle of its timelapse
+        out = work / f"part{len(parts):03d}.mp4"
+        mid = 8.0
+        if shutil.which("ffprobe"):
+            pr = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+                                capture_output=True, text=True, timeout=30)
+            try:
+                mid = max(0.0, float(pr.stdout.strip()) / 2 - 0.7)
+            except ValueError:
+                pass
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{mid:.2f}", "-i", str(f), "-t", "1.4",
+                            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2", "-an",
+                            *enc, str(out)], capture_output=True, timeout=120)
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            parts.append(out)
+    for i, c in enumerate(cards[1:], 1):
+        card(i, c)
+    if len(parts) < 2:
+        return None
+    lst = work / "list.txt"
+    lst.write_text("".join(f"file '{x}'\n" for x in parts))
+    final = out_dir / f"pulse-wrapped-{year}.mp4"
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy",
+                        "-movflags", "+faststart", str(final)], capture_output=True, timeout=300)
+    if not keep_parts:
+        shutil.rmtree(work, ignore_errors=True)
+    return final if r.returncode == 0 else None
+
+
+def growth_from_file() -> dict:
+    try:
+        g = json.loads((STATE_DIR / "city.json").read_text())
+        return {"n": len(g.get("buildings") or []), "best": g.get("best", 0)}
+    except (OSError, ValueError):
+        return {"n": 0, "best": 0}
+
+
+def containers(out: str) -> list:
+    """`docker ps` / `podman ps` (one JSON per line, or a JSON list) -> name and health of each running container."""
+    rows = []
+    out = (out or "").strip()
+    if out.startswith("["):
+        try:
+            rows = json.loads(out)
+        except ValueError:
+            rows = []
+    else:
+        for line in out.splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    res = []
+    for x in rows[:24]:
+        if not isinstance(x, dict):
+            continue
+        names = x.get("Names")
+        name = names[0] if isinstance(names, list) and names else str(names or x.get("Name") or x.get("ID") or "")[:24]
+        st = str(x.get("Status") or x.get("State") or "").lower()
+        health = "bad" if "unhealthy" in st else "restart" if "restarting" in st else "ok"
+        if "exited" in st or "created" in st:
+            continue
+        key = __import__("hashlib").sha1(str(x.get("ID") or x.get("Id") or name).encode()).hexdigest()[:8]
+        res.append({"id": key, "name": str(name).lstrip("/")[:20], "health": health})
+    return res
+
+
+def rgb_to_xy(rgb) -> list:
+    """An RGB colour as Philips Hue's CIE xy."""
+    def lin(c):
+        c = c / 255
+        return ((c + 0.055) / 1.055) ** 2.4 if c > 0.04045 else c / 12.92
+    r_, g_, b_ = (lin(float(v)) for v in rgb)
+    X, Y, Z = r_ * 0.4124 + g_ * 0.3576 + b_ * 0.1805, r_ * 0.2126 + g_ * 0.7152 + b_ * 0.0722, r_ * 0.0193 + g_ * 0.1192 + b_ * 0.9505
+    s_ = X + Y + Z
+    return [round(X / s_, 4), round(Y / s_, 4)] if s_ else [0.3127, 0.329]
+
+
+def compass(az: float) -> str:
+    return ("north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west")[int(((az % 360) + 22.5) // 45) % 8]
+
+
+def ring_point(lat: float, lon: float, bearing: float, km: float) -> tuple:
+    """The point km away from (lat, lon) towards bearing."""
+    import math
+    R, b, la, lo = 6371.0, math.radians(bearing), math.radians(lat), math.radians(lon)
+    d = km / R
+    la2 = math.asin(math.sin(la) * math.cos(d) + math.cos(la) * math.sin(d) * math.cos(b))
+    lo2 = lo + math.atan2(math.sin(b) * math.sin(d) * math.cos(la), math.cos(d) - math.sin(la) * math.sin(la2))
+    return math.degrees(la2), (math.degrees(lo2) + 540) % 360 - 180
+
+
+POLLEN = ("alder", "birch", "grass", "mugwort", "olive", "ragweed")
+
+
+def air_view(cur: dict) -> dict:
+    """European AQI and its level, fine dust, and the strongest pollen right now (grains per m³)."""
+    aqi = cur.get("european_aqi")
+    aqi = float(aqi) if isinstance(aqi, (int, float)) else None
+    level = (None if aqi is None else "good" if aqi < 20 else "fair" if aqi < 40 else "moderate" if aqi < 60 else
+             "poor" if aqi < 80 else "very poor" if aqi < 100 else "extremely poor")
+    pol = [(k, float(cur.get(k + "_pollen") or 0)) for k in POLLEN if isinstance(cur.get(k + "_pollen"), (int, float))]
+    top = max(pol, key=lambda x: x[1]) if pol else None
+    plevel = None if not top or top[1] < 1 else "low" if top[1] < 20 else "moderate" if top[1] < 50 else "high" if top[1] < 200 else "very high"
+    return {"aqi": None if aqi is None else round(aqi), "level": level, "pm25": cur.get("pm2_5"),
+            "pollen": top[0] if plevel else None, "pollenLevel": plevel, "pollenValue": round(top[1], 1) if top else 0}
 
 
 def parse_launch(r: dict) -> dict | None:
@@ -3498,6 +4476,9 @@ def make_handler(hub: Hub, tok: str, port: int):
             elif u.path == "/api/reload":
                 hub.reload(force=True)
                 self._send(200, b'{"ok":true}')
+            elif u.path.startswith("/api/robot/"):
+                hub.set_bot(urllib.parse.unquote(u.path[len("/api/robot/"):]), q.get("state", "ok"))
+                self._send(200, b'{"ok":true}')
             elif u.path.startswith("/api/agent/"):
                 hub.set_agent(urllib.parse.unquote(u.path[11:]), q.get("state", "working"),
                               q.get("text") or body.decode("utf-8", "replace").strip())
@@ -3560,6 +4541,12 @@ def make_handler(hub: Hub, tok: str, port: int):
             elif u.path == "/api/doorbell":
                 hub.doorbell()
                 self._send(200, b'{"ok":true}')
+            elif u.path == "/api/lights":
+                eff = q.get("effect", "")
+                ok = eff in ("alert", "doorbell", "lightning", "quake") and bool(hub.room_lights())
+                if ok:
+                    hub.room_effect(eff)
+                self._send(200, json.dumps({"ok": ok}).encode())
             elif u.path == "/api/car":
                 do = re.sub(r"[^a-z_]", "", q.get("do", ""))[:20]
                 ok = hub.car_allowed(do)
@@ -3659,6 +4646,10 @@ def run_wall(url: str, gpu: str = "auto", dmabuf: str = "auto") -> int:
         wv.set_background_color(Gdk.RGBA(0.02, 0.03, 0.06, 1))
         st = wv.get_settings()
         st.set_enable_developer_extras(False)
+        try:   # the soundscape ([sound]) plays without a click on the wallpaper
+            st.set_media_playback_requires_user_gesture(False)
+        except Exception:   # noqa: BLE001
+            pass
         # gpu = "auto" (WebKit decides; no GPU device -> CPU drawing, cheaper than a software GL), "always", "never"
         try:
             pol = (os.environ.get("PULSE_GPU") or gpu or "auto").upper()
@@ -3700,7 +4691,7 @@ def from_demo(hub: Hub) -> None:
     rnd = random.Random(7)
     demo_dir = Path(os.environ.get("PULSE_DEMO_DIR", HERE / "demo"))
     hub.theme = read_theme() if theme_name() else {"name": "pulse", "colors": {}}
-    hub.weather = {"city": "Berlin", "temp": 6.4, "feels": 3.9, "code": 61, "wind": 34, "windDir": 250, "gust": 52, "hum": 82, "day": 0, "rain": 0.4,
+    hub.weather = {"city": "Berlin", "temp": 6.4, "feels": 3.9, "code": 61, "wind": 34, "windDir": 250, "gust": 52, "cloud": 90, "hum": 82, "day": 0, "rain": 0.4,
                    "hi": 9.1, "lo": 3.2, "sunrise": "07:12", "sunset": "16:31", "unit": "°C", "windUnit": "km/h",
                    "hours": [{"h": f"{(21 + i) % 24:02d}", "t": round(6 - i * 0.2 + math.sin(i / 3), 1),
                               "p": int(max(0, 70 - abs(i - 4) * 9)), "c": 61 if 1 < i < 8 else (3 if i < 14 else 0)}
@@ -3807,6 +4798,15 @@ def from_demo(hub: Hub) -> None:
         (STATE_DIR / "city.json").write_text(json.dumps({"buildings": bs, "best": 9}))
     hub.space = {"iss": None, "kp": 2.3}
     hub.heart = {"bpm": 68, "t": time.time()}
+    hub.location = (52.52, 13.405)   # the demo city: Berlin
+    hub.robots = [{"id": "r1", "name": "postgres", "health": "ok"}, {"id": "r2", "name": "nginx", "health": "ok"},
+                  {"id": "r3", "name": "grafana", "health": "ok"}, {"id": "r4", "name": "worker", "health": "restart"}]
+    hub.bots = {"ai-bot": {"health": "ok", "busy": True, "t": time.time() + 86400 * 365}}
+    if os.environ.get("PULSE_DEMO_AQI"):
+        hub.air = air_view({"european_aqi": float(os.environ["PULSE_DEMO_AQI"]), "pm2_5": 31,
+                            "grass_pollen": float(os.environ.get("PULSE_DEMO_POLLEN") or 0)})
+    if os.environ.get("PULSE_DEMO_STORM"):
+        hub.storms = {"cells": [{"az": float(os.environ["PULSE_DEMO_STORM"]), "km": 30, "hail": False}], "lpi": 40, "t": time.time()}
     t_launch = float(os.environ.get("PULSE_DEMO_LAUNCH_AT") or time.time() + float(os.environ.get("PULSE_DEMO_LAUNCH", "5400")))
     hub.space["launch"] = {"id": "demo", "rocket": "Falcon 9", "mission": "Starlink 12-4", "net": t_launch, "status": "Go"}
     hub.set_widget("launches", title="launches", type="list", slot="ticker", order=27,
@@ -3823,8 +4823,36 @@ def from_demo(hub: Hub) -> None:
         sp_flag, crew_flag = os.environ.get("PULSE_DEMO_SPACE", ""), os.environ.get("PULSE_DEMO_CREW", "")
         t_sp, crew_state = None, ""
         tr_flag, cal = os.environ.get("PULSE_DEMO_TRAINS", ""), list(hub.calendar)
+        sl_flag, t_sl = os.environ.get("PULSE_DEMO_STARLINK", ""), None
+        wx_flag, wx0 = os.environ.get("PULSE_DEMO_WX", ""), dict(hub.weather or {})
+        aq_flag = os.environ.get("PULSE_DEMO_AIR", "")
         while True:
             now = time.time()
+            if aq_flag:   # the demo video: poor air and pollen while its flag file exists
+                hub.air = air_view({"european_aqi": 72, "pm2_5": 31, "grass_pollen": 80}) if os.path.exists(aq_flag) else None
+            if wx_flag:   # the demo video: the weather of the scene, from its flag file (a weather code)
+                try:
+                    code = int(Path(wx_flag).read_text().strip()) if os.path.exists(wx_flag) else None
+                except ValueError:
+                    code = None
+                if code is not None and (hub.weather or {}).get("code") != code:
+                    hub.weather = {**wx0, "code": code, "cloud": 0 if code == 0 else 35 if code < 3 else 95,
+                                   "rain": {61: 1.5, 63: 4, 65: 9, 95: 7, 71: 2, 73: 4}.get(code, 0)}
+                    hub.storms = {"cells": [{"az": 0, "km": 0, "hail": False}, {"az": 250, "km": 30, "hail": False}], "lpi": 80,
+                                  "t": now} if code >= 95 else None
+            if sl_flag:   # the demo video: a Starlink train crossing the sky while its flag file exists
+                if os.path.exists(sl_flag):
+                    t_sl = t_sl or now
+                    try:
+                        u = float(Path(sl_flag).read_text().strip())
+                    except ValueError:
+                        u = min(1.0, (now - t_sl) / 30)
+                    hub.starlink = {"sats": [{"az": round(250 - 140 * (u - k * 0.012), 2), "el": round(12 + 50 * math.sin(math.pi * max(0, min(1, u - k * 0.012))), 2)}
+                                             for k in range(22) if 0 < u - k * 0.012 < 1],
+                                    "next": {"start": now - 30, "end": now + 60, "max_el": 62, "az": 180, "n": 22}}
+                else:
+                    t_sl = None
+                    hub.starlink = {"sats": [], "next": None}
             if tr_flag:   # the demo video: the standup comes in while its flag file exists
                 hub.calendar = cal if os.path.exists(tr_flag) else cal[1:]
             hub.heart = {"bpm": int(66 + 4 * math.sin(now / 9)), "t": now}
@@ -3853,6 +4881,7 @@ def from_demo(hub: Hub) -> None:
                     hub.crew_receive({"v": 1, "id": "demo-friend", "name": "luca", "t": now, "ev": "agent", "agent": "claude", "state": st})
             time.sleep(0.2)
     threading.Thread(target=demo_flags, daemon=True).start()
+    threading.Thread(target=hub.loop_night, daemon=True).start()   # the real sky over the demo city
     if os.environ.get("PULSE_DEMO_LAN"):   # a file path: while it exists, a new device has joined
         def lan():
             flag, on = os.environ["PULSE_DEMO_LAN"], False
@@ -4007,6 +5036,14 @@ def main(argv: list[str]) -> int:
             return 2
         q = urllib.parse.urlencode({"state": argv[3], "text": " ".join(argv[4:])})
         return quiet_client(f"/api/agent/{urllib.parse.quote(argv[2])}?{q}")
+    if cmd == "banner":
+        text = " ".join(argv[2:]) or str((load_config().get("pulse") or {}).get("banner") or "OMARCHY · WE CAN FIX EVERYTHING")
+        return quiet_client("/api/fx?" + urllib.parse.urlencode({"kind": "banner", "text": text[:48]}))
+    if cmd == "robot":
+        if len(argv) < 4:
+            print("usage: omarchy-pulse robot NAME ok|working|waiting|failed|gone")
+            return 2
+        return quiet_client(f"/api/robot/{urllib.parse.quote(argv[2])}?" + urllib.parse.urlencode({"state": argv[3]}))
     if cmd == "fireworks":
         return quiet_client("/api/fx?" + urllib.parse.urlencode({"kind": "fireworks", "text": " ".join(argv[2:])}))
     if cmd == "focus":
@@ -4098,6 +5135,82 @@ def main(argv: list[str]) -> int:
             print("nothing in the next hours (or no [calendar] in pulse.toml)")
         for e in evs:
             print(time.strftime("%H:%M", time.localtime(e["start"])), "-", time.strftime("%H:%M", time.localtime(e["end"])), e["title"] or "(private)")
+        return 0
+    if cmd == "phone":
+        sub = argv[2] if len(argv) > 2 else ""
+        if sub == "new":
+            topic = "pulse-" + secrets.token_urlsafe(12)
+            print(f"Your phone topic: {topic}\n\n1. Install the ntfy app (iOS or Android) and subscribe to: {topic}\n"
+                  f"2. Put this in ~/.config/omarchy-pulse/pulse.toml:\n\n[phone]\nenabled = true\ntopic = \"{topic}\"\n\n"
+                  "3. omarchy-pulse phone test\n\nKeep the topic to yourself: anyone who knows it can read these messages.")
+            return 0
+        if sub == "test":
+            c = load_config().get("phone") or {}
+            if not c.get("topic"):
+                print("no [phone] topic yet: omarchy-pulse phone new")
+                return 1
+            server = str(c.get("server") or "https://ntfy.sh").rstrip("/")
+            urllib.request.urlopen(urllib.request.Request(f"{server}/{c['topic']}", data="Hello from your city".encode(), method="POST",
+                                                          headers={"Title": "Omarchy Pulse", "Tags": "city_sunset"}), timeout=10).read()
+            print("sent: look at your phone")
+            return 0
+        print("usage: omarchy-pulse phone new | test")
+        return 2
+    if cmd == "lights":
+        sub = argv[2] if len(argv) > 2 else ""
+        if sub == "pair":   # Philips Hue: press the bridge's button, then run this within 30 seconds
+            ip = argv[3] if len(argv) > 3 else ""
+            if not ip:
+                try:
+                    found = http_json("https://discovery.meethue.com/")
+                    ip = found[0]["internalipaddress"] if found else ""
+                except Exception:   # noqa: BLE001
+                    ip = ""
+            if not ip:
+                print("bridge not found: omarchy-pulse lights pair 192.168.x.y")
+                return 1
+            req = urllib.request.Request(f"http://{ip}/api", data=json.dumps({"devicetype": "omarchy_pulse#pc"}).encode(), method="POST")
+            with urllib.request.urlopen(req, timeout=8) as rr:
+                res = json.loads(rr.read())
+            user = next((x["success"]["username"] for x in res if "success" in x), None)
+            if not user:
+                print("press the round button on the Hue bridge, then run this again within 30 seconds")
+                return 1
+            req = urllib.request.Request(f"http://{ip}/api/{user}/lights")
+            with urllib.request.urlopen(req, timeout=8) as rr:
+                ls = json.loads(rr.read())
+            print(f"paired. Put this in [lights] of pulse.toml:\n\nenabled = true\nsource = \"hue\"\nbridge = \"{ip}\"\nuser = \"{user}\"\n"
+                  f"lights = [{', '.join(repr(str(k)).replace(chr(39), chr(34)) for k in ls)}]   # " + ", ".join(f"{k} {v.get('name')}" for k, v in ls.items()))
+            return 0
+        if sub in ("test", "alert", "doorbell", "lightning", "quake"):
+            return quiet_client("/api/lights?effect=" + ("doorbell" if sub == "test" else sub))
+        print("usage: omarchy-pulse lights pair [BRIDGE_IP] | test | alert | lightning | quake")
+        return 2
+    if cmd == "wrapped":
+        year = argv[2] if len(argv) > 2 else time.strftime("%Y")
+        out = make_wrapped(year, load_config().get("timelapse") or {})
+        print(out if out else "no ffmpeg, or nothing yet for " + year)
+        return 0 if out else 1
+    if cmd == "sky":
+        try:
+            r = client("GET", "/api/state")
+        except Exception as e:   # noqa: BLE001
+            print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
+            return 1
+        n, sl = r.get("night") or {}, (r.get("starlink") or {}).get("next")
+        if n:
+            m = n["moon"]
+            print(f"Moon: {m['name']}, {round(m['lit'] * 100)}% lit, " + (f"{m['el']:.0f}° up, {compass(m['az'])}" if m["el"] > 0 else "below the horizon"))
+            for p in n.get("planets") or []:
+                if p["el"] > 0:
+                    print(f"{p['n'].capitalize()}: {p['el']:.0f}° up, {compass(p['az'])}")
+            if n.get("shower"):
+                print(f"Meteor shower: {n['shower']['name']} ({round(n['shower']['strength'] * 100)}% of its peak)")
+        print(("Next Starlink train: " + time.strftime("%H:%M", time.localtime(sl["start"])) + f", {sl['max_el']}° up, {compass(sl['az'])}, {sl['n']} satellites")
+              if sl else "No Starlink train over you in the next 24 hours.")
+        a = r.get("air")
+        if a and a.get("aqi") is not None:
+            print(f"Air: {a['level']} (AQI {a['aqi']})" + (f", {a['pollen']} pollen {a['pollenLevel']}" if a.get("pollen") else ""))
         return 0
     if cmd == "timelapse":
         day = argv[2] if len(argv) > 2 and argv[2] != "today" else time.strftime("%Y-%m-%d")

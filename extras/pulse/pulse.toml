@@ -22,6 +22,9 @@ gpu = "auto"                     # "never" if the wallpaper is heavy on a PC wit
 dmabuf = "auto"                  # NVIDIA: "auto" keeps WebKit's DMA-BUF renderer off (some drivers draw nothing with
                                  # it); "on" is much lighter on recent drivers, above all with 4K or several monitors
 face = "agents"                  # the agent's face in the core: "agents" (while one works) | "always" | "off"
+banner = "OMARCHY · WE CAN FIX EVERYTHING"   # a plane tows it across the sky now and then ("" = never)
+banner_every = 45                # minutes, more or less; a new Omarchy release flies by itself
+agents_as = "drones"             # your AI agents (Claude Code, Codex, Grok, Hermes...): "drones" in the sky | "robots" on the floor | "both"
 celebrate = true                 # fireworks when an agent finishes, a focus ends or an alert is back to green
 sun = true                       # the sky follows the real sun (dawn, day, dusk, night)
 # title = "MISSION CONTROL"      # a word under the clock
@@ -55,6 +58,7 @@ alert_new = true
 enabled = false                  # Pulse speaks: alerts, agents that finish or need you, the digest, the end of a focus
 events = ["alerts", "agents", "digest", "focus", "space", "calendar", "home", "earth", "car"]
 language = "en"                  # what Pulse says by itself: en, it, es, fr, de (and the voice of that language)
+# speakers = ["notify.alexa_media_echo_kitchen"]   # Alexa (Alexa Media Player) or media_player.* says it too, via [home]
 quiet = "23:00-08:00"            # never at night ("" = always). Never while sharing the screen, away or in focus.
 # model = "~/.local/share/piper/en_US-lessac-medium.onnx"   # piper-tts voice, American English (default: the first
                                  # .onnx in that folder); en_GB-alan-medium for British, it_IT-paola-medium for Italian
@@ -141,6 +145,47 @@ allow_unlock = false             # unlocking from the wallpaper stays off unless
 # climate = "climate.car_climate"
 # inside = "sensor.car_inside_temperature"
 # charge_switch = "switch.car_charge"
+
+[night]
+enabled = true                   # the real night sky over you: the Moon (its real phase), Venus, Mars, Jupiter, Saturn,
+                                 # the bright stars and their constellations, and more shooting stars in a meteor shower
+
+[starlink]
+enabled = true                   # the Starlink trains of the last launches when they really pass over you (CelesTrak)
+warn = 5                         # minutes before: on the wallpaper and aloud (0 = no warning)
+
+[storms]
+enabled = true                   # thunderstorms from where they really are (8 points 30 km around you, Open-Meteo)
+km = 30
+
+[air]
+enabled = true                   # air quality and pollen (Open-Meteo): haze when the air is poor, pollen in the light
+
+[sound]
+enabled = false                  # a quiet soundscape: the real rain and wind, a plane over you, thunder, the station
+volume = 0.25                    # 0..1; silent in a meeting, in the quiet hours, while sharing the screen or full screen
+quiet = "23:00-08:00"
+
+[lights]
+enabled = false                  # the lights of your room follow Pulse: lightning, alerts, the doorbell, a quake, focus
+source = "homeassistant"         # "homeassistant" (any light, Ambilight too, with [home] url and token) or "hue"
+# lights = ["light.living_room"] # Home Assistant entities, or Hue light numbers ["1", "3"] (omarchy-pulse lights pair)
+# bridge = "192.168.1.20"        # Hue: written by omarchy-pulse lights pair
+# user = ""
+only_if_on = true                # only the lights that are on (Pulse never wakes a dark room)
+focus = true                     # a calm blue while you focus
+
+[robots]
+enabled = true                   # your Docker/Podman containers (and AI bots: omarchy-pulse robot) walk on the floor
+source = "auto"                  # "docker", "podman" or "auto"
+
+[phone]
+enabled = false                  # the moments that matter on your phone (the ntfy app): omarchy-pulse phone new
+# topic = "pulse-..."            # keep it secret
+details = true                   # false: no meeting titles, focus names or alert texts on the phone
+
+[wrapped]
+enabled = true                   # on 31 December, your year as a video (omarchy-pulse wrapped)
 
 [quakes]
 enabled = true                   # earthquakes (USGS): the city shakes, a wave comes from where it happened
