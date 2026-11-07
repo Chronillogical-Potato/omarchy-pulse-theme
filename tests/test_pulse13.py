@@ -325,3 +325,11 @@ class NotificationTests(unittest.TestCase):
         self.assertTrue(hub.click('notifications'))
         self.assertNotIn('notifications', hub.widgets)
         self.assertGreater(hub.notes_cleared, now - 5)
+
+    def test_omarchy_feedback_is_said_then_leaves(self):
+        now = time.time()
+        items = [{'title': 'Layout del workspace impostato su tiling', 'right': 'omarchy-action', 't': now - 300},
+                 {'title': 'Layout del workspace impostato su tiling', 'right': 'omarchy-action', 't': now - 30},
+                 {'title': 'Mail', 'right': 'thunderbird', 't': now - 300}]
+        left = pulse.visible_notifications(items, 3, 0, None)
+        self.assertEqual([(i['right'], round(now - i['t'])) for i in left], [('omarchy-action', 30), ('thunderbird', 300)])

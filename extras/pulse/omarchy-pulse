@@ -2248,7 +2248,9 @@ class Hub:
             try:
                 if self.builtin("notifications") is not False:
                     hours = float(self.builtin("notifications_hours", 3) or 0)
-                    items = visible_notifications(notification_history(), hours, self.notes_cleared, read_battery())
+                    items = visible_notifications(notification_history(), hours, self.notes_cleared, read_battery(),
+                                                  float(self.builtin("notifications_quick", 120) or 0),
+                                                  tuple(str(a).lower() for a in (self.builtin("notifications_quick_apps", list(QUICK_APPS)) or [])))
                     if items:
                         self.set_widget("notifications", title="notifications", type="list", slot="center", order=40,
                                         private=True, data={"items": items[:5]}, click="clear")
@@ -2593,8 +2595,13 @@ def notification_history() -> list:
 BATTERY_NOTE = re.compile(r"batter|ricaric|plug in|charge your|low power|power low|batería|batterie|akku", re.I)
 
 
-def visible_notifications(items: list, hours: float, cleared: float = 0.0, battery: dict | None = None) -> list:
-    """The notifications worth showing: recent, newer than your last clear, and no "battery low" once it charges."""
+QUICK_APPS = ("omarchy-action", "omarchy")   # Omarchy's own feedback: layout, volume, theme... said once, then gone
+
+
+def visible_notifications(items: list, hours: float, cleared: float = 0.0, battery: dict | None = None,
+                          quick: float = 120, quick_apps=QUICK_APPS) -> list:
+    """The notifications worth showing: recent, newer than your last clear, no "battery low" once it charges, and
+    the quick ones (Omarchy's feedback, like "layout set to tiling") only for `quick` seconds."""
     now, out = time.time(), []
     charging = bool(battery) and str(battery.get("status")) in ("Charging", "Full", "Not charging")
     for i in items:
@@ -2602,6 +2609,8 @@ def visible_notifications(items: list, hours: float, cleared: float = 0.0, batte
         if hours and t and now - t >= hours * 3600:
             continue
         if cleared and t and t <= cleared:
+            continue
+        if quick and t and now - t > quick and str(i.get("right") or "").lower() in quick_apps:
             continue
         if charging and BATTERY_NOTE.search(f"{i.get('title', '')} {i.get('text', '')}"):
             continue   # the charger is in: the reminder to plug it in is done
