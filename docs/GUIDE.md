@@ -515,7 +515,7 @@ In `[builtin]` (`false` hides one):
 | Still a still wallpaper | `systemctl --user status omarchy-pulse`, `journalctl --user -u omarchy-pulse -e`, `omarchy-pulse doctor`. Is the theme **pulse** (or `--always` set)? Run `extras/install-live` from a terminal on the PC, not SSH. |
 | `missing dependencies` in the log | `extras/install-live` again (it installs them). |
 | Black or empty on NVIDIA | keep `dmabuf = "auto"` (Pulse turns WebKit's DMA-BUF renderer off on NVIDIA); also try `gpu = "never"`. |
-| An old notification stays on the wallpaper | only the last `notifications_hours` (3) are shown; `notifications = false` in `[builtin]` hides the panel. |
+| An old notification stays on the wallpaper | click the panel (or `omarchy-pulse notifications clear`) to empty it; only the last `notifications_hours` (3) are shown, and a "battery low" one goes away by itself when you plug the charger in; `notifications = false` in `[builtin]` hides the panel. |
 | The weather icon on the sphere is wrong | from 1.3 it follows the real weather (sun or moon, clouds, rain, snow, storm, fog); check `city`. |
 | No buildings in my district | a focus must last 10 minutes or more (`min_minutes`) and run to the end: `omarchy-pulse focus 25`. |
 | No planes | the weather's `city` gives the place; planes show only above your horizon; `source = "opensky"` if adsb.lol is down. |
@@ -1149,6 +1149,7 @@ generic one, of no brand.
 | `omarchy-pulse timelapse [today \| DATE]` | your day as a video (30) |
 | `omarchy-pulse car [charge \| stop \| lock \| unlock \| climate on \| climate off \| flash]` | your car (35) |
 | `omarchy-pulse doorbell` | ring the doorbell, to try it (32) |
+| `omarchy-pulse notifications clear` | empty the notifications panel (a click on it does the same) |
 | `omarchy-pulse perf [--probe]` | frame times on every monitor (12) |
 | `omarchy-pulse reload` | read `pulse.toml` again now |
 | `omarchy-pulse doctor` | check dependencies, config and sources |
