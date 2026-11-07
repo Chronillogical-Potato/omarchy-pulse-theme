@@ -17,12 +17,19 @@
   omarchy-pulse away | back      you left / you are back (hypridle can call these): the face sleeps, then a digest
                                  of what happened while you were away (locking the screen does it by itself)
   omarchy-pulse say TEXT         speak a line with the voice (piper, or espeak-ng)
-  omarchy-pulse perf             frame pacing on every monitor: frames per second, draw time, time to the screen
+  omarchy-pulse perf [--probe]   frame pacing on every monitor: frames per second, draw time, time to the screen
+                                 (--probe: 16 s with no frame limit, on an empty workspace: the real numbers)
   omarchy-pulse listen [SECONDS | start | stop | --file F.wav]
                                  "hey sphere": push to talk (bind it to a key); offline speech to text, safe commands,
                                  the answer out loud (focus, privacy, status, weather, agents, what you missed...)
   omarchy-pulse crew new         a code to share with friends: your agents fly in their city, theirs in yours
   omarchy-pulse crew             the crew status
+  omarchy-pulse city             your city: the buildings your focus sessions built, your streak
+  omarchy-pulse calendar         the next events (the trains)
+  omarchy-pulse timelapse [DATE] your day as a video (by itself at midnight; DATE = today or 2026-11-07)
+  omarchy-pulse car [charge | stop | lock | unlock | climate on | climate off | flash]
+                                 your electric car (Tessie or Home Assistant): its battery, or a command
+  omarchy-pulse doorbell         ring the doorbell (a test: the sphere shows the door camera, the chime rings)
   omarchy-pulse reload           re-read pulse.toml now (it is also re-read by itself when you save it)
   omarchy-pulse doctor           check dependencies, config and sources
 
@@ -68,7 +75,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -399,6 +406,18 @@ class Hub:
         self.scene_override = ""
         self.skyline_override = ""
         self.perf_logged: dict = {}
+        self.perf_probe = 0.0                  # until when the pages run uncapped, to measure (omarchy-pulse perf --probe)
+        self.sky: dict = {"planes": []}        # 1.3: the planes over you
+        self.calendar: list = []               # your next events: trains coming into the station
+        self.cal_warned: set = set()
+        self.cal_all: list = []                # today's events (the evening summary)
+        self.in_meeting = False
+        self.summary_day = ""
+        self.ring: dict | None = None          # the doorbell rang: the sphere shows the door
+        self.home_lights: list = []
+        self.car: dict | None = None   # 1.3: your electric car (Tessie or Home Assistant)
+        self.car_cmds: list = []
+        self.quake_seen: set = set()
 
     # -- config
     def conf(self, *keys, default=None):
@@ -491,7 +510,7 @@ class Hub:
                                     "level": new, "t": time.time()})
                 self.note("alert", f"{w.get('title', wid)}" + (f" · {txt}" if txt else ""), new, bool(w.get("private")))
                 if not w.get("private"):
-                    self.say(f"Alert. {w.get('title', wid)}. {txt}", "alerts")
+                    self.say(self.T("alert", title=w.get('title', wid), text=txt), "alerts")
                 if w.get("_notify"):
                     notify = (w.get("title", wid), txt, new)
             self.widgets[wid] = w
@@ -521,11 +540,12 @@ class Hub:
                 ev.append({"kind": kind, "text": str(text)[:90], "level": level, "t": time.time(), "private": private})
 
     # -- effects, agents, focus
-    def add_fx(self, kind: str, text: str = "", small: bool = False) -> None:
+    def add_fx(self, kind: str, text: str = "", small: bool = False, **extra) -> None:
         with self.lock:
             self.fx_seq += 1
             self.fx.append({"seq": self.fx_seq, "kind": kind, "text": str(text or "")[:60], "small": small,
-                            "t": time.time()})
+                            "t": time.time(), **{k: round(float(v), 2) for k, v in extra.items()
+                                                 if isinstance(v, (int, float)) and k in ("mag", "az", "near", "tsunami")}})
 
     def set_agent(self, name: str, state: str, text: str = "") -> None:
         name = re.sub(r"[^\w.:@\- ·]", "", str(name or ""))[:32].strip() or "agent"
@@ -554,15 +574,15 @@ class Hub:
         spoken = name.replace("·", ",")
         if st == "done":
             self.note("agent", f"{name} finished", "ok")
-            self.say(f"{spoken} finished.", "agents")
+            self.say(self.T("agent_done", name=spoken), "agents")
             if self.conf("pulse", "celebrate", default=True) is not False:
                 self.add_fx("fireworks", f"{name} · done", small=True)
         elif st == "waiting":
-            self.say(f"{spoken} needs you.", "agents")
+            self.say(self.T("agent_wait", name=spoken), "agents")
         elif st == "failed":
             self.raise_alert("agent:" + name, f"{name} failed", text or "the agent stopped with an error", "warn",
                              speak=False)
-            self.say(f"{spoken} failed.", "agents")
+            self.say(self.T("agent_fail", name=spoken), "agents")
 
     def expire_agents(self) -> None:
         now = time.time()
@@ -589,12 +609,494 @@ class Hub:
         if f and time.time() >= f["until"]:
             self.focus = None
             self.add_fx("fireworks", f"{f['label']} · done")
-            self.say(f"Focus done: {f['label']}.", "focus")
+            self.grow((f["until"] - f["start"]) / 60, f["label"])
+            self.say(self.T("focus_done", label=f['label']), "focus")
             if shutil.which("notify-send"):
                 subprocess.Popen(["notify-send", "Pulse", f"{f['label']}: done"], stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL)
 
-    def click(self, wid: str) -> bool:
+    # -- the city that grows with you: every focus you finish builds a building; a streak lights it, monuments come
+    def growth(self) -> dict:
+        try:
+            g = json.loads((STATE_DIR / "city.json").read_text())
+            if isinstance(g, dict) and isinstance(g.get("buildings"), list):
+                return g
+        except (OSError, ValueError):
+            pass
+        return {"buildings": [], "best": 0}
+
+    def grow(self, minutes: float, label: str = "") -> None:
+        if minutes < (0 if self.demo else float(self.conf("city", "min_minutes", default=10) or 0)) or self.conf("city", "enabled", default=True) is False:
+            return
+        g = self.growth()
+        g["buildings"] = (g["buildings"] + [{"t": int(time.time()), "m": int(round(minutes)), "label": str(label)[:24]}])[-2000:]
+        streak = growth_streak([b["t"] for b in g["buildings"]])
+        new_monument = streak > g.get("best", 0) and streak % 7 == 0
+        g["best"] = max(g.get("best", 0), streak)
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            (STATE_DIR / "city.json").write_text(json.dumps(g))
+        except OSError as e:
+            log(f"city: {e}")
+            return
+        self.add_fx("build", f"+1 building · {len(g['buildings'])} in your city", small=True)
+        if new_monument:
+            self.add_fx("fireworks", f"{streak} days in a row · a monument")
+            self.say(self.T("monument", n=streak), "focus")
+
+    def growth_state(self) -> dict:
+        g = self.growth()
+        bs = g["buildings"]
+        days = growth_days([b["t"] for b in bs])
+        today = time.strftime("%Y-%m-%d")
+        yday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+        return {"n": len(bs), "streak": growth_streak([b["t"] for b in bs]), "best": g.get("best", 0),
+                "lit": today in days or yday in days, "today": sum(1 for b in bs if time.strftime("%Y-%m-%d", time.localtime(b["t"])) == today),
+                "monuments": min(6, g.get("best", 0) // 7), "recent": [{"m": b["m"], "t": b["t"]} for b in bs[-48:]]}
+
+    # -- the planes over you: adsb.lol (default, free), OpenSky, or your own receiver (dump1090 / readsb)
+    def flight_route(self, flight: str) -> dict:
+        """Where a flight comes from and goes (adsbdb.com), kept for a day; at most one new lookup every few seconds."""
+        if not re.match(r"^[A-Z]{3}[0-9][0-9A-Z]{0,4}$", flight or ""):
+            return {}
+        cache = self.__dict__.setdefault("routes", {})
+        hit = cache.get(flight)
+        if hit and time.time() - hit[0] < 86400:
+            return hit[1]
+        if time.time() - self.__dict__.get("route_t", 0) < 3:
+            return {}
+        self.route_t = time.time()
+        out: dict = {}
+        try:
+            fr = (http_json(f"https://api.adsbdb.com/v0/callsign/{flight}").get("response") or {}).get("flightroute") or {}
+            o, d = fr.get("origin") or {}, fr.get("destination") or {}
+            if o.get("iata_code") and d.get("iata_code"):
+                out = {"from": str(o["iata_code"])[:4], "to": str(d["iata_code"])[:4],
+                       "fromCity": str(o.get("municipality") or "")[:24], "toCity": str(d.get("municipality") or "")[:24],
+                       "airline": str((fr.get("airline") or {}).get("name") or "")[:28]}
+        except Exception:   # noqa: BLE001 - an unknown callsign is a 404: just no route
+            pass
+        if len(cache) > 500:
+            cache.clear()
+        cache[flight] = (time.time(), out)
+        return out
+
+    def loop_sky(self) -> None:
+        warned, last = 0.0, 0.0
+        while True:
+            c = self.conf("sky", default={}) or {}
+            src = str(c.get("source") or "adsb.lol")
+            every = float(c.get("every") or (240 if src == "opensky" else 15))
+            if c.get("enabled") is False or self.demo or not self.location:
+                time.sleep(20)
+                continue
+            if time.time() - last < every:
+                time.sleep(1)
+                continue
+            last = time.time()
+            lat, lon = self.location
+            nm = int(c.get("radius", 25) or 25)
+            try:
+                if src == "opensky":
+                    d = nm / 60
+                    j = http_json(f"https://opensky-network.org/api/states/all?lamin={lat - d:.3f}&lomin={lon - d * 1.4:.3f}"
+                                  f"&lamax={lat + d:.3f}&lomax={lon + d * 1.4:.3f}")
+                    raw = [{"hex": r[0], "flight": r[1], "lat": r[6], "lon": r[5], "alt": (r[7] or 0) * 3.281, "gs": (r[9] or 0) * 1.944,
+                            "track": r[10], "ground": r[8]} for r in (j.get("states") or []) if len(r) > 10]
+                else:
+                    url = src if src.startswith("http") else f"https://api.adsb.lol/v2/lat/{lat:.4f}/lon/{lon:.4f}/dist/{nm}"
+                    j = http_json(url)
+                    raw = [{"hex": a.get("hex"), "flight": a.get("flight"), "lat": a.get("lat"), "lon": a.get("lon"),
+                            "alt": a.get("alt_baro"), "gs": a.get("gs"), "track": a.get("track"), "type": a.get("t"),
+                            "ground": a.get("alt_baro") == "ground"} for a in (j.get("ac") or j.get("aircraft") or [])]
+                planes = planes_over(lat, lon, raw)
+                if c.get("routes", True) is not False:
+                    for pl in planes:
+                        pl.update(self.flight_route(pl["flight"]))
+                self.sky = {"planes": planes, "t": time.time()}
+            except Exception as e:   # noqa: BLE001
+                if time.time() - warned > 3600:
+                    warned = time.time()
+                    log(f"sky: {e}")
+
+    # -- your calendar: the next events are trains coming into the station; five minutes before, the voice tells you
+    def loop_calendar(self) -> None:
+        fetched, cache, warned = 0.0, [], 0.0
+        while True:
+            c = self.conf("calendar", default={}) or {}
+            if not (c.get("ics") or c.get("command")) or c.get("enabled") is False:
+                self.calendar = []
+                time.sleep(30)
+                continue
+            now = time.time()
+            try:
+                if now - fetched > float(c.get("every", 300) or 300):
+                    fetched = now
+                    evs = []
+                    for u in ([c["ics"]] if isinstance(c.get("ics"), str) else c.get("ics") or []):
+                        u = str(u)
+                        if u.startswith("http"):
+                            req = urllib.request.Request(u.replace("webcal://", "https://"), headers={"User-Agent": "omarchy-pulse/" + VERSION})
+                            with urllib.request.urlopen(req, timeout=20) as r:
+                                text = r.read(5_000_000).decode("utf-8", "replace")
+                        else:
+                            text = Path(u).expanduser().read_text(errors="replace")
+                        evs += ics_events(text, now - 3600, now + 86400)
+                    if c.get("command"):
+                        out = subprocess.run(["bash", "-c", str(c["command"])], capture_output=True, timeout=30, env=self.src_env()).stdout
+                        evs += command_events(out.decode("utf-8", "replace"))
+                    cache = sorted(evs, key=lambda e: e["start"])
+                hours = float(c.get("hours", 3) or 3)
+                nxt = [e for e in cache if e["end"] > now and e["start"] < now + hours * 3600][:6]
+                warn = float(c.get("warn", 5) or 0) * 60
+                for e in nxt:
+                    key = f"{e['title']}|{e['start']}"
+                    if warn and 0 < e["start"] - now <= warn and key not in self.cal_warned:
+                        self.cal_warned.add(key)
+                        mins = max(1, round((e["start"] - now) / 60))
+                        self.add_fx("train", f"{e['title'][:30]} · in {mins} min")
+                        self.say(self.T("meeting_in", title=e['title'], mins=mins), "calendar")
+                        self.note("calendar", f"{e['title']} at {time.strftime('%H:%M', time.localtime(e['start']))}", "info")
+                self.calendar = nxt
+                self.cal_all = cache
+                was, self.in_meeting = self.in_meeting, any(e["start"] <= now < e["end"] for e in cache)
+                if self.in_meeting != was:
+                    log("meeting " + ("started: privacy on" if self.in_meeting else "ended: privacy off")
+                        if c.get("privacy", True) is not False else "meeting " + ("started" if self.in_meeting else "ended"))
+                # the evening summary, once a day
+                at = re.match(r"^(\d{1,2}):(\d{2})$", str(c.get("summary_at", "18:00") or ""))
+                day = time.strftime("%Y-%m-%d")
+                if at and self.summary_day != day and time.localtime().tm_hour * 60 + time.localtime().tm_min >= int(at[1]) * 60 + int(at[2]):
+                    self.summary_day = day
+                    text = day_summary(cache, now)
+                    if text:
+                        self.add_fx("summary", text)
+                        self.note("calendar", text, "info")
+                        lang = voice_lang(self.conf("voice", default={}) or {})
+                        n, secs = day_totals(cache, now)
+                        self.say(phrase("summary" if n != 1 else "summary1", lang, n=n, dur=spoken_duration(secs / 60, lang)), "calendar")
+                        if shutil.which("notify-send"):
+                            subprocess.Popen(["notify-send", "Pulse · your day", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:   # noqa: BLE001
+                if now - warned > 3600:
+                    warned = now
+                    log(f"calendar: {e}")
+            time.sleep(10)
+
+    # -- your home (Home Assistant): the doorbell turns the sphere into the door camera; your lights, one click away
+    def ha(self, path: str, body: dict | None = None):
+        h = self.conf("home", default={}) or {}
+        base = str(h.get("url") or "").rstrip("/")
+        req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None,
+                                     method="POST" if body is not None else "GET",
+                                     headers={"Authorization": "Bearer " + str(h.get("token") or ""), "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = r.read(3_000_000)
+        return data if path.startswith("/api/camera_proxy/") else json.loads(data or b"null")
+
+    def loop_home(self) -> None:
+        last_bell, lights_t, warned = None, 0.0, 0.0
+        while True:
+            h = self.conf("home", default={}) or {}
+            if not h.get("url") or not h.get("token") or h.get("enabled") is False or self.demo:
+                time.sleep(20)
+                continue
+            now = time.time()
+            try:
+                bell = str(h.get("doorbell") or "")
+                if bell:
+                    st = self.ha("/api/states/" + urllib.parse.quote(bell))
+                    mark = st.get("state") if bell.startswith("binary_sensor.") else st.get("last_changed")
+                    rang = (mark == "on" and last_bell not in (None, "on")) if bell.startswith("binary_sensor.") else (last_bell is not None and mark != last_bell)
+                    last_bell = mark
+                    if rang:
+                        self.doorbell()
+                if self.ring and now - self.ring["t"] < 60 and h.get("camera"):
+                    self.images["doorbell"] = (self.ha("/api/camera_proxy/" + urllib.parse.quote(str(h["camera"]))), "image/jpeg", now)
+                    self.set_widget("doorbell", title="door", type="image", slot="right", order=1, private=True,
+                                    data={"src": "/img/doorbell", "live": True})
+                elif self.ring and now - self.ring["t"] >= 60:
+                    self.ring = None
+                    self.drop_widget("doorbell")
+                if h.get("lights") and now - lights_t > 10:
+                    lights_t = now
+                    items = []
+                    for ent in list(h["lights"])[:8]:
+                        st = self.ha("/api/states/" + urllib.parse.quote(str(ent)))
+                        items.append({"title": str((st.get("attributes") or {}).get("friendly_name") or ent)[:18],
+                                      "level": "ok" if st.get("state") == "on" else "", "note": str(st.get("state", ""))[:6]})
+                    self.home_lights = list(h["lights"])[:8]
+                    self.set_widget("home", title="home", type="status", slot=str(h.get("panel", "right")), order=35,
+                                    icon="󰋜", data={"items": items}, itemclick=True)
+            except Exception as e:   # noqa: BLE001
+                if now - warned > 600:
+                    warned = now
+                    log(f"home: {e}")
+            time.sleep(max(1.0, float(h.get("every", 2) or 2)))
+
+    def doorbell(self) -> None:
+        self.ring = {"t": time.time()}
+        if self.demo:   # the demo: a camera picture of the demo data at the door
+            d = Path(os.environ.get("PULSE_DEMO_DIR", HERE / "demo"))
+            pics = sorted(d.glob("cam*/*.jpg")) if d.is_dir() else []
+            if pics:
+                self.images["doorbell"] = (pics[len(pics) // 2].read_bytes(), "image/jpeg", time.time())
+                self.set_widget("doorbell", title="door", type="image", slot="right", order=1, private=True,
+                                data={"src": "/img/doorbell", "live": True})
+        self.add_fx("doorbell", "someone is at the door")
+        self.note("home", "the doorbell rang", "warn")
+        if (self.conf("home", "chime", default=True) is not False and not self.demo):
+            threading.Thread(target=play_chime, daemon=True).start()   # ding-dong, on your speakers
+        self.say(self.T("door"), "home")
+        if shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", "-u", "critical", "Pulse · the doorbell", "someone is at the door"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def car_refresh(self) -> None:
+        time.sleep(8)
+        c = self.conf("car", default={}) or {}
+        try:
+            v = self.car_read(c)
+            if v:
+                v["name"] = str(c.get("name") or "car")[:16]
+                self.car = {**v, "t": time.time()}
+                self.car_widget(c)
+        except Exception as e:   # noqa: BLE001
+            log(f"car: {e}")
+
+    # -- your electric car: Tessie (a Tesla) or Home Assistant (any car it knows). Never its position.
+    def tessie(self, path: str, post: bool = False):
+        c = self.conf("car", default={}) or {}
+        tok = str(c.get("token") or "")
+        if not tok and c.get("token_file"):
+            tok = Path(str(c["token_file"])).expanduser().read_text().strip()
+        req = urllib.request.Request("https://api.tessie.com" + path, data=b"" if post else None, method="POST" if post else "GET",
+                                     headers={"Authorization": "Bearer " + tok, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=40 if post else 10) as r:
+            return json.loads(r.read(2_000_000) or b"null")
+
+    def car_read(self, c: dict) -> dict | None:
+        km = self.conf("pulse", "units", default="metric") != "imperial"
+        if str(c.get("source", "tessie")) == "tessie":
+            vs = [v for v in (self.tessie("/vehicles?only_active=true").get("results") or []) if v.get("last_state")]
+            v = next((x for x in vs if not c.get("vin") or x.get("vin") == c.get("vin")), None)
+            if not v:
+                return None
+            self.car_vin = v["vin"]
+            s = v["last_state"]   # Tessie's last state: reading it never wakes the car
+            ch, cl, vh, dr = (s.get("charge_state") or {}), (s.get("climate_state") or {}), (s.get("vehicle_state") or {}), (s.get("drive_state") or {})
+            rng = ch.get("battery_range")   # Tesla gives miles
+            return car_view(ch.get("battery_level"), rng * 1.609 if km and rng is not None else rng, km,
+                            str(ch.get("charging_state") or ""), ch.get("charge_limit_soc"), ch.get("minutes_to_full_charge"),
+                            ch.get("charger_power"), vh.get("locked"), cl.get("is_climate_on"), cl.get("inside_temp"),
+                            str(dr.get("shift_state") or "") in ("D", "R", "N"))
+        g = lambda k: (self.ha("/api/states/" + urllib.parse.quote(str(c[k]))) or {}).get("state") if c.get(k) else None   # noqa: E731
+        num = lambda x: float(x) if x not in (None, "", "unknown", "unavailable") else None   # noqa: E731
+        chg = g("charging")
+        state = "Charging" if chg in ("on", "charging", "Charging") else ("Stopped" if g("plugged") == "on" else "Disconnected")
+        return car_view(num(g("battery")), num(g("range")), km, state, num(g("limit")), None, None,
+                        {"locked": True, "unlocked": False}.get(str(g("lock"))), {"off": False}.get(str(g("climate")), None if not c.get("climate") else True),
+                        num(g("inside")), False)
+
+    def loop_car(self) -> None:
+        last, warned, told = None, 0.0, ""
+        while True:
+            c = self.conf("car", default={}) or {}
+            if not c.get("enabled") or self.demo:
+                time.sleep(20)
+                continue
+            now = time.time()
+            try:
+                v = self.car_read(c)
+                if v:
+                    v["name"] = str(c.get("name") or "car")[:16]
+                    self.car = {**v, "t": now}
+                    self.car_events(last, v, c)
+                    last = v
+                    self.car_widget(c)
+                day = time.strftime("%Y-%m-%d")
+                if v and time.strftime("%H:%M") >= str(c.get("evening", "21:00")) and told != day:
+                    told = day
+                    if v["battery"] is not None and v["battery"] < float(c.get("low", 30) or 30) and v["state"] == "Disconnected":
+                        self.note("car", f"{v['name']} at {v['battery']:.0f}% and not plugged in", "warn")
+                        self.say(self.T("car_low", name=v['name'], b=f"{v['battery']:.0f}"), "car")
+            except Exception as e:   # noqa: BLE001
+                if now - warned > 900:
+                    warned = now
+                    log(f"car: {e}")
+            time.sleep(max(30, int(c.get("every", 60) or 60)))
+
+    def car_events(self, last: dict | None, v: dict, c: dict) -> None:
+        if not last:
+            return
+        if v["state"] == "Charging" and last["state"] != "Charging":
+            self.add_fx("car", f"{v['name']} charging · {v['battery']:.0f}%", small=True)
+            self.note("car", f"{v['name']} started charging at {v['battery']:.0f}%", "info")
+        if last["state"] == "Charging" and v["state"] == "Complete":
+            self.add_fx("car", f"{v['name']} charged · {v['battery']:.0f}% · {v['range']:.0f} {v['unit']}")
+            self.note("car", f"{v['name']} charged: {v['battery']:.0f}%", "ok")
+            self.say(self.T("car_done", name=v['name'], b=f"{v['battery']:.0f}"), "car")
+
+    def car_widget(self, c: dict) -> None:
+        v = self.car or {}
+        b = v.get("battery")
+        items = [{"title": "battery", "level": "ok" if (b or 0) >= 50 else "warn" if (b or 0) >= 20 else "crit",
+                  "note": (f"{b:.0f}%" if b is not None else "--") + (f" · {v['range']:.0f} {v['unit']}" if v.get("range") is not None else "")}]
+        cmds = [""]   # the battery row does nothing
+        ch = v.get("state") == "Charging"
+        if v.get("state") in ("Charging", "Stopped", "Complete") or ch:
+            items.append({"title": "stop charging" if ch else "charge", "level": "ok" if ch else "",
+                          "note": (f"{v['power']:.0f} kW" if ch and v.get("power") else v.get("state", "").lower())[:10]})
+            cmds.append("stop_charging" if ch else "start_charging")
+        if v.get("locked") is not None:
+            if v["locked"]:
+                if c.get("allow_unlock"):
+                    items.append({"title": "unlock", "level": "ok", "note": "locked"}); cmds.append("unlock")
+                else:
+                    items.append({"title": "locked", "level": "ok", "note": ""}); cmds.append("")
+            else:
+                items.append({"title": "lock", "level": "warn", "note": "open"}); cmds.append("lock")
+        if v.get("climate") is not None:
+            items.append({"title": "climate", "level": "ok" if v["climate"] else "",
+                          "note": ("on" if v["climate"] else "off") + (f" · {v['inside']:.0f}°" if v.get("inside") is not None else "")})
+            cmds.append("stop_climate" if v["climate"] else "start_climate")
+        self.car_cmds = cmds
+        self.set_widget("car", title=str(v.get("name") or "car"), type="status", slot=str(c.get("panel", "right")), order=36,
+                        icon="󰄋", data={"items": items}, itemclick=True)
+
+    def car_allowed(self, cmd: str) -> bool:
+        c = self.conf("car", default={}) or {}
+        if not (c.get("enabled") or self.demo) or cmd not in ("start_charging", "stop_charging", "lock", "unlock",
+                                                              "start_climate", "stop_climate", "flash"):
+            return False
+        return cmd != "unlock" or bool(c.get("allow_unlock"))   # never unlocked from the wallpaper, unless you said so
+
+    def car_run(self, cmd: str) -> None:
+        try:
+            ok = self.car_command(cmd)
+            self.note("car", f"{cmd.replace('_', ' ')}: " + ("done" if ok else "no answer"), "info" if ok else "warn")
+            if ok and not self.demo:
+                self.car_refresh()
+        except Exception as e:   # noqa: BLE001
+            log(f"car: {e}")
+
+    def car_command(self, cmd: str) -> bool:
+        c = self.conf("car", default={}) or {}
+        if not self.car_allowed(cmd):
+            return False
+        if self.demo:
+            v = self.car or {}
+            if cmd.endswith("charging"):
+                v["state"] = "Charging" if cmd == "start_charging" else "Stopped"
+            elif cmd in ("lock", "unlock"):
+                v["locked"] = cmd == "lock"
+            elif cmd.endswith("climate"):
+                v["climate"] = cmd == "start_climate"
+            self.car_widget(c)
+            return True
+        if str(c.get("source", "tessie")) == "tessie":
+            if not getattr(self, "car_vin", None):
+                return False
+            return bool((self.tessie(f"/{self.car_vin}/command/{'flash' if cmd == 'flash' else cmd}?wait_for_completion=true", post=True) or {}).get("result"))
+        ent = {"start_charging": "charge_switch", "stop_charging": "charge_switch", "lock": "lock", "unlock": "lock",
+               "start_climate": "climate", "stop_climate": "climate"}.get(cmd)
+        if not ent or not c.get(ent):
+            return False
+        e = str(c[ent]); dom = e.split(".")[0]
+        svc = {"lock": "lock", "unlock": "unlock"}.get(cmd) or ("turn_on" if cmd.startswith("start") else "turn_off")
+        self.ha(f"/api/services/{dom}/{svc}", {"entity_id": e})
+        return True
+
+    # -- earthquakes (USGS): the city shakes, a wave comes from where it happened
+    def loop_quakes(self) -> None:
+        first, warned = True, 0.0
+        while True:
+            q = self.conf("quakes", default={}) or {}
+            if q.get("enabled") is False or self.demo:
+                time.sleep(60)
+                continue
+            now = time.time()
+            try:
+                j = http_json("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson")
+                for f in j.get("features") or []:
+                    fid, p, g = f.get("id"), f.get("properties") or {}, (f.get("geometry") or {}).get("coordinates") or []
+                    if not fid or fid in self.quake_seen or len(g) < 2:
+                        continue
+                    self.quake_seen.add(fid)
+                    if first or now - (p.get("time") or 0) / 1000 > 3600:
+                        continue   # the first look, and old ones, only fill the memory
+                    mag = float(p.get("mag") or 0)
+                    dist, az = (distance_bearing(self.location[0], self.location[1], g[1], g[0]) if self.location else (99999, 90))
+                    near_km = float(q.get("near_km", 500) or 500)
+                    tsu = p.get("tsunami") == 1   # USGS sets it when a tsunami warning centre has issued a message
+                    if tsu or mag >= float(q.get("min_world", 6) or 6) or (dist < near_km and mag >= float(q.get("min_near", 3) or 3)):
+                        self.quake_event(mag, str(p.get("place") or ""), dist, az, near_km, tsu,
+                                         float(q.get("tsunami_km", 1500) or 1500))
+                if len(self.quake_seen) > 2000:
+                    self.quake_seen = set(list(self.quake_seen)[-1000:])
+                first = False
+            except Exception as e:   # noqa: BLE001
+                if now - warned > 3600:
+                    warned = now
+                    log(f"quakes: {e}")
+            time.sleep(max(60, int(q.get("every", 300) or 300)))
+
+    def quake_event(self, mag: float, place: str, dist: float, az: float, near_km: float = 500, tsunami: bool = False,
+                    tsunami_km: float = 1500) -> None:
+        place, near = place[:40], dist < near_km
+        sea_near = tsunami and dist < tsunami_km
+        self.add_fx("quake", f"M{mag:.1f} · {place} · {dist:,.0f} km" + (" · TSUNAMI" if tsunami else ""),
+                    mag=mag, az=az, near=1 if near else 0, tsunami=1 if tsunami else 0)
+        self.note("earth", f"M{mag:.1f} earthquake · {place}" + (" · tsunami message" if tsunami else ""),
+                  "crit" if sea_near else "warn" if near or tsunami else "info")
+        if sea_near:
+            self.raise_alert("tsunami", f"tsunami message · M{mag:.1f}", f"{place} · {dist:.0f} km · check your local authorities", "crit",
+                             speak=False)
+        elif near and mag >= 4:
+            self.raise_alert("quake", f"earthquake M{mag:.1f} near you", f"{place} · {dist:.0f} km", "warn", speak=False)
+        self.say(self.T("quake", mag=f"{mag:.1f}", place=place) + (" " + self.T("tsunami") if tsunami else ""), "earth")
+
+    # -- the timelapse: the page sends a picture of the scene (no panels, no names) every few minutes
+    def timelapse_frame(self, mon: str, data: bytes) -> bool:
+        t = self.conf("timelapse", default={}) or {}
+        if t.get("enabled") is False or self.privacy() or not data.startswith(b"\xff\xd8") or len(data) > 1_500_000:
+            return False
+        d = STATE_DIR / "timelapse" / time.strftime("%Y-%m-%d") / re.sub(r"[^0-9,-]", "", mon)[:16]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / (time.strftime("%H%M%S") + ".jpg")).write_bytes(data)
+        return True
+
+    def loop_timelapse(self) -> None:
+        day = time.strftime("%Y-%m-%d")
+        while True:
+            time.sleep(30)
+            now_day = time.strftime("%Y-%m-%d")
+            if now_day != day:
+                done, day = day, now_day
+                if (self.conf("timelapse", default={}) or {}).get("enabled") is not False:
+                    out = make_timelapse(done, self.conf("timelapse", default={}) or {})
+                    if out:
+                        self.note("timelapse", "your day as a video: " + out.name, "info")
+                        if shutil.which("notify-send"):
+                            subprocess.Popen(["notify-send", "Pulse · your day in a video", str(out)],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def click(self, wid: str, item: int | None = None) -> bool:
+        if wid == "home" and item is not None and 0 <= item < len(self.home_lights):
+            ent = str(self.home_lights[item])
+            dom = ent.split(".")[0] if ent.split(".")[0] in ("light", "switch", "fan") else "homeassistant"
+            try:
+                self.ha(f"/api/services/{dom}/toggle", {"entity_id": ent})
+            except Exception as e:   # noqa: BLE001
+                log(f"home: {e}")
+                return False
+            return True
+        if wid == "car" and item is not None and 0 <= item < len(self.car_cmds) and self.car_cmds[item]:
+            cmd = self.car_cmds[item]
+            if not self.car_allowed(cmd):
+                return False
+            threading.Thread(target=self.car_run, args=(cmd,), daemon=True).start()
+            return True
         src = next((s for s in self.cfg.get("source", []) if isinstance(s, dict) and s.get("name") == wid), None)
         cmd = (src or {}).get("click")
         if not cmd:
@@ -679,16 +1181,17 @@ class Hub:
                            "lines": lines[:8], "more": max(0, len(lines) - 8)}
         h, m = divmod(round(mins), 60)
         dur = (f"{h} hour{'s' * (h > 1)} " if h else "") + (f"{m} minute{'s' * (m != 1)}" if m or not h else "")
+        spoken = spoken_duration(mins, voice_lang(self.conf("voice", default={}) or {}))
         if lines:
             said = "; ".join((x["text"].split(" · ")[0] if x["kind"] == "alert" else x["text"].replace("·", ","))
                              for x in lines[:4] if not x.get("private"))   # alerts: only their title, aloud
-            self.say(f"Welcome back. While you were away, {dur}: {said or 'some notifications'}.", "digest")
+            self.say(self.T("back", dur=spoken, said=said or self.T("some_notes")), "digest")
             if self.conf("presence", "notify", default=True) is not False and shutil.which("notify-send"):
                 subprocess.Popen(["notify-send", f"Pulse · while you were away ({dur})",
                                   "\n".join(x["text"] for x in lines[:6])],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            self.say(f"Welcome back. All quiet for {dur}.", "digest")
+            self.say(self.T("back_quiet", dur=spoken), "digest")
 
     def loop_presence(self) -> None:
         """The pointer (for the eyes, a few times a second while a wallpaper listens) and the lock screen."""
@@ -799,7 +1302,7 @@ class Hub:
                         nm = cfg_names.get(ip) or names.get(ip) or ""
                         self.raise_alert("lan", "new device on your network", f"{ip}" + (f" · {nm}" if nm else ""),
                                          "warn", speak=False)
-                        self.say("A new device joined your network.", "alerts")
+                        self.say(self.T("lan"), "alerts")
                         if shutil.which("notify-send"):
                             subprocess.Popen(["notify-send", "Pulse · new device on your network", ip],
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -808,12 +1311,16 @@ class Hub:
             time.sleep(max(15, int(self.conf("lan", "every", default=60) or 60)))
 
     # -- the voice: piper (offline, natural) or espeak-ng; off unless you turn it on
+    def T(self, key: str, **kw) -> str:
+        """A line Pulse says by itself, in your [voice] language."""
+        return phrase(key, voice_lang(self.conf("voice", default={}) or {}), **kw)
+
     def say(self, text: str, why: str = "", force: bool = False) -> None:
         v = self.conf("voice", default={}) or {}
         if not force:
             if v.get("enabled") not in (True, "on") or self.demo:
                 return
-            if why and why not in (v.get("events") or ["alerts", "agents", "digest", "focus", "space"]):
+            if why and why not in (v.get("events") or ["alerts", "agents", "digest", "focus", "space", "calendar", "home", "earth", "car"]):
                 return
             if self.away or self.focus or in_quiet_hours(str(v.get("quiet", "23:00-08:00") or "")):
                 return
@@ -848,11 +1355,15 @@ class Hub:
         mon = re.sub(r"[^0-9,\-]", "", str(d.get("mon", "")))[:24] or "?"
         p = {"fps": num("fps"), "want": num("want"), "cap": num("cap"), "draw": num("draw"), "gap": num("gap"),
              "maxGap": num("maxGap"), "bound": bool(d.get("bound")), "w": int(num("w")), "h": int(num("h")),
-             "scene": re.sub(r"[^a-z]", "", str(d.get("scene", "")))[:12], "t": time.time()}
+             "scene": re.sub(r"[^a-z]", "", str(d.get("scene", "")))[:12], "t": time.time(), "probe": bool(d.get("probe"))}
         with self.lock:
             m = self.mons.get(mon) or {}
             p["name"] = m.get("name", "")
+            p["windows"] = int(m.get("windows") or 0)
             self.perf[mon] = p
+            if p["probe"]:
+                self.perf.setdefault("_probe", {})[mon] = p
+                return
             last = self.perf_logged.get(mon, 0)
             if not p["bound"] or time.time() - last < 600:
                 return
@@ -906,7 +1417,8 @@ class Hub:
                         ci_t[key] = time.time()
                         new = gh_ci(slug, info["branch"])
                         if new == "fail" and ci != "fail":
-                            self.raise_alert("git:" + name, f"CI failed · {name}", info["branch"], "warn")
+                            self.raise_alert("git:" + name, f"CI failed · {name}", info["branch"], "warn", speak=False)
+                            self.say(self.T("ci_fail", name=name), "alerts")
                         elif new == "ok" and ci == "fail":
                             self.add_fx("burst", f"{name} · CI green", small=True)
                         ci = new or ci
@@ -947,7 +1459,7 @@ class Hub:
                         if el > 10 and not up:
                             self.add_fx("iss", "ISS overhead · " + f"{pos.get('velocity', 27600):,.0f} km/h")
                             self.note("space", "the ISS passed over you", "info")
-                            self.say("The International Space Station is passing over you right now.", "space")
+                            self.say(self.T("iss"), "space")
                         up = el > 10
                 if now - kp_t > 900:
                     kp_t = now
@@ -998,7 +1510,7 @@ class Hub:
                         self.launched.add(x["id"])
                         self.add_fx("launch", f"{x['rocket']} · {x['mission']} · liftoff")
                         self.note("space", f"{x['rocket']} {x['mission']} lifted off", "info")
-                        self.say(f"Liftoff! {x['rocket']}, {x['mission']}.", "space")
+                        self.say(self.T("liftoff", rocket=x['rocket'], mission=x['mission']), "space")
                 nxt = next((x for x in ls if x["net"] > now - 60), None)
                 with self.lock:
                     self.space = {**self.space, "launch": nxt}
@@ -1203,6 +1715,7 @@ class Hub:
     def voice_command(self, text: str) -> str:
         t = re.sub(r"^\W*((hey|hi|ok|ehi|ei|ciao)\W+)?(sphere|sfera|pulse)\W*", "", text.lower().strip()).strip()
         it = bool(re.search(r"\b(che|come|quanti|quante|accendi|spegni|ferma|metti|fuochi|meteo|ore|sono|stato|minuti|cosa|mi|ho|il|la|per)\b|citt|^\W*ehi\b|sfera", text.lower()))
+        it = it or (voice_lang(self.conf("voice", default={}) or {}) == "it" and not re.search(r"\b(what|how|is|the|my|are)\b", text.lower()))
         L = lambda en, itl: itl if it else en
         if re.search(r"\b(stop|end|basta|ferma|termina|spegni)\b.*\b(focus|concentra\w*)", t):
             self.set_focus(0)
@@ -1226,6 +1739,23 @@ class Hub:
             items = "; ".join((x["text"].split(" · ")[0] if x["kind"] == "alert" else x["text"].replace("·", ","))
                               for x in d["lines"][:4] if not x.get("private"))
             return L(f"While you were away: {items}.", f"Mentre eri via: {items}.")
+        if re.search(r"my city|la mia citt|streak|serie", t):
+            g = self.growth_state()
+            return L(f"Your city has {g['n']} buildings. Streak: {g['streak']} days, best {g['best']}.",
+                     f"La tua città ha {g['n']} edifici. Serie: {g['streak']} giorni, record {g['best']}.")
+        if re.search(r"my car|the car|la mia auto|l'auto|la macchina|tesla|batter", t):
+            v = self.car
+            if not v:
+                return L("I don't see your car.", "Non vedo la tua auto.")
+            ch = {"Charging": L("charging", "in carica"), "Complete": L("charged", "carica")}.get(v["state"], "")
+            return L(f"Your {v['name']}: {v['battery']:.0f} percent, {v['range']:.0f} {v['unit']}" + (f", {ch}" if ch else "") + ".",
+                     f"La tua auto: {v['battery']:.0f} per cento, {v['range']:.0f} {v['unit']}" + (f", {ch}" if ch else "") + ".")
+        if re.search(r"next meeting|calendar|prossim[ao] (riunione|evento|appuntamento)|calendario", t):
+            if not self.calendar:
+                return L("Nothing in your calendar in the next hours.", "Niente in calendario nelle prossime ore.")
+            e = self.calendar[0]
+            at = time.strftime("%H:%M", time.localtime(e["start"]))
+            return L(f"Next: {e['title']} at {at}.", f"Prossimo: {e['title']} alle {at}.")
         if re.search(r"\biss\b|space station|stazione spaziale", t):
             iss = (self.space or {}).get("iss")
             if iss:
@@ -1613,7 +2143,8 @@ class Hub:
                         self.location = (float(lat), float(lon))
                         imperial = self.conf("pulse", "units", default="metric") == "imperial"
                         q = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-                             "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,is_day,precipitation"
+                             "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,"
+                             "relative_humidity_2m,is_day,precipitation"
                              "&hourly=temperature_2m,precipitation_probability,weather_code"
                              "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=2")
                         if imperial:
@@ -1630,6 +2161,7 @@ class Hub:
                                           "c": j["hourly"]["weather_code"][i]})
                         self.weather = {"city": label, "temp": cur["temperature_2m"], "feels": cur["apparent_temperature"],
                                         "code": cur["weather_code"], "wind": cur["wind_speed_10m"],
+                                        "windDir": cur.get("wind_direction_10m"), "gust": cur.get("wind_gusts_10m"),
                                         "hum": cur["relative_humidity_2m"], "day": cur["is_day"],
                                         "rain": cur.get("precipitation", 0),
                                         "hi": j["daily"]["temperature_2m_max"][0], "lo": j["daily"]["temperature_2m_min"][0],
@@ -1709,7 +2241,8 @@ class Hub:
         while True:
             try:
                 if self.builtin("notifications") is not False:
-                    items = notification_history()
+                    hours = float(self.builtin("notifications_hours", 3) or 0)
+                    items = [i for i in notification_history() if not hours or not i.get("t") or time.time() - i["t"] < hours * 3600]
                     if items:
                         self.set_widget("notifications", title="notifications", type="list", slot="center", order=40,
                                         private=True, data={"items": items[:5]})
@@ -1809,6 +2342,8 @@ class Hub:
     def privacy(self) -> bool:
         if self.privacy_manual is not None:
             return self.privacy_manual
+        if self.in_meeting and self.conf("calendar", "privacy", default=True) is not False:
+            return True   # a meeting is running: you may share your screen
         return self.screencast and self.conf("pulse", "privacy_on_screenshare", default=True) is not False
 
     # -- what the page reads
@@ -1833,6 +2368,17 @@ class Hub:
                     "listen": self.listen if self.listen and time.time() - self.listen["t"] < float(os.environ.get("PULSE_DEMO_LISTEN_SECS") or 12) else None,
                     "speaking": self.speaking,
                     "fxSeq": self.fx_seq, "music": bool(self.audio) and time.time() - self.audio_t < 1,
+                    "perfProbe": time.time() < self.perf_probe,
+                    "growth": self.growth_state() if self.conf("city", "enabled", default=True) is not False else None,
+                    "sky": self.sky.get("planes", []) if time.time() - self.sky.get("t", 0) < 120 else [],
+                    "calendar": [{**e, "title": "" if self.privacy() else e["title"]} for e in self.calendar],
+                    "meeting": self.in_meeting,
+                    "car": ({k: self.car.get(k) for k in ("battery", "range", "unit", "state", "limit", "minutes", "power", "driving")}
+                            if self.car and time.time() - self.car.get("t", 0) < 3600 else None),
+                    "ring": bool(self.ring) and time.time() - self.ring["t"] < float(os.environ.get("PULSE_DEMO_RING_SECS") or 60)
+                            and not self.privacy(),
+                    "timelapse": (self.conf("timelapse", default={}) or {}).get("enabled") is not False,
+                    "timelapseEvery": int((self.conf("timelapse", default={}) or {}).get("every", 90) or 90),
                     "away": bool(self.away), "digest": self.public_digest(),
                     "lan": [{**d, "name": "" if self.privacy() else d["name"], "ip": "" if self.privacy() else d["ip"]}
                             for d in self.lan["devices"]],
@@ -1840,6 +2386,7 @@ class Hub:
                            "pause_when_covered": self.conf("pulse", "pause_when_covered", default=True),
                            "scene": self.scene_override or self.conf("pulse", "scene", default="skyline"),
                            "skyline": self.skyline(),
+                           "skylineAuto": str(self.conf("pulse", "skyline", default="auto")) == "auto" and not self.skyline_override,
                            "font": self.conf("pulse", "font", default=""),
                            "title": self.conf("pulse", "title", default=""),
                            "dim_with_windows": self.conf("pulse", "dim_with_windows", default=True),
@@ -1890,7 +2437,8 @@ class Hub:
         for fn in (self.loop_system, self.loop_weather, self.loop_github, self.loop_media, self.loop_notifications,
                    self.loop_theme, self.loop_hypr, self.loop_music, self.loop_presence, self.loop_lan,
                    self.loop_voice, self.loop_git, self.loop_space, self.loop_heart, self.loop_crew,
-                   self.loop_crew_send, self.loop_launches):
+                   self.loop_crew_send, self.loop_launches, self.loop_sky, self.loop_calendar, self.loop_home,
+                   self.loop_car, self.loop_quakes, self.loop_timelapse):
             threading.Thread(target=fn, daemon=True).start()
 
 
@@ -2171,6 +2719,81 @@ def in_quiet_hours(spec: str, now: float | None = None) -> bool:
     return a <= cur < b if a <= b else cur >= a or cur < b
 
 
+# What Pulse says by itself, in the language of [voice] language (en, it, es, fr, de). Names, titles and places
+# stay as they are.
+PHRASES = {
+    "alert": {"en": "Alert. {title}. {text}", "it": "Attenzione. {title}. {text}", "es": "Alerta. {title}. {text}",
+              "fr": "Alerte. {title}. {text}", "de": "Warnung. {title}. {text}"},
+    "agent_done": {"en": "{name} finished.", "it": "{name} ha finito.", "es": "{name} ha terminado.", "fr": "{name} a terminé.",
+                   "de": "{name} ist fertig."},
+    "agent_wait": {"en": "{name} needs you.", "it": "{name} ha bisogno di te.", "es": "{name} te necesita.",
+                   "fr": "{name} a besoin de toi.", "de": "{name} braucht dich."},
+    "agent_fail": {"en": "{name} failed.", "it": "{name} non ce l'ha fatta.", "es": "{name} ha fallado.", "fr": "{name} a échoué.",
+                   "de": "{name} ist fehlgeschlagen."},
+    "focus_done": {"en": "Focus done: {label}.", "it": "Focus finito: {label}.", "es": "Concentración terminada: {label}.",
+                   "fr": "Concentration terminée : {label}.", "de": "Fokus beendet: {label}."},
+    "monument": {"en": "{n} days in a row. Your city has a new monument.", "it": "{n} giorni di fila. La tua città ha un nuovo monumento.",
+                 "es": "{n} días seguidos. Tu ciudad tiene un nuevo monumento.", "fr": "{n} jours d'affilée. Ta ville a un nouveau monument.",
+                 "de": "{n} Tage in Folge. Deine Stadt hat ein neues Denkmal."},
+    "meeting_in": {"en": "{title} in {mins} minutes.", "it": "{title} tra {mins} minuti.", "es": "{title} en {mins} minutos.",
+                   "fr": "{title} dans {mins} minutes.", "de": "{title} in {mins} Minuten."},
+    "summary": {"en": "Today: {n} meetings, {dur}.", "it": "Oggi: {n} riunioni, {dur}.", "es": "Hoy: {n} reuniones, {dur}.",
+                "fr": "Aujourd'hui : {n} réunions, {dur}.", "de": "Heute: {n} Termine, {dur}."},
+    "summary1": {"en": "Today: one meeting, {dur}.", "it": "Oggi: una riunione, {dur}.", "es": "Hoy: una reunión, {dur}.",
+                 "fr": "Aujourd'hui : une réunion, {dur}.", "de": "Heute: ein Termin, {dur}."},
+    "ci_fail": {"en": "The build failed on {name}.", "it": "La CI di {name} è fallita.", "es": "La CI de {name} ha fallado.",
+                "fr": "La CI de {name} a échoué.", "de": "Die CI von {name} ist fehlgeschlagen."},
+    "door": {"en": "Someone is at the door.", "it": "C'è qualcuno alla porta.", "es": "Hay alguien en la puerta.",
+             "fr": "Quelqu'un est à la porte.", "de": "Jemand ist an der Tür."},
+    "car_low": {"en": "Your {name} is at {b} percent and not plugged in.", "it": "L'auto è al {b} per cento e non è in carica.",
+                "es": "El coche está al {b} por ciento y no está enchufado.", "fr": "La voiture est à {b} pour cent et n'est pas branchée.",
+                "de": "Das Auto hat {b} Prozent und ist nicht angeschlossen."},
+    "car_done": {"en": "Your {name} is charged: {b} percent.", "it": "L'auto è carica: {b} per cento.", "es": "El coche está cargado: {b} por ciento.",
+                 "fr": "La voiture est chargée : {b} pour cent.", "de": "Das Auto ist geladen: {b} Prozent."},
+    "quake": {"en": "A magnitude {mag} earthquake, {place}.", "it": "Terremoto di magnitudo {mag}, {place}.",
+              "es": "Terremoto de magnitud {mag}, {place}.", "fr": "Séisme de magnitude {mag}, {place}.", "de": "Erdbeben der Stärke {mag}, {place}."},
+    "tsunami": {"en": "A tsunami message was issued.", "it": "È stato emesso un avviso di tsunami.", "es": "Se ha emitido un aviso de tsunami.",
+                "fr": "Un message de tsunami a été émis.", "de": "Eine Tsunami-Meldung wurde herausgegeben."},
+    "back": {"en": "Welcome back. While you were away, {dur}: {said}.", "it": "Bentornato. Mentre eri via, {dur}: {said}.",
+             "es": "Bienvenido. Mientras no estabas, {dur}: {said}.", "fr": "Bon retour. Pendant ton absence, {dur} : {said}.",
+             "de": "Willkommen zurück. Während du weg warst, {dur}: {said}."},
+    "back_quiet": {"en": "Welcome back. All quiet for {dur}.", "it": "Bentornato. Tutto tranquillo per {dur}.",
+                   "es": "Bienvenido. Todo tranquilo durante {dur}.", "fr": "Bon retour. Tout est resté calme pendant {dur}.",
+                   "de": "Willkommen zurück. {dur} lang war alles ruhig."},
+    "some_notes": {"en": "some notifications", "it": "qualche notifica", "es": "algunas notificaciones", "fr": "quelques notifications",
+                   "de": "ein paar Benachrichtigungen"},
+    "lan": {"en": "A new device joined your network.", "it": "Un nuovo dispositivo è entrato nella tua rete.",
+            "es": "Un nuevo dispositivo se ha unido a tu red.", "fr": "Un nouvel appareil a rejoint ton réseau.",
+            "de": "Ein neues Gerät ist in deinem Netzwerk."},
+    "iss": {"en": "The International Space Station is passing over you right now.", "it": "La Stazione Spaziale Internazionale sta passando sopra di te.",
+            "es": "La Estación Espacial Internacional está pasando sobre ti.", "fr": "La Station spatiale internationale passe au-dessus de toi.",
+            "de": "Die Internationale Raumstation fliegt gerade über dich."},
+    "liftoff": {"en": "Liftoff! {rocket}, {mission}.", "it": "Decollo! {rocket}, {mission}.", "es": "¡Despegue! {rocket}, {mission}.",
+                "fr": "Décollage ! {rocket}, {mission}.", "de": "Start! {rocket}, {mission}."},
+}
+LANGS = ("en", "it", "es", "fr", "de")
+
+
+def voice_lang(v: dict) -> str:
+    lang = str((v or {}).get("language") or "en").lower()[:2]
+    return lang if lang in LANGS else "en"
+
+
+def phrase(key: str, lang: str = "en", **kw) -> str:
+    p = PHRASES[key]
+    return (p.get(lang) or p["en"]).format(**kw).strip()
+
+
+def spoken_duration(mins: float, lang: str = "en") -> str:
+    """1 hour 5 minutes, 2 ore, 45 minutos..."""
+    h, m = divmod(int(round(mins)), 60)
+    w = {"en": (("hour", "hours"), ("minute", "minutes")), "it": (("ora", "ore"), ("minuto", "minuti")),
+         "es": (("hora", "horas"), ("minuto", "minutos")), "fr": (("heure", "heures"), ("minute", "minutes")),
+         "de": (("Stunde", "Stunden"), ("Minute", "Minuten"))}.get(lang) or (("hour", "hours"), ("minute", "minutes"))
+    parts = ([f"{h} {w[0][h != 1]}"] if h else []) + ([f"{m} {w[1][m != 1]}"] if m or not h else [])
+    return " ".join(parts)
+
+
 def voice_model(v: dict) -> str | None:
     m = str(v.get("model") or "")
     if m:
@@ -2178,6 +2801,8 @@ def voice_model(v: dict) -> str | None:
         return str(p) if p.is_file() else None
     d = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "piper"
     found = sorted(d.glob("*.onnx")) if d.is_dir() else []
+    lang = voice_lang(v)   # a voice of your language first (it_IT-paola-medium.onnx for "it")
+    found = [f for f in found if f.name.lower().startswith(lang + "_")] + [f for f in found if not f.name.lower().startswith(lang + "_")]
     return str(found[0]) if found else None
 
 
@@ -2209,7 +2834,7 @@ def speak(text: str, v: dict) -> None:
         subprocess.run(player + [str(wav)], timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
     if shutil.which("espeak-ng"):
-        subprocess.run(["espeak-ng", "-v", str(v.get("espeak_voice") or "en-us"), "-s", "165", text], timeout=60, stdout=subprocess.DEVNULL,
+        subprocess.run(["espeak-ng", "-v", str(v.get("espeak_voice") or ("en-us" if voice_lang(v) == "en" else voice_lang(v))), "-s", "165", text], timeout=60, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
         return
     log("voice: " + ("no audio player (pw-play, paplay or aplay)" if piper and model else
@@ -2301,6 +2926,242 @@ def latest_kp(rows) -> float | None:
         return round(float(v), 2)
     except (TypeError, ValueError):
         return None
+
+
+def growth_days(ts: list) -> set:
+    return {time.strftime("%Y-%m-%d", time.localtime(t)) for t in ts}
+
+
+def growth_streak(ts: list, now: float | None = None) -> int:
+    """Days in a row with at least one finished focus, up to today (or yesterday, if today has none yet)."""
+    days, now = growth_days(ts), now if now is not None else time.time()
+    d = now if time.strftime("%Y-%m-%d", time.localtime(now)) in days else now - 86400
+    n = 0
+    while time.strftime("%Y-%m-%d", time.localtime(d)) in days:
+        n += 1
+        d -= 86400
+    return n
+
+
+def car_view(battery, rng, km, state, limit, minutes, power, locked, climate, inside, driving) -> dict:
+    """The car, as Pulse shows it: no VIN, no position, ever."""
+    state = {"charging": "Charging", "complete": "Complete", "stopped": "Stopped", "disconnected": "Disconnected",
+             "nopower": "Stopped", "starting": "Charging"}.get(str(state or "").lower(), "Disconnected")
+    f = lambda x: round(float(x), 1) if isinstance(x, (int, float)) else None   # noqa: E731
+    return {"battery": f(battery), "range": f(rng), "unit": "km" if km else "mi", "state": state, "limit": f(limit),
+            "minutes": f(minutes), "power": f(power), "locked": locked if isinstance(locked, bool) else None,
+            "climate": climate if isinstance(climate, bool) else None, "inside": f(inside), "driving": bool(driving)}
+
+
+def distance_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
+    import math
+    p1, p2, dl = math.radians(lat1), math.radians(lat2), math.radians(lon2 - lon1)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    dist = 6371 * 2 * math.asin(min(1.0, math.sqrt(a)))
+    brg = (math.degrees(math.atan2(math.sin(dl) * math.cos(p2), math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl))) + 360) % 360
+    return dist, brg
+
+
+def planes_over(lat: float, lon: float, raw: list) -> list:
+    """Planes in the air above your horizon, nearest the zenith first: where in your sky, how high, which flight."""
+    out = []
+    for a in raw:
+        try:
+            if a.get("ground") or a.get("lat") is None or a.get("lon") is None:
+                continue
+            ft = float(a.get("alt") or 0)
+            if ft < 300:
+                continue
+            az, el = look_angles(lat, lon, float(a["lat"]), float(a["lon"]), ft * 0.0003048)
+            if el < 3:
+                continue
+            out.append({"id": str(a.get("hex") or "")[:8], "flight": re.sub(r"[^A-Z0-9-]", "", str(a.get("flight") or "").upper())[:8],
+                        "type": re.sub(r"[^A-Z0-9]", "", str(a.get("type") or "").upper())[:5], "az": round(az, 1), "el": round(el, 1),
+                        "ft": int(round(ft, -2)), "kt": int(float(a.get("gs") or 0)), "track": float(a.get("track") or 0)})
+        except (TypeError, ValueError):
+            continue
+    return sorted(out, key=lambda p: -p["el"])[:8]
+
+
+def _ics_time(value: str, params: str):
+    import datetime as dt
+    v = value.strip()
+    if re.match(r"^\d{8}$", v) or "VALUE=DATE" in params.upper() and "T" not in v:
+        return None   # an all-day event: no train
+    m = re.match(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$", v)
+    if not m:
+        return None
+    y, mo, d, h, mi, se, z = m.groups()
+    t = dt.datetime(int(y), int(mo), int(d), int(h), int(mi), int(se))
+    if z:
+        return t.replace(tzinfo=dt.timezone.utc).timestamp()
+    tz = re.search(r"TZID=([^;:]+)", params)
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+            return t.replace(tzinfo=ZoneInfo(tz.group(1).strip('"'))).timestamp()
+        except Exception:   # noqa: BLE001 - an unknown zone (Windows names): local time
+            pass
+    return time.mktime(t.timetuple())
+
+
+def ics_events(text: str, since: float, until: float) -> list:
+    """Timed events of an iCalendar file between two times, with the common repeats (daily, weekly by day)."""
+    import datetime as dt
+    text = re.sub(r"\r?\n[ \t]", "", text)
+    out = []
+    for block in re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", text, re.S):
+        props = {}
+        for line in block.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                name, _, params = k.partition(";")
+                props.setdefault(name.upper(), (params, v))
+        if props.get("STATUS", ("", ""))[1].strip().upper() == "CANCELLED" or "DTSTART" not in props:
+            continue
+        start = _ics_time(props["DTSTART"][1], props["DTSTART"][0])
+        if start is None:
+            continue
+        end = _ics_time(*reversed(props["DTEND"])) if "DTEND" in props else None
+        end = end if end and end > start else start + 1800
+        title = re.sub(r"\\([,;\\])", r"\1", props.get("SUMMARY", ("", "event"))[1]).replace("\\n", " ").strip()[:60] or "event"
+        starts = [start]
+        rr = dict(x.split("=", 1) for x in props.get("RRULE", ("", ""))[1].strip().split(";") if "=" in x)
+        if rr.get("FREQ") in ("DAILY", "WEEKLY"):
+            step = int(rr.get("INTERVAL", 1) or 1)
+            count = int(rr["COUNT"]) if rr.get("COUNT", "").isdigit() else 10000
+            stop = _ics_time(rr["UNTIL"], "") if rr.get("UNTIL") and "T" in rr["UNTIL"] else (
+                time.mktime(dt.datetime.strptime(rr["UNTIL"][:8], "%Y%m%d").timetuple()) + 86399 if rr.get("UNTIL") else None)
+            days = [("MO", "TU", "WE", "TH", "FR", "SA", "SU").index(d[-2:]) for d in rr.get("BYDAY", "").split(",") if d[-2:] in ("MO", "TU", "WE", "TH", "FR", "SA", "SU")]
+            base, starts, n = dt.datetime.fromtimestamp(start), [], 0
+            k = 0
+            while n < count and k < 3000:
+                day = base + dt.timedelta(days=k)
+                k += 1
+                weeks = (day.date() - base.date()).days // 7
+                if rr["FREQ"] == "DAILY" and (k - 1) % step:
+                    continue
+                if rr["FREQ"] == "WEEKLY" and (weeks % step or (day.weekday() not in (days or [base.weekday()]))):
+                    continue
+                ts = time.mktime(day.timetuple())
+                if stop and ts > stop:
+                    break
+                n += 1
+                if ts > until:
+                    break
+                starts.append(ts)
+        excl = {_ics_time(x, props["EXDATE"][0]) for x in props.get("EXDATE", ("", ""))[1].split(",")} if "EXDATE" in props else set()
+        for st in starts:
+            if st in excl:
+                continue
+            if st + (end - start) >= since and st <= until:
+                out.append({"title": title, "start": st, "end": st + (end - start)})
+    return out
+
+
+def command_events(out: str) -> list:
+    """A command's events: a JSON list of {title, start, end?}, times as epoch seconds or ISO 8601."""
+    import datetime as dt
+    try:
+        rows = json.loads(out)
+    except ValueError:
+        return []
+    evs = []
+    for r in rows if isinstance(rows, list) else []:
+        try:
+            def t(v):
+                return float(v) if isinstance(v, (int, float)) else dt.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+            st = t(r["start"])
+            evs.append({"title": str(r.get("title") or "event")[:60], "start": st, "end": t(r["end"]) if r.get("end") else st + 1800})
+        except (KeyError, ValueError, TypeError):
+            continue
+    return evs
+
+
+def chime_wav(path: Path) -> Path:
+    """A two-note doorbell (ding-dong), made once as a small wav file."""
+    import math
+    import struct
+    import wave
+    if path.exists():
+        return path
+    sr, frames = 22050, []
+    for f, dur, start in ((659.25, 1.1, 0.0), (523.25, 1.6, 0.45)):
+        for i in range(int((start + dur) * sr)):
+            t = i / sr - start
+            v = 0.0 if t < 0 else math.exp(-t * 3.2) * (math.sin(2 * math.pi * f * t) + 0.35 * math.sin(4 * math.pi * f * t))
+            if i < len(frames):
+                frames[i] += v
+            else:
+                frames.append(v)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(b"".join(struct.pack("<h", int(max(-1, min(1, x * 0.45)) * 32767)) for x in frames))
+    return path
+
+
+def play_chime() -> None:
+    player = next((p for p in ("pw-play", "paplay", "aplay") if shutil.which(p)), None)
+    if not player:
+        return
+    try:
+        subprocess.run([player, str(chime_wav(STATE_DIR / "chime.wav"))], timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def day_totals(events: list, now: float | None = None) -> tuple:
+    """How many events today, and how many seconds they take (overlapping time counted once)."""
+    now = now if now is not None else time.time()
+    lt = time.localtime(now)
+    d0 = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    today = sorted((max(e["start"], d0), min(e["end"], d0 + 86400)) for e in events if e["start"] < d0 + 86400 and e["end"] > d0)
+    if not today:
+        return 0, 0.0
+    total, cur = 0.0, None
+    for a, b in today:
+        if cur and a <= cur[1]:
+            cur[1] = max(cur[1], b)
+        else:
+            if cur:
+                total += cur[1] - cur[0]
+            cur = [a, b]
+    total += cur[1] - cur[0]
+    return len(today), total
+
+
+def day_summary(events: list, now: float | None = None) -> str:
+    """today: 4 meetings · 3 h 20 min (the events of today, overlapping time counted once)."""
+    n, total = day_totals(events, now)
+    if not n:
+        return ""
+    h, m = divmod(int(round(total / 60)), 60)
+    return f"today: {n} meeting{'s' * (n != 1)} · " + (f"{h} h {m} min" if h else f"{m} min")
+
+
+def make_timelapse(day: str, conf: dict, keep: bool = False) -> Path | None:
+    """The pictures of one day as a video (ffmpeg); the pictures are deleted after, unless keep."""
+    root = STATE_DIR / "timelapse" / day
+    if not root.is_dir() or not shutil.which("ffmpeg"):
+        return None
+    mons = sorted((d for d in root.iterdir() if d.is_dir()), key=lambda d: -len(list(d.glob("*.jpg"))))
+    if not mons or len(list(mons[0].glob("*.jpg"))) < 5:
+        return None
+    out_dir = Path(str(conf.get("dir") or (HOME / "Videos" / "omarchy-pulse"))).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"pulse-{day}.mp4"
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(int(conf.get("fps", 30) or 30)), "-pattern_type", "glob",
+                        "-i", str(mons[0] / "*.jpg"), "-vf", "scale=1280:-2:flags=lanczos", "-c:v", "libx264", "-preset", "veryfast",
+                        "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], capture_output=True, timeout=600)
+    if r.returncode != 0:
+        log("timelapse: " + r.stderr.decode(errors="replace")[-200:])
+        return None
+    if not keep:
+        shutil.rmtree(root, ignore_errors=True)
+    return out
 
 
 def parse_launch(r: dict) -> dict | None:
@@ -2603,7 +3464,7 @@ def make_handler(hub: Hub, tok: str, port: int):
             elif u.path == "/api/fx":
                 kind = re.sub(r"[^a-z]", "", q.get("kind", "fireworks"))[:20] or "fireworks"
                 text = q.get("text") or body.decode("utf-8", "replace").strip()
-                hub.add_fx(kind, text)
+                hub.add_fx(kind, text, **{k: float(q[k]) for k in ("mag", "az", "near", "tsunami") if re.match(r"^-?\d+(\.\d+)?$", q.get(k, ""))})
                 if kind == "fireworks":
                     hub.crew_send({"ev": "fx", "text": text[:40]})
                 self._send(200, b'{"ok":true}')
@@ -2616,6 +3477,13 @@ def make_handler(hub: Hub, tok: str, port: int):
                 hub.set_focus(mins, q.get("label", ""))
                 self._send(200, json.dumps({"focus": hub.focus}).encode())
             elif u.path == "/api/perf":
+                if q.get("probe"):
+                    secs = max(5.0, min(60.0, float(re.sub(r"[^0-9.]", "", q["probe"]) or 16)))
+                    with hub.lock:
+                        hub.perf.pop("_probe", None)
+                        hub.perf_probe = time.time() + secs
+                    self._send(200, b'{"ok":true}')
+                    return
                 try:
                     hub.set_perf(json.loads(body or b"{}"))
                 except ValueError:
@@ -2641,6 +3509,25 @@ def make_handler(hub: Hub, tok: str, port: int):
             elif u.path == "/api/say":
                 hub.say(q.get("text") or body.decode("utf-8", "replace").strip(), force=True)
                 self._send(200, b'{"ok":true}')
+            elif u.path == "/api/timelapse":
+                raw = body.split(b",", 1)[1] if body.startswith(b"data:") else body
+                try:
+                    ok = hub.timelapse_frame(q.get("mon", "0,0"), base64.b64decode(raw))
+                except (ValueError, OSError):
+                    ok = False
+                self._send(200, json.dumps({"ok": ok}).encode())
+            elif u.path == "/api/doorbell":
+                hub.doorbell()
+                self._send(200, b'{"ok":true}')
+            elif u.path == "/api/car":
+                do = re.sub(r"[^a-z_]", "", q.get("do", ""))[:20]
+                ok = hub.car_allowed(do)
+                if ok:   # a car can take half a minute to answer: the command runs on its own
+                    threading.Thread(target=hub.car_run, args=(do,), daemon=True).start()
+                self._send(200, json.dumps({"ok": ok}).encode())
+            elif u.path.startswith("/api/click/") and q.get("item", "").isdigit():
+                ok = hub.click(urllib.parse.unquote(u.path[len("/api/click/"):]), int(q["item"]))
+                self._send(200 if ok else 404, json.dumps({"ok": ok}).encode())
             elif u.path.startswith("/api/click/"):
                 ok = hub.click(urllib.parse.unquote(u.path[11:]))
                 self._send(200 if ok else 404, b'{"ok":true}' if ok else b"{}")
@@ -2658,8 +3545,34 @@ def serve(hub: Hub, port: int) -> ThreadingHTTPServer:
 
 # ---------------------------------------------------------------- the wallpaper window (GTK3 + layer shell + WebKit)
 
+def dmabuf_guard(want_on: bool, state: Path) -> bool:
+    """With the DMA-BUF renderer on, Pulse can die at once on some drivers (Wayland "Error 71"). Two starts in a row
+    that do not live 30 seconds turn it off for good, until ~/.local/state/omarchy-pulse/dmabuf-crash is deleted."""
+    guard, trial = state / "dmabuf-crash", state / "dmabuf-trial"
+    if not want_on:
+        return False
+    if guard.exists():
+        log("DMA-BUF renderer off: it made Pulse crash on start before (delete " + str(guard) + " to try it again)")
+        return False
+    try:
+        n = int(trial.read_text().strip() or 0)
+    except (OSError, ValueError):
+        n = 0
+    state.mkdir(parents=True, exist_ok=True)
+    if n >= 2:
+        guard.write_text(time.strftime("%Y-%m-%d %H:%M") + " WebKit's DMA-BUF renderer crashed Pulse twice on start\n")
+        trial.unlink(missing_ok=True)
+        log("DMA-BUF renderer off: Pulse crashed twice right after starting with it (dmabuf = \"on\" is ignored until "
+            + str(guard) + " is deleted)")
+        return False
+    trial.write_text(str(n + 1))   # cleared after 30 seconds alive, or on a normal exit
+    return True
+
+
 def run_wall(url: str, gpu: str = "auto", dmabuf: str = "auto") -> int:
-    if dmabuf_disabled(dmabuf, nvidia()):   # set before WebKit starts: its web processes inherit it
+    use = dmabuf_guard(not dmabuf_disabled(dmabuf, nvidia()), STATE_DIR)
+    trial = STATE_DIR / "dmabuf-trial"
+    if not use:   # set before WebKit starts: its web processes inherit it
         os.environ["WEBKIT_DISABLE_DMABUF_RENDERER"] = "1"
     else:
         os.environ.pop("WEBKIT_DISABLE_DMABUF_RENDERER", None)
@@ -2725,8 +3638,11 @@ def run_wall(url: str, gpu: str = "auto", dmabuf: str = "auto") -> int:
         win.show_all()
         wins.append(win)
 
+    GLib.timeout_add_seconds(30, lambda: (trial.unlink(missing_ok=True), False)[1])   # alive: DMA-BUF is fine here
+
     def monitors_changed(*a):
         log("monitors changed: restarting")
+        trial.unlink(missing_ok=True)
         Gtk.main_quit()
     disp.connect("monitor-added", monitors_changed)
     disp.connect("monitor-removed", monitors_changed)
@@ -2743,7 +3659,7 @@ def from_demo(hub: Hub) -> None:
     rnd = random.Random(7)
     demo_dir = Path(os.environ.get("PULSE_DEMO_DIR", HERE / "demo"))
     hub.theme = read_theme() if theme_name() else {"name": "pulse", "colors": {}}
-    hub.weather = {"city": "Berlin", "temp": 6.4, "feels": 3.9, "code": 61, "wind": 14, "hum": 82, "day": 0, "rain": 0.4,
+    hub.weather = {"city": "Berlin", "temp": 6.4, "feels": 3.9, "code": 61, "wind": 34, "windDir": 250, "gust": 52, "hum": 82, "day": 0, "rain": 0.4,
                    "hi": 9.1, "lo": 3.2, "sunrise": "07:12", "sunset": "16:31", "unit": "°C", "windUnit": "km/h",
                    "hours": [{"h": f"{(21 + i) % 24:02d}", "t": round(6 - i * 0.2 + math.sin(i / 3), 1),
                               "p": int(max(0, 70 - abs(i - 4) * 9)), "c": 61 if 1 < i < 8 else (3 if i < 14 else 0)}
@@ -2833,6 +3749,21 @@ def from_demo(hub: Hub) -> None:
                {"name": "homelab", "week": 12, "last": time.time() - 86400, "dirty": 2, "ci": "ok", "branch": "main"},
                {"name": "dotfiles", "week": 6, "last": time.time() - 2 * 86400, "dirty": 3, "ci": "", "branch": "main"},
                {"name": "website", "week": 3, "last": time.time() - 3 * 86400, "dirty": 0, "ci": "fail", "branch": "main"}]
+    now0 = time.time()
+    t_train = float(os.environ.get("PULSE_DEMO_TRAIN_AT") or now0 + float(os.environ.get("PULSE_DEMO_TRAIN", "2400")))
+    hub.calendar = [{"title": "standup", "start": t_train, "end": t_train + 900},
+                    {"title": "design review", "start": t_train + 4200, "end": t_train + 6000}]
+    hub.home_lights = ["light.living", "light.kitchen", "light.desk"]
+    hub.set_widget("home", title="home", type="status", slot="right", order=35, itemclick=True,
+                   data={"items": [{"title": "living room", "level": "ok", "note": "on"}, {"title": "kitchen", "level": "", "note": "off"},
+                                   {"title": "desk", "level": "ok", "note": "on"}]})
+    hub.car = {**car_view(float(os.environ.get("PULSE_DEMO_CAR", "64")), 312, True, "Charging", 80, 95, 11, True, False, 19, False),
+               "name": "car", "t": time.time() + 86400 * 365}
+    hub.car_widget({})
+    if not os.environ.get("PULSE_DEMO_KEEP_CITY"):   # a city built over nine days of focus
+        bs = [{"t": int(now0 - (8 - i // 3) * 86400 - (i % 3) * 3600), "m": (25, 50, 25, 90)[i % 4], "label": "demo"} for i in range(26)]
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / "city.json").write_text(json.dumps({"buildings": bs, "best": 9}))
     hub.space = {"iss": None, "kp": 2.3}
     hub.heart = {"bpm": 68, "t": time.time()}
     t_launch = float(os.environ.get("PULSE_DEMO_LAUNCH_AT") or time.time() + float(os.environ.get("PULSE_DEMO_LAUNCH", "5400")))
@@ -2850,9 +3781,16 @@ def from_demo(hub: Hub) -> None:
     def demo_flags():   # the demo video: an ISS pass, a friend's agent, while their flag files exist
         sp_flag, crew_flag = os.environ.get("PULSE_DEMO_SPACE", ""), os.environ.get("PULSE_DEMO_CREW", "")
         t_sp, crew_state = None, ""
+        tr_flag, cal = os.environ.get("PULSE_DEMO_TRAINS", ""), list(hub.calendar)
         while True:
             now = time.time()
+            if tr_flag:   # the demo video: the standup comes in while its flag file exists
+                hub.calendar = cal if os.path.exists(tr_flag) else cal[1:]
             hub.heart = {"bpm": int(66 + 4 * math.sin(now / 9)), "t": now}
+            hub.check_focus()
+            hub.sky = {"t": now, "planes": [   # two planes crossing the sky, slowly
+                {"id": "demo1", "flight": "DMO214", "type": "A321", "from": "MUC", "to": "BER", "fromCity": "Munich", "toCity": "Berlin", "airline": "Demo Air", "az": round(180 + 75 * math.sin(now / 40), 1), "el": 56.0, "ft": 34000, "kt": 460, "track": 90},
+                {"id": "demo2", "flight": "DMO88", "type": "A320", "from": "BER", "to": "FCO", "fromCity": "Berlin", "toCity": "Rome", "airline": "Demo Air", "az": round(175 - 70 * math.sin(now / 55 + 1), 1), "el": 68.0, "ft": 21000, "kt": 380, "track": 270}]}
             if sp_flag:
                 if os.path.exists(sp_flag):
                     if t_sp is None:
@@ -3041,21 +3979,88 @@ def main(argv: list[str]) -> int:
             return 1
         return 0
     if cmd == "perf":
+        probe = "--probe" in argv
         try:
+            if probe:
+                client("POST", "/api/perf?probe=16")
+                print("Measuring for 16 seconds with no frame limit. Switch to an EMPTY workspace now (no window over the\n"
+                      "wallpaper, on every monitor): Hyprland slows down what is covered, which would hide the real numbers.")
+                for i in range(17, 0, -1):
+                    print(f"\r  {i:2d} s ", end="", flush=True)
+                    time.sleep(1)
+                print("\r       ")
             r = client("GET", "/api/perf")
         except Exception as e:   # noqa: BLE001
             print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
             return 1
+        if probe:
+            got = (r.get("perf") or {}).get("_probe") or {}
+            print(f"NVIDIA: {'yes' if r.get('nvidia') else 'no'} · WebKit DMA-BUF renderer: {'on' if r.get('dmabuf') else 'off'} · uncapped (asked 60)")
+            if not got:
+                print("no report: the wallpaper was covered or full screen the whole time; try again on an empty workspace")
+            for p in got.values():
+                print(f"  {p.get('name') or '?':10} {p['w']}x{p['h']} {p['scene']:8} {p['fps']:5.1f} fps  draw {p['draw']:.1f} ms  "
+                      f"frame gap {p['gap']:.0f} ms (max {p['maxGap']:.0f})" + (f"  ({p['windows']} windows over it!)" if p.get("windows") else ""))
+            return 0
+        r["perf"] = {k: v for k, v in (r.get("perf") or {}).items() if k != "_probe"}
         print(f"NVIDIA: {'yes' if r.get('nvidia') else 'no'} · WebKit DMA-BUF renderer: {'on' if r.get('dmabuf') else 'off'}")
         if not r.get("perf"):
             print("no report yet: the pages report every 5 s while they draw (not while covered or full screen)")
         for p in r.get("perf", {}).values():
             print(f"  {p.get('name') or '?':10} {p['w']}x{p['h']} {p['scene']:8} {p['fps']:5.1f} fps (asked {p['want']:.0f}, "
                   f"cap {p['cap']:.0f})  draw {p['draw']:.1f} ms  frame gap {p['gap']:.0f} ms (max {p['maxGap']:.0f})"
-                  + ("  <- slow to present" if p["bound"] else ""))
+                  + ("  <- slow to present" if p["bound"] else "") + (f"  · {p['windows']} windows" if p.get("windows") else ""))
+        if any(p["cap"] < p["want"] or p["cap"] < 60 for p in r.get("perf", {}).values()):
+            print("note: a lowered cap makes the gap look like the cap itself; `omarchy-pulse perf --probe` measures without it")
             if p["bound"]:
                 print("     " + perf_hint(p, load_config().get("pulse", {}).get("dmabuf", "auto")).split(": ", 1)[1])
         return 0
+    if cmd == "city":
+        hub = Hub()
+        g = hub.growth_state()
+        print(f"Your city: {g['n']} buildings · streak {g['streak']} days · best {g['best']} · today {g['today']}"
+              f" · {g['monuments']} monuments")
+        print("every focus of 10 minutes or more you finish builds one: omarchy-pulse focus 25 \"write the guide\"")
+        return 0
+    if cmd == "car":
+        acts = {"charge": "start_charging", "stop": "stop_charging", "lock": "lock", "unlock": "unlock",
+                "climate": "start_climate", "climate-on": "start_climate", "climate-off": "stop_climate", "flash": "flash"}
+        a = " ".join(argv[2:3] + (["off"] if argv[2:4] == ["climate", "off"] else []))
+        a = "climate-off" if a == "climate off" else a
+        try:
+            if a:
+                if a not in acts:
+                    print("usage: omarchy-pulse car [charge | stop | lock | unlock | climate on | climate off | flash]")
+                    return 2
+                r = client("POST", "/api/car?do=" + acts[a])
+                print("sent to the car" if r.get("ok") else "not allowed: is [car] enabled? (unlock also needs allow_unlock = true)")
+                return 0 if r.get("ok") else 1
+            v = client("GET", "/api/state").get("car")
+        except Exception as e:   # noqa: BLE001
+            print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
+            return 1
+        if not v:
+            print("no car (set [car] in pulse.toml: Tessie or Home Assistant)")
+            return 1
+        print(f"car: {v['battery']:.0f}%" + (f" · {v['range']:.0f} {v['unit']}" if v.get("range") is not None else "")
+              + f" · {v['state'].lower()}" + (f" · {v['power']:.0f} kW" if v.get("state") == "Charging" and v.get("power") else "")
+              + (f" · limit {v['limit']:.0f}%" if v.get("limit") else ""))
+        return 0
+    if cmd == "doorbell":
+        return quiet_client("/api/doorbell")
+    if cmd == "calendar":
+        r = client("GET", "/api/state")
+        evs = r.get("calendar") or []
+        if not evs:
+            print("nothing in the next hours (or no [calendar] in pulse.toml)")
+        for e in evs:
+            print(time.strftime("%H:%M", time.localtime(e["start"])), "-", time.strftime("%H:%M", time.localtime(e["end"])), e["title"] or "(private)")
+        return 0
+    if cmd == "timelapse":
+        day = argv[2] if len(argv) > 2 and argv[2] != "today" else time.strftime("%Y-%m-%d")
+        out = make_timelapse(day, load_config().get("timelapse") or {}, keep=day == time.strftime("%Y-%m-%d"))
+        print(out if out else f"no pictures for {day} yet (the wallpaper takes one every few minutes while you see it), or no ffmpeg")
+        return 0 if out else 1
     if cmd == "listen":
         a = argv[2] if len(argv) > 2 else "5"
         if a == "--file" and len(argv) > 3:
@@ -3139,6 +4144,8 @@ def main(argv: list[str]) -> int:
         else:
             print(f"  ok   {CONF} ({len(cfg.get('source', []))} sources)")
         print(f"  theme: {theme_name() or '?'}")
+        if (STATE_DIR / "dmabuf-crash").exists():
+            print(f"  DMA-BUF renderer: turned off after crashes on start (delete {STATE_DIR / 'dmabuf-crash'} to try again)")
         if nvidia():
             off = dmabuf_disabled((cfg.get("pulse") or {}).get("dmabuf", "auto"), True)
             print(f"  NVIDIA: WebKit DMA-BUF renderer {'off (safe; frames are copied through the CPU)' if off else 'on'}"

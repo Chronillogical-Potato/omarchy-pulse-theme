@@ -32,6 +32,16 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [25. Your heartbeat](#25-your-heartbeat) ·
   [26. The crew](#26-the-crew) ·
   [27. Hey sphere](#27-hey-sphere)
+- New in 1.3:
+  [28. The city that grows with you](#28-the-city-that-grows-with-you) ·
+  [29. The planes over you](#29-the-planes-over-you) ·
+  [30. Your day as a video](#30-your-day-as-a-video) ·
+  [31. Your calendar is a station](#31-your-calendar-is-a-station) ·
+  [32. Your home](#32-your-home) ·
+  [33. Earthquakes and tsunamis](#33-earthquakes-and-tsunamis)
+  [34. The wind](#34-the-wind)
+  [35. Your electric car](#35-your-electric-car)
+- [36. Every command](#36-every-command)
 
 ---
 
@@ -439,6 +449,9 @@ In `[builtin]` (`false` hides one):
 - Sources run as you, with your permissions: only put commands you trust in `pulse.toml`.
 - In privacy mode the drones, the names and addresses of the cars and the private lines of "while you were away"
   are hidden, and the voice is silent. MAC addresses never leave the hub; the pointer position never leaves the PC.
+- 1.3: the timelapse pictures are the scene alone, drawn without names (no repositories, devices, flights or events)
+  and without an "auto" city; none are taken while you share the screen. The door camera never shows while you share
+  the screen. Your Home Assistant token stays in `pulse.toml`; calendar titles are hidden in privacy mode.
 - 1.2: in privacy mode the names of your repositories, your heart rate and an "auto" city skyline are hidden too. Your
   heart rate is never written to the log or sent anywhere. A "hey sphere" recording is deleted as soon as it is
   understood and never leaves the PC (only the text of a question goes to `ask`, if you set it). The crew sends only
@@ -476,7 +489,12 @@ In `[builtin]` (`false` hides one):
   dmabuf = "on"        # "auto" (default: off on NVIDIA) | "on" | "off"
   ```
 
-  then `systemctl --user restart omarchy-pulse`. If the wallpaper turns black or empty, go back to `"auto"`.
+  then `systemctl --user restart omarchy-pulse`. If the wallpaper turns black or empty, go back to `"auto"`. If Pulse
+  crashes right after starting with it (a Wayland "Error 71" in the log), it turns DMA-BUF off by itself after two such
+  starts and says so in the log; delete `~/.local/state/omarchy-pulse/dmabuf-crash` to try it again.
+- **Measure without limits**: when Pulse has lowered a monitor's frames, `perf` ends up measuring that limit (2 fps
+  looks like 500 ms). `omarchy-pulse perf --probe` lifts every limit for 16 seconds: switch to an empty workspace
+  while it counts down (Hyprland slows down a covered wallpaper), and it prints the real numbers.
 
 ## 13. Troubleshooting
 
@@ -485,6 +503,15 @@ In `[builtin]` (`false` hides one):
 | Still a still wallpaper | `systemctl --user status omarchy-pulse`, `journalctl --user -u omarchy-pulse -e`, `omarchy-pulse doctor`. Is the theme **pulse** (or `--always` set)? Run `extras/install-live` from a terminal on the PC, not SSH. |
 | `missing dependencies` in the log | `extras/install-live` again (it installs them). |
 | Black or empty on NVIDIA | keep `dmabuf = "auto"` (Pulse turns WebKit's DMA-BUF renderer off on NVIDIA); also try `gpu = "never"`. |
+| An old notification stays on the wallpaper | only the last `notifications_hours` (3) are shown; `notifications = false` in `[builtin]` hides the panel. |
+| The weather icon on the sphere is wrong | from 1.3 it follows the real weather (sun or moon, clouds, rain, snow, storm, fog); check `city`. |
+| No buildings in my district | a focus must last 10 minutes or more (`min_minutes`) and run to the end: `omarchy-pulse focus 25`. |
+| No planes | the weather's `city` gives the place; planes show only above your horizon; `source = "opensky"` if adsb.lol is down. |
+| No timelapse at midnight | `ffmpeg` must be installed; the pictures are taken only while you see the wallpaper; `omarchy-pulse timelapse today`. |
+| No trains | `[calendar] ics = [...]` (the secret iCal address) or `command`; only timed events in the next `hours`, no all-day ones. |
+| The doorbell does nothing | `[home] url`, `token`, `doorbell` (a binary sensor or an event entity); `journalctl --user -u omarchy-pulse` shows HA errors. |
+| The car does not appear | `[car] enabled = true` and the Tessie `token` (or the Home Assistant entities); the log says `car: ...`. A car being driven is hidden. |
+| No tsunami wave | it only comes when USGS marks an earthquake with a tsunami message; try `curl -X POST -H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" "localhost:47800/api/fx?kind=quake&mag=7&tsunami=1"`. |
 | Choppy, or a `WebKitWebProcess` at 100% (NVIDIA, 4K, two monitors) | `omarchy-pulse perf`; if frames take much longer to reach the screen than to draw, try `dmabuf = "on"` (section 12). |
 | A panel does not appear | read the amber line at its bottom; run the command yourself in a terminal; `omarchy-pulse reload`. |
 | A panel is missing from a full column | it does not fit: lower its `order`, move it to another `slot`, or turn something off. |
@@ -526,6 +553,9 @@ browser; `omarchy-pulse serve --demo` does the same with demo data (no personal 
 ~/.local/state/omarchy-pulse/lan.json      the devices already seen on each network (1.1)
 ~/.local/state/omarchy-pulse/voice.wav     the last line spoken (1.1)
 ~/.local/state/omarchy-pulse/listen.wav    a "hey sphere" recording, deleted as soon as it is understood (1.2)
+~/.local/state/omarchy-pulse/city.json     the buildings of your district: when, how long (1.3)
+~/.local/state/omarchy-pulse/timelapse/    today's pictures of the scene, made into a video at midnight (1.3)
+~/Videos/omarchy-pulse/pulse-DATE.mp4      your days as videos (1.3)
 ```
 
 MIT, © 2026 Marco Porro ([x.com/MarcoPorro](https://x.com/MarcoPorro)). Weather by [Open-Meteo](https://open-meteo.com).
@@ -715,6 +745,7 @@ Off by default.
 enabled = true
 events = ["alerts", "agents", "digest", "focus"]
 quiet = "23:00-08:00"        # never at night ("" = any time)
+language = "it"              # en (default), it, es, fr, de
 # model = "~/.local/share/piper/it_IT-paola-medium.onnx"
 # command = "spd-say -e"     # or any command that reads the text on stdin
 ```
@@ -728,6 +759,13 @@ the demo video), `en_GB-alan-medium`, `it_IT-paola-medium` and many more. espeak
 
 It never speaks while you share or record the screen, while you are away (the digest waits for you), in focus mode,
 or in the quiet hours. Private panels are never read aloud. Try it: `omarchy-pulse say "hello from Pulse"`.
+
+**Your language** (1.3). With `language = "it"` (or `es`, `fr`, `de`) everything Pulse says by itself is in your
+language: "C'è qualcuno alla porta", "standup tra 5 minuti", "Terremoto di magnitudo 6.8...", "L'auto è carica: 80
+per cento", "Bentornato. Mentre eri via...". Names, meeting titles and places stay as they are. Pulse picks a piper
+voice of that language by itself if you have one in `~/.local/share/piper/` (`it_IT-paola-medium` for Italian,
+`es_ES-davefx-medium`, `fr_FR-siwis-medium`, `de_DE-thorsten-medium`), or espeak-ng in that language. "Hey sphere"
+answers in Italian or English, the language you ask in; with `language = "it"` Italian is the default.
 
 ## 22. Your real city
 
@@ -889,3 +927,248 @@ model such as `ggml-base.bin` in `~/.local/share/whisper/`) or [faster-whisper](
 `~/.local/state/omarchy-pulse/listen.wav` and is deleted as soon as it is understood; Pulse never listens on its
 own. The answer uses the voice of section 21 (it speaks even with `[voice]` off, since you asked). Try it without a
 microphone: `omarchy-pulse listen --file question.wav`.
+
+## 28. The city that grows with you
+
+Every focus you finish builds a building in your own district, in front of the city (`omarchy-pulse focus 25 "write
+the guide"`): the longer the focus, the taller the building. The newest rises from the ground with a glow. While
+your streak lives (a finished focus today or yesterday) the windows are lit; miss a day and the district goes dark
+until your next focus. Every 7 days in a row a monument with a beacon rises beside it, with fireworks.
+
+```
+omarchy-pulse city      # Your city: 34 buildings · streak 5 days · best 12 · today 2 · 1 monuments
+```
+```toml
+[city]
+enabled = true
+min_minutes = 10        # shorter focus sessions build nothing; a focus you stop before the end neither
+```
+
+Ask the sphere too: "hey sphere, how is my city?". The buildings are kept in `~/.local/state/omarchy-pulse/city.json`
+(delete it to start again).
+
+## 29. The planes over you
+
+The real planes over your city cross your sky where they really are, with their red and green lights and the
+white strobe and a contrail. Next to each one: the flight, the aircraft (A321, B738...) and the height, and below
+where it comes from and where it goes (`FCO → LHR  Rome → London`, from [adsbdb](https://www.adsbdb.com), kept for a
+day; only the flight code is sent, never your position). Pulse looks every 15 seconds within 25 nautical miles of the weather's
+city, from [adsb.lol](https://adsb.lol) (free, open data) or OpenSky, or from your own ADS-B receiver.
+
+```toml
+[sky]
+enabled = true
+source = "adsb.lol"     # "opensky" (asked every 4 minutes: its free limit), or "http://localhost:8080/data/aircraft.json"
+radius = 25
+routes = true           # where each flight comes from and goes (adsbdb.com); false to never ask
+```
+
+Like the ISS, the wallpaper looks south: east on the left, west on the right; the higher a plane, the higher it flies
+on the screen: straight above you is the top of the screen.
+
+## 30. Your day as a video
+
+Every few minutes, while you see the wallpaper, Pulse keeps a picture of the scene; at midnight it makes them into a
+short video of your day (about 30 seconds) in `~/Videos/omarchy-pulse/`, and tells you with a notification. It is
+made to share: only the scene, no panels, no names (repositories, devices, flights, events), the generic city
+when yours comes from the weather, and no pictures while you share the screen.
+
+```
+omarchy-pulse timelapse today          # the video of today so far
+omarchy-pulse timelapse 2026-11-07     # a day still on disk
+```
+```toml
+[timelapse]
+enabled = true
+every = 90              # seconds between pictures (90: about 30 seconds of video for a day)
+# dir = "~/Videos/omarchy-pulse"
+```
+
+It needs `ffmpeg` (`sudo pacman -S ffmpeg`). The pictures of a day are deleted once its video is made.
+
+## 31. Your calendar is a station
+
+An elevated line runs across the city with a station on the left: each event of the next hours is a train of light
+coming in, with its title and when. Five minutes before, the train blinks amber, its name is written in the sky and
+the voice tells you ("standup in 5 minutes"); while the event runs, the train waits green at the station.
+
+```toml
+[calendar]
+ics = ["https://calendar.google.com/calendar/ical/YOU/private-KEY/basic.ics"]   # or a file, or several
+# command = "my-events"     # or a command printing [{"title": "review", "start": "2026-11-07T15:00:00+01:00"}]
+warn = 5
+hours = 3
+every = 300
+```
+
+Google Calendar: Settings, your calendar, "Secret address in iCal format". Outlook: "Publish a calendar", ICS. Pulse
+reads timed events (not all-day ones) with their daily and weekly repeats and exceptions. The address is secret: it
+stays in your `pulse.toml`. Titles are hidden in privacy mode; ask "hey sphere, next meeting?", or run
+`omarchy-pulse calendar`.
+
+- **In the last minute** before a meeting the sphere counts it down ("MEETING IN 0:42").
+- **While a meeting runs**, privacy mode is on by itself (you may share your screen), off again at the end
+  (`privacy = false` to keep it off).
+- **In the evening** (`summary_at = "18:00"`) a summary of your day, on the wallpaper, as a notification and aloud:
+  "today: 4 meetings · 3 h 20 min" (overlapping meetings counted once). It goes into "while you were away" too.
+
+```toml
+[calendar]
+privacy = true
+summary_at = "18:00"    # "" = never
+```
+
+## 32. Your home
+
+With [Home Assistant](https://www.home-assistant.io):
+
+- **The doorbell**: when it rings, the sphere becomes the door camera for a minute, a "door" panel shows it too, a
+  notification and the voice say "someone is at the door", and the doorbell rings on your speakers too (ding-dong,
+  `chime = false` to keep it quiet). Never while you share the screen.
+- **Your lights**: a "home" panel with your lights; click one to switch it on or off.
+
+```toml
+[home]
+url = "http://homeassistant.local:8123"
+token = "a long-lived access token"   # in Home Assistant: your profile, Security, Long-lived access tokens
+doorbell = "binary_sensor.doorbell"   # a binary sensor, or an event entity (event.doorbell)
+camera = "camera.front_door"
+lights = ["light.living_room", "light.kitchen", "switch.desk_lamp"]
+every = 2
+```
+
+Pulse only switches the lights you list. Try the doorbell without a doorbell: `curl -X POST
+-H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" http://127.0.0.1:47800/api/doorbell`.
+
+## 33. Earthquakes and tsunamis
+
+Real earthquakes ([USGS](https://earthquake.usgs.gov), every 5 minutes): the city shakes, stronger with the
+magnitude and when it is near, and waves run across the floor from the direction where it happened, with its
+magnitude, place and distance. A strong one near you (4 or more, within `near_km`) is an alert (INCOMING).
+
+When a tsunami warning centre has issued a message for an earthquake (the `tsunami` flag of the USGS feed), the sea
+at the foot of the city swells and a long wave crosses it from that side, with TSUNAMI written on it, and the voice
+says so. Any tsunami message is shown; one closer than `tsunami_km` is a red alert. Pulse only shows the message:
+for what to do, always follow your local authorities.
+
+```toml
+[quakes]
+enabled = true
+min_world = 6       # anywhere in the world
+min_near = 3        # near you
+near_km = 500
+tsunami_km = 1500   # a tsunami message closer than this is a red alert
+```
+
+## 34. The wind
+
+The wind of your weather (speed, gusts and direction, from Open-Meteo) blows in the scene: rain and snow slant and
+drift with it, the way it really blows (you look south, so a west wind blows to the left), and from about 25 km/h gust
+lines cross the sky. With strong wind the weather icon on the sphere gets gust lines and shows the wind and the gusts
+(WIND 52 KM/H) in turn with the city. Nothing to set up: it comes with `city`. Try it with `?wind=50` on the page.
+
+## 35. Your electric car
+
+Your car is parked at the foot of the city: a light bar along its side is the battery (the white mark is the charge
+limit), and while it charges a cable from the charger carries light into it. When it starts charging, or finishes,
+the sphere shows the battery and the range for a few seconds; when it is charged the voice tells you. In the evening,
+if the battery is low and the car is not plugged in, a reminder. A panel (slot `panel`) shows the battery and lets you
+start or stop charging, lock it and turn the climate on or off, with one click. Ask "hey sphere, how is my car?",
+or from a terminal:
+
+```bash
+omarchy-pulse car               # car: 64% · 312 km · charging · 11 kW · limit 80%
+omarchy-pulse car charge        # or stop, lock, unlock, climate on, climate off, flash
+```
+
+Two ways to connect it:
+
+- **Tessie** (a Tesla): in the Tessie app, Settings, API Access, make a token. Pulse reads Tessie's last state every
+  minute, so it never wakes the car up and does not drain the battery.
+- **Home Assistant** (any car Home Assistant knows: Tesla Fleet, Teslemetry, and the integrations of other brands):
+  name the entities, with `url` and `token` from `[home]`.
+
+```toml
+[car]
+enabled = true
+source = "tessie"          # or "homeassistant"
+token = "your Tessie API token"   # or token_file = "~/.config/omarchy-pulse/tessie"
+# vin = ""                 # with more cars
+low = 30                   # the evening reminder below this (evening = "21:00")
+allow_unlock = false       # unlocking from the wallpaper stays off unless you turn it on
+
+# source = "homeassistant":
+# battery = "sensor.car_battery"
+# range = "sensor.car_range"
+# charging = "binary_sensor.car_charging"
+# plugged = "binary_sensor.car_charge_cable"
+# lock = "lock.car_doors"
+# climate = "climate.car_climate"
+# charge_switch = "switch.car_charge"
+```
+
+Privacy: Pulse never reads or keeps where the car is, nor its VIN; the car hides while you drive. The car drawn is a
+generic one, of no brand.
+
+## 36. Every command
+
+**From a terminal** (`omarchy-pulse help` prints the same list):
+
+| Command | What it does |
+|---|---|
+| `omarchy-pulse run` | the wallpaper (the systemd unit runs it for you) |
+| `omarchy-pulse serve [--demo]` | only the hub, in a browser; `--demo` with demo data |
+| `omarchy-pulse push NAME VALUE [--title T] [--type T] [--level L] [--slot S]` | anything onto the wallpaper (section 7) |
+| `omarchy-pulse privacy on \| off \| auto \| toggle` | privacy mode (section 11) |
+| `omarchy-pulse agent NAME STATE [TEXT]` | an AI agent as a drone (section 16) |
+| `omarchy-pulse watch NAME -- COMMAND...` | a drone while a command runs |
+| `omarchy-pulse hook claude \| codex` | for the hooks of Claude Code and Codex CLI |
+| `omarchy-pulse fireworks [TEXT]` | fireworks (in the whole crew, too) |
+| `omarchy-pulse focus MINUTES [LABEL]` / `focus off` | focus mode; when it ends, a building in your city (28) |
+| `omarchy-pulse away` / `back` | you left / you are back: the digest (19) |
+| `omarchy-pulse say TEXT` | the voice (21) |
+| `omarchy-pulse listen [SECONDS \| start \| stop \| --file F.wav]` | hey sphere (27) |
+| `omarchy-pulse crew new` / `crew` | the crew code / its status (26) |
+| `omarchy-pulse city` | your city: buildings, streak, monuments (28) |
+| `omarchy-pulse calendar` | the next events, the trains (31) |
+| `omarchy-pulse timelapse [today \| DATE]` | your day as a video (30) |
+| `omarchy-pulse car [charge \| stop \| lock \| unlock \| climate on \| climate off \| flash]` | your car (35) |
+| `omarchy-pulse doorbell` | ring the doorbell, to try it (32) |
+| `omarchy-pulse perf [--probe]` | frame times on every monitor (12) |
+| `omarchy-pulse reload` | read `pulse.toml` again now |
+| `omarchy-pulse doctor` | check dependencies, config and sources |
+
+**Hey sphere** (English or Italian; section 27):
+
+| Say | It does |
+|---|---|
+| "focus 25" · "concentrazione 25 minuti" / "stop focus" | starts or ends a focus |
+| "privacy on" / "privacy off" | privacy mode |
+| "fireworks" · "fuochi" | fireworks |
+| "what did I miss?" · "cosa mi sono perso?" | the digest |
+| "how is my city?" · "com'è la mia città?" | buildings and streak |
+| "how is my car?" · "come sta la mia auto?" | battery, range, charging |
+| "next meeting?" · "prossima riunione?" | the next event |
+| "where is the ISS?" · "stazione spaziale" | the ISS |
+| "weather" · "che tempo fa?" | the weather |
+| "what time is it?" · "che ore sono?" | the time |
+| "agents?" · "cosa fanno gli agenti?" | your drones |
+| "city Tokyo" · "città Roma" | your real city in the skyline (22) |
+| "scene orbit" · "scena sfera" | the scene |
+| "status" · "tutto bene?" | alerts and panels |
+
+**From a script** (the token is in `~/.config/omarchy-pulse/token`, sent as `X-Pulse-Token`; only on 127.0.0.1):
+
+```bash
+T="X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)"
+curl -X POST -H "$T" "localhost:47800/api/fx?kind=fireworks&text=shipped"
+curl -X POST -H "$T" "localhost:47800/api/fx?kind=quake&mag=6.8&az=100&tsunami=1&text=test"   # try a quake and a tsunami
+curl -X POST -H "$T" "localhost:47800/api/doorbell"
+curl -X POST -H "$T" "localhost:47800/api/car?do=start_charging"    # stop_charging, lock, start_climate, stop_climate, flash
+curl -X POST -H "$T" -d on "localhost:47800/api/privacy"                  # on, off, auto
+curl -H "$T" "localhost:47800/api/state"                            # everything Pulse knows, as JSON
+```
+
+**Try the scene** by adding to the page address (`omarchy-pulse serve` prints it): `&wx=rain` (clear, part, cloud,
+rain, snow, storm, fog), `&wind=50` (km/h), `&scene=orbit`, `&prog=weather` (what the sphere shows: clock, weather,
+cpu, news, car, launch...).

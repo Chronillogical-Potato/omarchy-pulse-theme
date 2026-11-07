@@ -51,7 +51,8 @@ alert_new = true
 
 [voice]
 enabled = false                  # Pulse speaks: alerts, agents that finish or need you, the digest, the end of a focus
-events = ["alerts", "agents", "digest", "focus", "space"]
+events = ["alerts", "agents", "digest", "focus", "space", "calendar", "home", "earth", "car"]
+language = "en"                  # what Pulse says by itself: en, it, es, fr, de (and the voice of that language)
 quiet = "23:00-08:00"            # never at night ("" = always). Never while sharing the screen, away or in focus.
 # model = "~/.local/share/piper/en_US-lessac-medium.onnx"   # piper-tts voice, American English (default: the first
                                  # .onnx in that folder); en_GB-alan-medium for British, it_IT-paola-medium for Italian
@@ -89,12 +90,70 @@ language = "auto"                # or "en", "it"...
 # model = "~/.local/share/whisper/ggml-base.bin"
 # ask = "claude -p"              # questions it does not know go to this AI (the question only, no recording)
 
+[city]
+enabled = true                   # every focus you finish (10 minutes or more) builds a building in your district;
+min_minutes = 10                 # a streak of days keeps its lights on, every 7 days in a row a monument
+
+[sky]
+enabled = true                   # the real planes over your city (the weather's city), with their lights
+source = "adsb.lol"              # "adsb.lol" (free), "opensky", or your own receiver: "http://localhost:8080/data/aircraft.json"
+radius = 25                      # nautical miles around you
+routes = true                    # where each flight comes from and goes (adsbdb.com, only the flight code is sent)
+
+[timelapse]
+enabled = true                   # your day as a video at midnight (~/Videos/omarchy-pulse), the scene alone: no panels,
+every = 90                       # no names; a picture every 90 s while you see it: about 30 s of video (needs ffmpeg)
+
+[calendar]
+# ics = ["https://calendar.google.com/calendar/ical/.../basic.ics"]   # your secret iCal address(es), or a file
+# command = "my-events-as-json"  # or a command printing [{"title": "...", "start": "2026-11-07T09:30:00+01:00"}]
+warn = 5                         # minutes before: the train comes in and the voice tells you
+hours = 3                        # how far ahead the trains come from
+privacy = true                   # privacy mode while a meeting runs (you may share your screen)
+summary_at = "18:00"             # the day's summary: "today: 4 meetings · 3 h 20 min" ("" = never)
+
+[home]
+# url = "http://homeassistant.local:8123"
+# token = "a long-lived access token"   # Home Assistant: your profile, Security
+# doorbell = "binary_sensor.doorbell"   # or an event entity: the sphere becomes the door camera
+# camera = "camera.front_door"
+# lights = ["light.living_room", "light.kitchen"]   # a panel: click one to switch it
+chime = true                     # the doorbell rings on your speakers too (ding-dong)
+
+[car]
+enabled = false                  # your electric car parked in the city: battery, charging, a panel to control it
+source = "tessie"                # "tessie" (a Tesla through Tessie) or "homeassistant" (any car Home Assistant knows)
+# token = "your Tessie API token"   # Tessie: Settings, API Access (or token_file = "~/.config/omarchy-pulse/tessie")
+# vin = ""                         # with more cars: which one (the first active one if empty)
+# name = "car"                     # what Pulse calls it
+every = 60                       # seconds; Tessie's last state, so Pulse never wakes the car
+low = 30                         # in the evening (evening = "21:00"), below this and not plugged in: a reminder
+allow_unlock = false             # unlocking from the wallpaper stays off unless you turn it on
+# with source = "homeassistant", the entities (the Tesla Fleet, Teslemetry or your car's integration):
+# battery = "sensor.car_battery"
+# range = "sensor.car_range"
+# charging = "binary_sensor.car_charging"
+# plugged = "binary_sensor.car_charge_cable"
+# limit = "number.car_charge_limit"
+# lock = "lock.car_doors"
+# climate = "climate.car_climate"
+# inside = "sensor.car_inside_temperature"
+# charge_switch = "switch.car_charge"
+
+[quakes]
+enabled = true                   # earthquakes (USGS): the city shakes, a wave comes from where it happened
+min_world = 6                    # anywhere in the world from this magnitude
+min_near = 3                     # near you (near_km) from this one; 4 and more near you is an alert
+near_km = 500
+tsunami_km = 1500                # a tsunami message (USGS/NOAA) closer than this is a red alert; any one is shown
+
 [builtin]
 system = true
 network = true
 weather = true
 media = true                     # now playing (playerctl)
 notifications = true             # the last desktop notifications (Omarchy 4.5 or mako); private
+notifications_hours = 3          # only the notifications of the last hours (0 = all of them)
 github = ["basecamp/omarchy"]    # repos to follow: latest release and commits ([] to hide)
 github_notifications = true      # your GitHub notifications, when `gh auth login` is done
 

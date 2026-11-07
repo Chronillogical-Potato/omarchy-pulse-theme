@@ -4,6 +4,8 @@
 
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
+- **new in 1.3: a city that grows with your work**, the real **planes** over you, **your day as a video**, your
+  **calendar** as trains, your **doorbell** on the sphere, **earthquakes** ([what's new](#new-in-13))
 - **new in 1.2: your real city** (90+, every continent), **your repositories as towers**, **the ISS and every SpaceX
   launch over your house**, your **heartbeat** on the horizon, a **crew** of friends in your sky, and **"hey sphere"**:
   talk to it ([what's new](#new-in-12))
@@ -25,6 +27,54 @@ or anything you push from a script. Camera feeds, AI briefs, Home Assistant, ser
 
 Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author of
 [OmarchyTV](https://github.com/piermark/omarchytv) (the Live screen of OmarchyTV, now on your desktop).
+
+## New in 1.3
+
+**The city that grows with you.** Every focus you finish builds a building in your district; a streak of days keeps
+its lights on, every week in a row a monument rises. Your city is your work. ([guide, section 28](docs/GUIDE.md#28-the-city-that-grows-with-you))
+
+**The planes over you.** The real planes over your city cross your sky with their lights: flight, aircraft, height,
+and where they come from and go.
+([section 29](docs/GUIDE.md#29-the-planes-over-you))
+
+**Your day as a video.** At midnight Pulse makes a short video of your day, ready to share, with no names in it.
+([section 30](docs/GUIDE.md#30-your-day-as-a-video))
+
+**Your calendar is a station.** Your next meetings are trains of light coming in; five minutes before, the voice tells
+you. ([section 31](docs/GUIDE.md#31-your-calendar-is-a-station))
+
+**Your home.** The doorbell turns the sphere into the door camera; your lights are one click away (Home Assistant).
+([section 32](docs/GUIDE.md#32-your-home))
+
+**Earthquakes and tsunamis.** A real earthquake shakes the city, and waves come from where it happened; a tsunami
+message swells the sea at its feet. ([section 33](docs/GUIDE.md#33-earthquakes-and-tsunamis))
+
+**The wind.** The real wind blows in the scene: rain and snow slant with it, gusts cross the sky, the sphere shows it.
+([section 34](docs/GUIDE.md#34-the-wind))
+
+**Your electric car.** Your car parked in the city, its battery filling with light while it charges; the sphere and the
+voice tell you when it is charged, a panel starts the charge or the climate (Tessie or Home Assistant).
+([section 35](docs/GUIDE.md#35-your-electric-car))
+
+**Your language.** Everything Pulse says by itself can be in Italian, Spanish, French or German (`language` in
+`[voice]`), with a voice of that language. ([section 21](docs/GUIDE.md#21-the-voice))
+
+Also: the weather on the sphere follows the real sky (it was always a sun), old notifications leave the wallpaper,
+`omarchy-pulse perf --probe` measures the real frame times, and a crash with `dmabuf = "on"` turns it off by itself.
+
+Try 1.3 (each one is set up in `~/.config/omarchy-pulse/pulse.toml`: `[city]`, `[sky]`, `[timelapse]`, `[calendar]`,
+`[home]`, `[car]`, `[quakes]`):
+
+```bash
+omarchy-pulse focus 25 "write the guide"   # finish it: a new building in your city
+omarchy-pulse city                         # buildings, streak, monuments
+omarchy-pulse calendar                     # the next trains (add your iCal address in [calendar])
+omarchy-pulse car                          # your car's battery (Tessie token or Home Assistant in [car])
+omarchy-pulse doorbell                     # the sphere becomes the door
+omarchy-pulse timelapse today              # your day so far, as a video
+```
+
+Every command, every "hey sphere" phrase and the API are in one place: [guide, section 36](docs/GUIDE.md#36-every-command).
 
 ## New in 1.2
 
