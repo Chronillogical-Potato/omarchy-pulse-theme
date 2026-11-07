@@ -2395,6 +2395,7 @@ class Hub:
                            "fireworks": self.conf("pulse", "celebrate", default=True) is not False,
                            "music": self.conf("music", "enabled", default="auto") not in (False, "off"),
                            "sun": self.conf("pulse", "sun", default=True) is not False,
+                           "quality": quality_mode(self.conf("pulse", "quality", default="auto")),
                            "sphere": self.conf("pulse", "sphere", default="real"),
                            "cars": self.conf("lan", "cars", default=True) is not False,
                            "eyes": self.conf("presence", "eyes", default=True) is not False}}
@@ -2477,6 +2478,12 @@ def read_temp():
             except Exception:   # noqa: BLE001
                 pass
     return round(best, 1) if best is not None else None
+
+
+def quality_mode(v) -> str:
+    """How sharp the scene is drawn: "full" (the screen's resolution), "half" (lighter), or "auto"."""
+    v = str(v or "auto").lower()
+    return v if v in ("auto", "full", "half") else "auto"
 
 
 def read_battery():

@@ -13,6 +13,8 @@ skyline = "auto"                 # the real city behind the towers: "auto" (the 
 sphere = "real"                  # the sphere's look: "real" (one continuous image) | "led" (thousands of separate lights)
 fps = 20                         # on an empty desktop; it slows down by itself under windows and stops when
                                  # something is full screen
+quality = "auto"                 # how sharp the scene is: "full" (your screen's resolution, sharper, heavier),
+                                 # "half" (lighter), "auto" (full; half above 2560x1440, on battery or when slow)
 pause_when_covered = true        # pause drawing on monitors almost fully covered by windows
 privacy_on_screenshare = true    # sharing or recording the screen hides cameras, notifications and private panels
 temp_crit = 90                   # °C: CPU temperature alert

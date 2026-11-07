@@ -59,7 +59,8 @@ voice tell you when it is charged, a panel starts the charge or the climate (Tes
 **Your language.** Everything Pulse says by itself can be in Italian, Spanish, French or German (`language` in
 `[voice]`), with a voice of that language. ([section 21](docs/GUIDE.md#21-the-voice))
 
-Also: the weather on the sphere follows the real sky (it was always a sun), old notifications leave the wallpaper,
+Also: the scene is now drawn at your screen's full resolution when the PC can (`quality`, half on battery, on screens
+above 2560x1440 or when slow), the weather on the sphere follows the real sky (it was always a sun), old notifications leave the wallpaper,
 `omarchy-pulse perf --probe` measures the real frame times, and a crash with `dmabuf = "on"` turns it off by itself.
 
 Try 1.3 (each one is set up in `~/.config/omarchy-pulse/pulse.toml`: `[city]`, `[sky]`, `[timelapse]`, `[calendar]`,
