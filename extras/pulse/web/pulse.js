@@ -1534,17 +1534,19 @@
           var lx = q[0] - sx * s2 * 0.6, ly = q[1] + (L[0] < 0 ? 1 : -1) * s2 * 2 * sx, gl = g.createRadialGradient(lx, ly, 0, lx, ly, s2 * 0.9);
           gl.addColorStop(0, rgba(L[1], 1)); gl.addColorStop(1, rgba(L[1], 0)); g.fillStyle = gl; g.fillRect(lx - s2 * 0.9, ly - s2 * 0.9, s2 * 1.8, s2 * 1.8);
         });
-        if (blink < 0.08) { var sg = g.createRadialGradient(q[0], q[1], 0, q[0], q[1], s2 * 7); sg.addColorStop(0, rgba(COL.fg, 1)); sg.addColorStop(1, rgba(COL.fg, 0)); g.fillStyle = sg; g.fillRect(q[0] - s2 * 7, q[1] - s2 * 7, s2 * 14, s2 * 14); }
+        if (blink < 0.08) { var sg = g.createRadialGradient(q[0], q[1], 0, q[0], q[1], s2 * 2); sg.addColorStop(0, rgba(COL.fg, 0.9)); sg.addColorStop(1, rgba(COL.fg, 0)); g.fillStyle = sg; g.fillRect(q[0] - s2 * 2, q[1] - s2 * 2, s2 * 4, s2 * 4); }   // the white strobe, a short flash
         g.globalCompositeOperation = "source-over";
-        var lw = H * 0.2, lh = H * 0.034, side = 1;
-        var lb = [q[0] + s2 * 2.4, q[1] - s2 * 2.6 - H * 0.013, lw, lh];
-        var hit = function (bx) { return boxes.concat(uiBoxes()).some(function (b) { return !(bx[0] > b[0] + b[2] || bx[0] + bx[2] < b[0] || bx[1] > b[1] + b[3] || bx[1] + bx[3] < b[1]); }); };
-        if (hit(lb)) { var lbL = [q[0] - s2 * 2.4 - lw, lb[1], lw, lh]; if (!hit(lbL)) { lb = lbL; side = -1; } }   // under a panel: the other side
-        var free = !hit(lb);
+        var lw = H * 0.2, lh = H * 0.034;
+        var over = function (bx, list) { return list.some(function (b) { return !(bx[0] > b[0] + b[2] || bx[0] + bx[2] < b[0] || bx[1] > b[1] + b[3] || bx[1] + bx[3] < b[1]); }); };
+        var cands = [[q[0] + s2 * 2.4, q[1] - s2 * 2.6 - H * 0.013], [q[0] - s2 * 2.4 - lw, q[1] - s2 * 2.6 - H * 0.013],   // right, left,
+                     [q[0] + s2 * 2.4, q[1] + s2 * 2.2], [q[0] - s2 * 2.4 - lw, q[1] + s2 * 2.2]].map(function (c) { return [c[0], c[1], lw, lh]; });   // below
+        // the best place: clear of other labels and of the panels; else clear of other labels only (a panel just hides a part)
+        var lb = cands.filter(function (c) { return !over(c, boxes) && !over(c, uiBoxes()); })[0] || cands.filter(function (c) { return !over(c, boxes); })[0];
+        var free = !!lb;
         if (!shareMode && p.flight && free) {   // a label only where it does not cover another one, or a panel
           boxes.push(lb);
           g.font = "600 " + Math.round(H * 0.013) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "left";
-          g.fillStyle = rgba(COL.fg, 0.75); var lx2 = lb[0], ly2 = q[1] - s2 * 2.6;   // the flight, the aircraft, how high; then where from, where to
+          g.fillStyle = rgba(COL.fg, 0.75); var lx2 = lb[0], ly2 = lb[1] + H * 0.013;   // the flight, the aircraft, how high; then where from, where to
           g.fillText(p.flight + (p.type ? " · " + p.type : "") + " · " + (Math.round(p.ft / 100) * 100).toLocaleString("en-US") + " ft", lx2, ly2);
           if (p.from && p.to) {
             g.fillStyle = rgba(COL.accent2, 0.85);
