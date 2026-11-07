@@ -1478,7 +1478,7 @@
         var ty = hz * 0.93 - (p.el / 90) * hz * 0.85;   // the horizon at the city, straight up at the top of the screen
         var q = planePos[p.id] || (planePos[p.id] = [tx, ty]);
         q[0] += (tx - q[0]) * 0.03; q[1] += (ty - q[1]) * 0.03;
-        var s2 = H * (0.009 + p.el / 90 * 0.008), dir = Math.cos((p.track - (p.az + 180)) * Math.PI / 180) > 0 ? 1 : -1;
+        var s2 = H * (0.009 + p.el / 90 * 0.008), dir = Math.sin(p.track * Math.PI / 180) > 0 ? -1 : 1;   // heading east flies to the left (you look south)
         // where it came from: a contrail that fades behind it
         var tr = q.trail || (q.trail = []);
         if (!tr.length || Math.abs(tr[tr.length - 1][0] - q[0]) + Math.abs(tr[tr.length - 1][1] - q[1]) > 2) { tr.push([q[0], q[1]]); if (tr.length > 70) tr.shift(); }
@@ -1486,7 +1486,9 @@
           g.strokeStyle = rgba(COL.fg, 0.28 * k / tr.length); g.lineWidth = Math.max(1, s2 * 0.35 * k / tr.length);
           g.beginPath(); g.moveTo(tr[k - 1][0], tr[k - 1][1]); g.lineTo(tr[k][0], tr[k][1]); g.stroke();
         }
-        // the plane seen from below: fuselage, swept wings, tail
+        // where it really moves on the screen wins over its heading (a turn, a plane almost overhead)
+        if (tr.length > 8) { var mdx = q[0] - tr[tr.length - 9][0]; if (Math.abs(mdx) > s2 * 0.6) dir = mdx > 0 ? 1 : -1; }
+        // the plane seen from below: fuselage, swept wings, tail, the nose where it goes
         var fx = q[0], fy = q[1], sx = dir;
         g.fillStyle = rgba(mix(COL.fg, COL.bg, 0.25), 0.95); g.beginPath();
         g.moveTo(fx + sx * s2 * 2.6, fy); g.lineTo(fx - sx * s2 * 2.2, fy - s2 * 0.28); g.lineTo(fx - sx * s2 * 2.2, fy + s2 * 0.28); g.closePath(); g.fill();
@@ -1494,8 +1496,8 @@
         g.beginPath(); g.moveTo(fx - sx * s2 * 1.6, fy); g.lineTo(fx - sx * s2 * 2.2, fy - s2 * 0.9); g.lineTo(fx - sx * s2 * 2.0, fy); g.lineTo(fx - sx * s2 * 2.2, fy + s2 * 0.9); g.closePath(); g.fill();
         var blink = (t + i * 0.37) % 1.2;
         g.globalCompositeOperation = "lighter";
-        [[-2, COL.crit], [2, COL.ok]].forEach(function (L) {   // red on the left wingtip, green on the right
-          var lx = q[0] - sx * s2 * 0.6, ly = q[1] + (L[0] < 0 ? -1 : 1) * s2 * 2 * sx, gl = g.createRadialGradient(lx, ly, 0, lx, ly, s2 * 0.9);
+        [[-2, COL.crit], [2, COL.ok]].forEach(function (L) {   // red on its left wing, green on its right, as seen from below
+          var lx = q[0] - sx * s2 * 0.6, ly = q[1] + (L[0] < 0 ? 1 : -1) * s2 * 2 * sx, gl = g.createRadialGradient(lx, ly, 0, lx, ly, s2 * 0.9);
           gl.addColorStop(0, rgba(L[1], 1)); gl.addColorStop(1, rgba(L[1], 0)); g.fillStyle = gl; g.fillRect(lx - s2 * 0.9, ly - s2 * 0.9, s2 * 1.8, s2 * 1.8);
         });
         if (blink < 0.08) { var sg = g.createRadialGradient(q[0], q[1], 0, q[0], q[1], s2 * 7); sg.addColorStop(0, rgba(COL.fg, 1)); sg.addColorStop(1, rgba(COL.fg, 0)); g.fillStyle = sg; g.fillRect(q[0] - s2 * 7, q[1] - s2 * 7, s2 * 14, s2 * 14); }
