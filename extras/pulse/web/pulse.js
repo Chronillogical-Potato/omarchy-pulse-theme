@@ -1475,7 +1475,8 @@
         seen[p.id] = 1;
         var tx = front ? W / 2 + (p.az - 180) / 90 * W * 0.44
                        : W / 2 - Math.sin(p.az * Math.PI / 180) * W * 0.44 * (90 - p.el) / 28;
-        var ty = hz * 0.93 - (p.el / 90) * hz * 0.85;   // the horizon at the city, straight up at the top of the screen
+        var ty = hz * 0.93 - Math.sqrt(p.el / 90) * hz * 0.85;   // the sky above the towers: most planes are 10-40° up, so
+        // the low part of the sky gets more room; straight up is still the top of the screen
         var q = planePos[p.id] || (planePos[p.id] = [tx, ty]);
         q[0] += (tx - q[0]) * 0.03; q[1] += (ty - q[1]) * 0.03;
         var s2 = H * (0.009 + p.el / 90 * 0.008), dir = Math.sin(p.track * Math.PI / 180) > 0 ? -1 : 1;   // heading east flies to the left (you look south)
