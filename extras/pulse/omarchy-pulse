@@ -30,6 +30,7 @@
   omarchy-pulse car [charge | stop | lock | unlock | climate on | climate off | flash]
                                  your electric car (Tessie or Home Assistant): its battery, or a command
   omarchy-pulse doorbell         ring the doorbell (a test: the sphere shows the door camera, the chime rings)
+  omarchy-pulse notifications clear   empty the notifications panel (or click it)
   omarchy-pulse reload           re-read pulse.toml now (it is also re-read by itself when you save it)
   omarchy-pulse doctor           check dependencies, config and sources
 
@@ -417,6 +418,7 @@ class Hub:
         self.home_lights: list = []
         self.car: dict | None = None   # 1.3: your electric car (Tessie or Home Assistant)
         self.car_cmds: list = []
+        self.notes_cleared = 0.0   # a click on the notifications panel clears it
         self.quake_seen: set = set()
 
     # -- config
@@ -1090,6 +1092,10 @@ class Hub:
             except Exception as e:   # noqa: BLE001
                 log(f"home: {e}")
                 return False
+            return True
+        if wid == "notifications":
+            self.notes_cleared = time.time()
+            self.drop_widget("notifications")
             return True
         if wid == "car" and item is not None and 0 <= item < len(self.car_cmds) and self.car_cmds[item]:
             cmd = self.car_cmds[item]
@@ -2242,10 +2248,10 @@ class Hub:
             try:
                 if self.builtin("notifications") is not False:
                     hours = float(self.builtin("notifications_hours", 3) or 0)
-                    items = [i for i in notification_history() if not hours or not i.get("t") or time.time() - i["t"] < hours * 3600]
+                    items = visible_notifications(notification_history(), hours, self.notes_cleared, read_battery())
                     if items:
                         self.set_widget("notifications", title="notifications", type="list", slot="center", order=40,
-                                        private=True, data={"items": items[:5]})
+                                        private=True, data={"items": items[:5]}, click="clear")
                     else:
                         self.drop_widget("notifications")
             except Exception:   # noqa: BLE001
@@ -2582,6 +2588,25 @@ def notification_history() -> list:
                 break
         return result
     return mako_history() if shutil.which("makoctl") else []
+
+
+BATTERY_NOTE = re.compile(r"batter|ricaric|plug in|charge your|low power|power low|batería|batterie|akku", re.I)
+
+
+def visible_notifications(items: list, hours: float, cleared: float = 0.0, battery: dict | None = None) -> list:
+    """The notifications worth showing: recent, newer than your last clear, and no "battery low" once it charges."""
+    now, out = time.time(), []
+    charging = bool(battery) and str(battery.get("status")) in ("Charging", "Full", "Not charging")
+    for i in items:
+        t = i.get("t") or 0
+        if hours and t and now - t >= hours * 3600:
+            continue
+        if cleared and t and t <= cleared:
+            continue
+        if charging and BATTERY_NOTE.search(f"{i.get('title', '')} {i.get('text', '')}"):
+            continue   # the charger is in: the reminder to plug it in is done
+        out.append(i)
+    return out
 
 
 def mako_history() -> list:
@@ -4055,6 +4080,8 @@ def main(argv: list[str]) -> int:
         return 0
     if cmd == "doorbell":
         return quiet_client("/api/doorbell")
+    if cmd == "notifications" and argv[2:3] == ["clear"]:
+        return quiet_client("/api/click/notifications")
     if cmd == "calendar":
         r = client("GET", "/api/state")
         evs = r.get("calendar") or []

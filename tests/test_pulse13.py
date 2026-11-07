@@ -309,3 +309,19 @@ class QualityTests(unittest.TestCase):
         hub = pulse.Hub()
         hub.cfg = {'pulse': {'quality': 'half'}}
         self.assertEqual(hub.state()['ui']['quality'], 'half')
+
+
+class NotificationTests(unittest.TestCase):
+    def test_battery_reminder_leaves_with_the_charger_and_a_click_clears(self):
+        now = time.time()
+        items = [{'title': 'Ora di ricaricare!', 'text': 'La batteria è al 10%', 't': now - 60},
+                 {'title': 'Build done', 'text': 'ok', 't': now - 30}]
+        self.assertEqual(len(pulse.visible_notifications(items, 3, 0, {'pct': 10, 'status': 'Discharging'})), 2)
+        left = pulse.visible_notifications(items, 3, 0, {'pct': 11, 'status': 'Charging'})
+        self.assertEqual([i['title'] for i in left], ['Build done'])
+        self.assertEqual(pulse.visible_notifications(items, 3, now - 10, None), [])
+        hub = pulse.Hub()
+        hub.set_widget('notifications', title='notifications', type='list', data={'items': items})
+        self.assertTrue(hub.click('notifications'))
+        self.assertNotIn('notifications', hub.widgets)
+        self.assertGreater(hub.notes_cleared, now - 5)
