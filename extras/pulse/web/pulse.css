@@ -216,3 +216,16 @@ body.private .drone { display: none; }   /* agent names can be project names */
 #digest li.dim { color: rgba(var(--fg-rgb), .5); }
 @keyframes digestIn { from { opacity: 0; transform: translate(-50%, -46%); } to { opacity: 1; transform: translate(-50%, -50%); } }
 body.sceneonly #digest, body.suspended #digest { display: none !important; }
+
+/* 1.2: hey sphere, the crew, your heart */
+#heard { position: fixed; left: 50%; top: 85%; transform: translateX(-50%); z-index: 12; text-align: center; pointer-events: none;
+  opacity: 0; transition: opacity .3s; max-width: 60rem; }
+#heard.on { opacity: 1; }
+#heard q { display: block; font-size: 1.3rem; color: rgba(var(--fg-rgb), .7); font-style: italic; margin-bottom: .4rem; }
+#heard q::before { content: "“"; } #heard q::after { content: "”"; }
+#heard span { display: inline-block; font-size: 1.6rem; color: var(--fg); padding: .5rem 1.2rem; border: 1px solid rgba(var(--accent-rgb), .6);
+  background: rgba(var(--bg-rgb), .75); box-shadow: 0 0 2.5rem rgba(var(--accent-rgb), .25); }
+#heard i { font-style: normal; color: var(--crit); }
+.drone u { text-decoration: none; color: var(--accent2); font-weight: 700; margin-right: .2rem; }
+#clock .who .heart { color: var(--crit); }
+body.sceneonly #heard, body.suspended #heard { display: none !important; }

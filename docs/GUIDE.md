@@ -25,6 +25,13 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [19. The face that sees you, and "while you were away"](#19-the-face-that-sees-you-and-while-you-were-away) ·
   [20. Your network on the grid](#20-your-network-on-the-grid) ·
   [21. The voice](#21-the-voice)
+- New in 1.2:
+  [22. Your real city](#22-your-real-city) ·
+  [23. The Git city](#23-the-git-city) ·
+  [24. Space over your city](#24-space-over-your-city) ·
+  [25. Your heartbeat](#25-your-heartbeat) ·
+  [26. The crew](#26-the-crew) ·
+  [27. Hey sphere](#27-hey-sphere)
 
 ---
 
@@ -432,6 +439,10 @@ In `[builtin]` (`false` hides one):
 - Sources run as you, with your permissions: only put commands you trust in `pulse.toml`.
 - In privacy mode the drones, the names and addresses of the cars and the private lines of "while you were away"
   are hidden, and the voice is silent. MAC addresses never leave the hub; the pointer position never leaves the PC.
+- 1.2: in privacy mode the names of your repositories, your heart rate and an "auto" city skyline are hidden too. Your
+  heart rate is never written to the log or sent anywhere. A "hey sphere" recording is deleted as soon as it is
+  understood and never leaves the PC (only the text of a question goes to `ask`, if you set it). The crew sends only
+  the kind of agent and its state (or the folder name with `share = "full"`), sealed with your code.
 
 ## 12. Light on the PC
 
@@ -487,6 +498,11 @@ In `[builtin]` (`false` hides one):
 | No "while you were away" | you must be away at least `digest_after` minutes; locking the screen counts, or add the hypridle listener (section 19). |
 | No cars on the grid | `ip` must work (`iproute2`) and the network must be a private one (192.168.x, 10.x, 172.16-31.x); install `fping` to see every device. |
 | A new-device alert for a known device | name it in `[lan] names`; a phone with a private Wi-Fi address gets a new one per network (turn it off for your home Wi-Fi). |
+| My city is not drawn | `skyline = "auto"` needs the weather's `city` to be one of the cities in section 22; else set `skyline = "rome"` (or another); it is hidden while you share the screen. |
+| No towers for my repositories | `[git] root = "~/your/folder"` or `repos = [...]`; `git` must be installed; the beacon colour needs `gh auth login`. |
+| The ISS never shows | it only shows while it is really above your horizon (a few minutes, a few times a day); `city` must be set for the weather. |
+| The crew sees nothing | the same `code` on every PC, at least 16 characters (`omarchy-pulse crew new`); `omarchy-pulse crew`; the relay must be reachable. |
+| Hey sphere does not hear | `omarchy-pulse doctor` (whisper-cli or faster-whisper); test with `omarchy-pulse listen --file question.wav`; the microphone needs `pw-record` (PipeWire) or `arecord`. |
 | The voice says nothing | `enabled = true` in `[voice]`; `omarchy-pulse say "test"`; `omarchy-pulse doctor` (piper-tts or espeak-ng); check `quiet`. |
 
 ## 14. Files
@@ -505,6 +521,7 @@ In `[builtin]` (`false` hides one):
 ~/.local/state/omarchy-pulse/cava.conf     written by Pulse for cava (1.1)
 ~/.local/state/omarchy-pulse/lan.json      the devices already seen on each network (1.1)
 ~/.local/state/omarchy-pulse/voice.wav     the last line spoken (1.1)
+~/.local/state/omarchy-pulse/listen.wav    a "hey sphere" recording, deleted as soon as it is understood (1.2)
 ```
 
 MIT, © 2026 Marco Porro ([x.com/MarcoPorro](https://x.com/MarcoPorro)). Weather by [Open-Meteo](https://open-meteo.com).
@@ -701,8 +718,171 @@ quiet = "23:00-08:00"        # never at night ("" = any time)
 It uses [piper](https://github.com/rhasspy/piper) (a natural voice, on your PC) or, if piper is not there,
 `espeak-ng` (`sudo pacman -S espeak-ng`). For piper: `yay -S piper-tts-bin` (or `pipx install piper-tts`), then put
 a voice (the `.onnx` file and its `.onnx.json`) in `~/.local/share/piper/`, from
-[the piper voices](https://huggingface.co/rhasspy/piper-voices): `en_US-lessac-medium`, `it_IT-paola-medium` and many
-more. Pulse plays it with `pw-play`, `paplay` or `aplay`.
+[the piper voices](https://huggingface.co/rhasspy/piper-voices): `en_US-lessac-medium` (American English, the one in
+the demo video), `en_GB-alan-medium`, `it_IT-paola-medium` and many more. espeak-ng speaks American English by default
+(`espeak_voice = "en-gb"`, `"it"`... to change it). Pulse plays it with `pw-play`, `paplay` or `aplay`.
 
 It never speaks while you share or record the screen, while you are away (the digest waits for you), in focus mode,
 or in the quiet hours. Private panels are never read aloud. Try it: `omarchy-pulse say "hello from Pulse"`.
+
+## 22. Your real city
+
+Behind the towers stands the skyline of a real city, drawn with its landmarks: the Colosseum in Rome, the Duomo in
+Milan, the Mole in Turin, the One World Trade Center in New York, the Eiffel Tower in Paris, Big Ben and the Shard in
+London, the Burj Khalifa in Dubai, the Petronas Towers in Kuala Lumpur... Their lights blink red at the top, their
+windows are lit. In front of a real city the CPU towers are a little lower, so the skyline reads.
+
+```toml
+[pulse]
+skyline = "auto"     # the city of your weather (default); "off" for the generic city; or a city below
+```
+
+**Choose your city** in one line (any city of the list below), or go back to the weather's city:
+
+```
+sed -i 's/^skyline = .*/skyline = "new-york"/' ~/.config/omarchy-pulse/pulse.toml   # or "rome", "tokyo", "alessandria"...
+sed -i 's/^skyline = .*/skyline = "auto"/' ~/.config/omarchy-pulse/pulse.toml       # the weather's city again
+```
+
+If your `pulse.toml` is older than 1.2 and has no `skyline` line, add `skyline = "rome"` under `[pulse]`. The wallpaper
+changes in about 3 seconds. Or ask the sphere (section 27): "hey sphere, city Tokyo", "ehi sfera, città Roma" (until
+Pulse restarts; `pulse.toml` decides after).
+
+With `"auto"` Pulse uses the weather's `city` in any language ("Roma", "München", "São Paulo"); while you share
+the screen it shows the generic city, so your skyline does not tell where you live. The cities:
+
+- **Italy**: `rome`, `milan`, `turin`, `alessandria`, `florence`, `venice`, `naples`, `pisa`, `bologna`, `genoa`
+- **Europe**: `london`, `paris`, `berlin`, `madrid`, `barcelona`, `lisbon`, `amsterdam`, `brussels`, `vienna`, `prague`, `budapest`, `warsaw`, `moscow`, `athens`, `istanbul`, `dublin`, `stockholm`, `copenhagen`, `oslo`, `helsinki`, `zurich`, `munich`, `cologne`, `frankfurt`, `kyiv`, `bern`, `reykjavik`, `edinburgh`
+- **The Americas**: `new-york`, `washington`, `chicago`, `los-angeles`, `san-francisco`, `seattle`, `las-vegas`, `miami`, `boston`, `toronto`, `montreal`, `vancouver`, `mexico-city`, `sao-paulo`, `rio-de-janeiro`, `buenos-aires`, `ottawa`, `havana`, `lima`, `bogota`, `santiago`
+- **Asia and the Middle East**: `tokyo`, `beijing`, `shanghai`, `hong-kong`, `shenzhen`, `seoul`, `singapore`, `kuala-lumpur`, `taipei`, `osaka`, `kyoto`, `hanoi`, `manila`, `jakarta`, `kathmandu`, `tehran`, `ankara`, `bangkok`, `mumbai`, `delhi`, `dubai`, `abu-dhabi`, `doha`, `riyadh`, `tel-aviv`, `cairo`
+- **Oceania and Africa**: `sydney`, `melbourne`, `auckland`, `cape-town`, `johannesburg`, `lagos`, `nairobi`
+
+They are original line drawings of public buildings: no photos and no logos.
+
+## 23. The Git city
+
+Your repositories become towers in the city, behind the CPU towers: the more commits this week, the taller the
+tower, with its name and the number of commits. On top a beacon: **green** when GitHub Actions passed on that branch,
+**red and blinking** when they failed (with an alert), **amber** while they run. Uncommitted changes make its lower
+windows flicker. A **commit** lights the tower up; a **push** lights it up with fireworks over it.
+
+```toml
+[git]
+root = "auto"        # ~/code, ~/src, ~/projects, ~/dev, ~/git, ~/repos, ~/work (and one folder deeper)
+# repos = ["~/code/omarchytv", "~/code/omarchy-pulse-theme"]
+ci = "auto"          # the beacon: needs gh and `gh auth login`; "off" without it
+max = 8              # the busiest repositories this week
+every = 60
+```
+
+Pulse reads your repositories locally with `git` (nothing is sent); the CI colour asks GitHub through `gh` every 5
+minutes per repository. In privacy mode the towers have no names.
+
+## 24. Space over your city
+
+- **The ISS**: when the International Space Station really passes over your city (from its orbit, wheretheiss.at),
+  a bright point crosses your sky in the right direction, with a trail, its height and how high it is above your
+  horizon. A shooting star marks its arrival, and the voice can tell you ("The International Space Station is
+  passing over you right now"). The wallpaper looks south: east is on the left, west on the right.
+- **The aurora**: in a geomagnetic storm (NOAA's Kp index 4 and more) a green aurora appears over the city, stronger
+  as the storm grows.
+- **Solar flares**: a strong one (class M or X) flashes the sky warm and writes its class in the sky.
+- **Rocket launches**: the next SpaceX launches (every one: Starlink, crew and cargo for the ISS, NASA, Starship) in
+  the ticker with their countdown and status (Go, TBC, Hold...). In the last hour the sphere shows the T-minus; at
+  liftoff a rocket climbs from your horizon with its flame and its trail (bigger for Starship), and the voice says
+  "Liftoff!". Launch times come from [Launch Library 2](https://thespacedevs.com/llapi) (The Space Devs), accurate to
+  the second when the launch is confirmed.
+
+```toml
+[space]
+enabled = true
+iss = true
+launches = "spacex"          # "spacex" (all of them, Starlink included) | "all" (every provider) | "rocketlab" |
+                             # "blueorigin" | "nasa" | "off"
+launches_panel = "ticker"    # or "right", "left", "off"
+```
+
+The ISS needs the weather's `city` (or `latitude`/`longitude`). ISS passes and liftoffs go into "while you were away".
+The free launch API allows 15 calls an hour: Pulse asks every 10 minutes.
+
+## 25. Your heartbeat
+
+The horizon is your pulse: from 1.2 it can beat with your heart. Connect any source that gives your heart rate (a
+watch through Home Assistant, a script, a file); a small ♥ with the beats per minute appears under the clock.
+
+```toml
+[heart]
+url = "http://homeassistant.local:8123/api/states/sensor.watch_heart_rate"
+headers = { Authorization = "Bearer YOUR_TOKEN" }
+# path = "attributes.bpm"     # if the number is deeper in the JSON (Home Assistant's "state" is read by itself)
+# command = "my-heart-script" # or a command, or file = "~/heart.txt"
+every = 10
+```
+
+Your heart rate stays on your PC: it is never logged, never sent, hidden while you share the screen, and after two
+minutes without a value the horizon goes back to beating with the CPU.
+
+## 26. The crew
+
+Share a code with your friends and your cities are linked: their AI agents fly as drones in your sky (with a
+**crew** tag and a magenta outline), yours in theirs; when one of their agents finishes, fireworks go off in your
+city too, and `omarchy-pulse fireworks "shipped!"` goes off in all of them.
+
+```
+omarchy-pulse crew new         # makes a code; put it on every PC of the crew
+```
+```toml
+[crew]
+code = "the code"
+name = "marco"
+share = "agent"     # what travels: "agent" (claude, codex...) or "full" (with the project folder)
+# relay = "https://ntfy.sh"    # the default relay; or your own ntfy server
+```
+
+The messages go through a relay ([ntfy](https://ntfy.sh), or your own) sealed with your code (encrypted and signed
+with HMAC-SHA256): the relay sees only noise, and a message from someone without the code is thrown away. Only the
+kind of agent and its state travel, never your prompts, your code or the commands. `omarchy-pulse crew` shows the
+status; remove the code to leave the crew.
+
+## 27. Hey sphere
+
+Talk to the sphere. Bind a key and hold it (or press it once: it listens for 5 seconds):
+
+```
+# ~/.config/hypr/bindings.conf
+bind  = SUPER, A, exec, omarchy-pulse listen start
+bindr = SUPER, A, exec, omarchy-pulse listen stop
+```
+
+The face looks up and listens (a level meter for a mouth), thinks, then answers out loud and in words under the
+sphere. It understands English and Italian:
+
+| You say | It does |
+|---|---|
+| "focus 25 minutes" · "metti un focus di 25 minuti" | starts focus mode |
+| "stop focus" · "ferma il focus" | stops it |
+| "how are my servers?" · "come stanno i server?" | the panels that need attention, or "everything is fine" |
+| "what did I miss?" · "cosa mi sono perso?" | the last "while you were away" |
+| "how are my agents?" | each agent and its state |
+| "is the ISS over me?" | where the ISS is |
+| "weather" · "what time is it?" · "che ore sono?" | the weather, the time |
+| "city Tokyo" · "città Roma" | the skyline of that city (until Pulse restarts) |
+| "privacy on / off" · "fireworks" · "scene orbit" | just that |
+
+It never runs anything else: what it does not understand gets a short list of what it can do. With `ask` set, those
+questions go to an AI instead (only the text of the question), and it reads the answer:
+
+```toml
+[listen]
+language = "auto"         # or "en", "it"
+# model = "~/.local/share/whisper/ggml-base.bin"
+# ask = "claude -p"       # or "ollama run llama3.2", nothing leaves the PC
+```
+
+Speech to text runs on your PC: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`yay -S whisper.cpp` and a
+model such as `ggml-base.bin` in `~/.local/share/whisper/`) or [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+(`pipx install faster-whisper`: it downloads its model the first time). The recording goes to
+`~/.local/state/omarchy-pulse/listen.wav` and is deleted as soon as it is understood; Pulse never listens on its
+own. The answer uses the voice of section 21 (it speaks even with `[voice]` off, since you asked). Try it without a
+microphone: `omarchy-pulse listen --file question.wav`.
+

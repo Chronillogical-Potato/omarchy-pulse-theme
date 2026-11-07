@@ -8,6 +8,8 @@ city = ""                        # weather: "Milan", "Berlin"... (or latitude = 
 units = "metric"                 # or "imperial"
 clock = "24h"                    # or "12h"
 scene = "sphere"                 # sphere (the LED sphere) | skyline | orbit | calm
+skyline = "auto"                 # the real city behind the towers: "auto" (the weather's city), "off", or one of
+                                 # 90+ cities: rome, milan, alessandria, new-york, tokyo, paris... (docs/GUIDE.md 22)
 sphere = "real"                  # the sphere's look: "real" (one continuous image) | "led" (thousands of separate lights)
 fps = 20                         # on an empty desktop; it slows down by itself under windows and stops when
                                  # something is full screen
@@ -49,10 +51,43 @@ alert_new = true
 
 [voice]
 enabled = false                  # Pulse speaks: alerts, agents that finish or need you, the digest, the end of a focus
-events = ["alerts", "agents", "digest", "focus"]
+events = ["alerts", "agents", "digest", "focus", "space"]
 quiet = "23:00-08:00"            # never at night ("" = always). Never while sharing the screen, away or in focus.
-# model = "~/.local/share/piper/en_US-lessac-medium.onnx"   # piper-tts voice (default: the first one in that folder)
+# model = "~/.local/share/piper/en_US-lessac-medium.onnx"   # piper-tts voice, American English (default: the first
+                                 # .onnx in that folder); en_GB-alan-medium for British, it_IT-paola-medium for Italian
+# espeak_voice = "en-us"         # espeak-ng: American English by default ("en-gb", "it"...)
 # command = "spd-say -e"         # or any command that reads the text on stdin
+
+[git]
+root = "auto"                    # your repositories are towers (~/code, ~/src, ~/projects... or a folder of yours)
+# repos = ["~/code/omarchytv", "~/code/omarchy-pulse-theme"]   # or exactly these
+ci = "auto"                      # the beacon on top: GitHub Actions of the branch (needs `gh auth login`)
+max = 8
+
+[space]
+enabled = true                   # the ISS when it passes over your city, a real aurora in a geomagnetic storm,
+iss = true                       # solar flares (wheretheiss.at, NOAA SWPC)
+launches = "spacex"              # rocket launches, Starlink included: countdown, then liftoff on your horizon
+                                 # ("all", "rocketlab", "blueorigin", "nasa", "off")
+
+[heart]
+# the horizon beats with your heart. Any source that prints your heart rate, for example Home Assistant:
+# url = "http://homeassistant.local:8123/api/states/sensor.watch_heart_rate"
+# headers = { Authorization = "Bearer YOUR_TOKEN" }
+# command = "cat /tmp/heart"     # or a command, or file = "..."
+# every = 10
+
+[crew]
+# code = ""                      # omarchy-pulse crew new: your friends' agents fly in your city, yours in theirs
+# name = "marco"
+# share = "agent"                # "agent" (claude, codex...) or "full" (with the project folder)
+# relay = "https://ntfy.sh"      # or your own ntfy server
+
+[listen]
+# "hey sphere": bind = SUPER, A, exec, omarchy-pulse listen   (whisper.cpp or faster-whisper, offline)
+language = "auto"                # or "en", "it"...
+# model = "~/.local/share/whisper/ggml-base.bin"
+# ask = "claude -p"              # questions it does not know go to this AI (the question only, no recording)
 
 [builtin]
 system = true
