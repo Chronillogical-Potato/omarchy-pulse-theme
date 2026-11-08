@@ -56,6 +56,9 @@ def target() -> tuple[str, int]:
     u = urllib.parse.urlsplit(env("UNIFI_URL"))
     if u.scheme != "https" or not u.hostname:
         raise SystemExit("set UNIFI_URL, e.g. https://192.168.1.1")
+    if u.path not in ("", "/"):
+        # UniFi OS serves the API at /proxy/network on the gateway itself; a path would be dropped.
+        raise SystemExit(f"unifi: UNIFI_URL takes no path, use https://{u.netloc}")
     return u.hostname, u.port or 443
 
 
@@ -99,6 +102,7 @@ def pin() -> int:
     path = pin_file()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # the mode above only applies when the file is created
     with os.fdopen(fd, "w") as f:
         f.write(fp + "\n")
     print(f"pinned {env('UNIFI_URL')} sha256 {':'.join(fp[i:i + 2] for i in range(0, len(fp), 2))} -> {path}")
@@ -178,6 +182,9 @@ def main(argv: list[str]) -> int:
         print(json.dumps(modes[mode](Api()), ensure_ascii=False))
     except (OSError, ValueError) as e:
         print(f"unifi: {getattr(e, 'reason', None) or e}", file=sys.stderr)
+        return 1
+    except http.client.HTTPException as e:
+        print(f"unifi: odd reply from the gateway ({type(e).__name__}: {str(e).strip()})", file=sys.stderr)
         return 1
     return 0
 
