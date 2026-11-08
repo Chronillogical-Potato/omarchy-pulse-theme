@@ -14,7 +14,7 @@ A UniFi gateway on your wallpaper:
 
 | Variable | Required | Description |
 |---|---|---|
-| `UNIFI_URL` | yes | Gateway address on the LAN, e.g. `https://192.168.1.1` |
+| `UNIFI_URL` | yes | Gateway address on the LAN, e.g. `https://192.168.1.1`. Host and optional port only: UniFi OS serves the API at `/proxy/network` itself, so a path is refused |
 | `UNIFI_KEY_FILE` | yes (or `UNIFI_KEY`) | File with the API key, one line, `chmod 600` |
 | `UNIFI_KEY` | no | The key itself, if you prefer it in the command |
 | `UNIFI_SITE` | no | Site name, default `default` |
