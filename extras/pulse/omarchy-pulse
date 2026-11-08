@@ -88,7 +88,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -3356,6 +3356,7 @@ class Hub:
                            "bannerEvery": float(self.conf("pulse", "banner_every", default=45) or 0),
                            "fireworks": self.conf("pulse", "celebrate", default=True) is not False,
                            "infraWeather": self.conf("pulse", "infra_weather", default=True) is not False,
+                           "wallpaper": self.wallpaper_ui(),
                            "hackerStyle": str(self.conf("pulse", "hacker_style", default="phosphor")),
                            "nocHide": [str(x) for x in (self.conf("pulse", "noc_hide", default=["media", "notifications"]) or [])][:20],
                            "music": self.conf("music", "enabled", default="auto") not in (False, "off"),
@@ -3365,6 +3366,20 @@ class Hub:
                            "sphere": self.conf("pulse", "sphere", default="real"),
                            "cars": self.conf("lan", "cars", default=True) is not False,
                            "eyes": self.conf("presence", "eyes", default=True) is not False}}
+
+    def wallpaper_ui(self) -> dict | None:
+        f = wallpaper_path(self.conf("pulse", "wallpaper", default=""))
+        if not f:
+            return None
+        st = f.stat()
+        mode = str(self.conf("pulse", "wallpaper_mode", default="live"))
+        try:
+            dim = float(self.conf("pulse", "wallpaper_dim", default=0.25))
+        except (TypeError, ValueError):
+            dim = 0.25
+        return {"mode": "panels" if mode == "panels" else "live", "dim": max(0.0, min(0.9, dim)),
+                "colors": "picture" if str(self.conf("pulse", "wallpaper_colors", default="theme")) == "picture" else "theme",
+                "v": hashlib.sha1(f"{f}:{st.st_mtime}:{st.st_size}".encode()).hexdigest()[:12]}
 
     def net_public(self) -> dict | None:
         """What the page draws of your network: no addresses, and no names while sharing or in privacy."""
@@ -4175,6 +4190,31 @@ def theme_name() -> str:
     if old.is_symlink() or old.is_dir():
         return old.resolve().name
     return ""
+
+
+WALL_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
+
+
+def wallpaper_path(v) -> Path | None:
+    """1.5.1: your own wallpaper under the panels: a picture, or "omarchy" for the current Omarchy background (it
+    follows the theme when you change it)."""
+    v = str(v or "").strip()
+    if not v:
+        return None
+    if v == "omarchy":
+        for f in (HOME / ".local/state/omarchy/current/background", HOME / ".config/omarchy/current/background"):
+            if f.exists() and f.resolve().suffix.lower() in WALL_TYPES:
+                return f.resolve()
+        name = theme_name()
+        for d in (HOME / ".config/omarchy/current/theme/backgrounds", HOME / ".config/omarchy/themes" / name / "backgrounds",
+                  HOME / ".local/share/omarchy/themes" / name / "backgrounds"):
+            if name and d.is_dir():
+                pics = sorted(x for x in d.iterdir() if x.suffix.lower() in WALL_TYPES)
+                if pics:
+                    return pics[0]
+        return None
+    f = Path(v).expanduser()
+    return f if f.is_file() and f.suffix.lower() in WALL_TYPES and f.stat().st_size <= 60_000_000 else None
 
 
 _theme_cache: dict = {}
@@ -5619,6 +5659,22 @@ def make_handler(hub: Hub, tok: str, port: int):
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.end_headers()
                 self.wfile.write(page)
+                return
+            if path == "/api/wallpaper":   # 1.5.1: your own wallpaper, read from your disk (never from the network)
+                if not self._authed(q):
+                    return
+                f = wallpaper_path(hub.conf("pulse", "wallpaper", default=""))
+                if not f:
+                    self._send(404, b"{}")
+                    return
+                data = f.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", WALL_TYPES[f.suffix.lower()])
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "private, max-age=31536000")   # the URL changes when the picture does
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(data)
                 return
             if path in ("/api/scenes", "/api/scene-src", "/api/scene-state"):   # the scene lab
                 if not self._authed(q):

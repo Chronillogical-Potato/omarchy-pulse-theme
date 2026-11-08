@@ -66,7 +66,8 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [56. The hacker scene and the terminal](#56-the-hacker-scene-and-the-terminal-15) ·
   [57. Pulse Net](#57-pulse-net-15-beta-read-only) ·
   [58. NOC mode](#58-noc-mode-15-beta) ·
-  [59. Reduced motion](#59-reduced-motion-15)
+  [59. Reduced motion](#59-reduced-motion-15) ·
+  [60. Your own wallpaper](#60-your-own-wallpaper-151)
 - Creating scenes: [docs/SCENES.md](SCENES.md)
 
 ---
@@ -1911,3 +1912,31 @@ on.
 
 `[pulse] motion = "reduced"`: nothing runs or swings. The grid stands still, no shaking in a quake, cranes, flames,
 trucks and lights keep still, fireworks are rare, and community scenes are told to keep still too.
+
+## 60. Your own wallpaper (1.5.1)
+
+Your own picture under the panels, instead of Pulse's city:
+
+```toml
+[pulse]
+wallpaper = "~/Pictures/city.jpg"   # jpg, png, webp; or "omarchy": the current Omarchy background, following the theme
+wallpaper_mode = "live"             # or "panels"
+wallpaper_dim = 0.25                # 0 to 0.9: darker, so the panels stay easy to read
+wallpaper_colors = "theme"          # or "picture": the colours come from your picture
+```
+
+- **live**: your picture, and on top of it Pulse's live things: the real rain and snow, the planes over you, the
+  fireworks when an agent finishes, the rockets, the banner plane, the holidays and the eclipse countdowns. Pulse does
+  not draw a sky, a city or a sphere of its own.
+- **panels**: your picture and the panels only. It is drawn once and Pulse draws at most twice a second: the lightest
+  way to have your widgets on your wallpaper.
+
+**Colours from your picture.** With `wallpaper_colors = "picture"` Pulse reads your picture and takes its colours
+from it: a dark background from its shadows, the two accents from its strongest colours, the text a light tint of
+them. The panels, the clock, the planes' labels and the fireworks follow. Green, amber and red stay the theme's, so
+an alert always looks like an alert. A black and white picture keeps the theme's colours. Change the picture and the
+colours change with it.
+
+The picture fills the screen like a wallpaper (cropped, never stretched). It is read from your disk by Pulse itself,
+never from the network; change the file or the theme and Pulse picks it up in a few seconds. `wallpaper = ""` goes
+back to Pulse's own scene.

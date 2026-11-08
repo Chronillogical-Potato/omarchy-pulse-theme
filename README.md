@@ -1,6 +1,6 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-**Version 1.5** · [what's new](#new-in-15) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+**Version 1.5.1** · [what's new](#new-in-15) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
 
 ![Omarchy Pulse 1.5: the noir scene, a futuristic megacity at night with the agent's face on the big screen, candles for what expires, the energy river, robots on the floor (demo data)](preview.png)
 
@@ -72,6 +72,11 @@ antennas (UniFi, MikroTik, OpenWrt), hosts and VMs as towers and floors with mig
 backups as night trucks (restic, Proxmox Backup Server, Veeam), intruders as red-eyed robots (CrowdSec, Wazuh). A
 **hacker** scene with a radar on your network and a read-only terminal (`omarchy-pulse term`), and a **NOC mode** with
 incidents until someone acknowledges them. ([56-58](docs/GUIDE.md#57-pulse-net-15-beta-read-only))
+
+**Your own wallpaper (1.5.1).** `wallpaper = "~/Pictures/city.jpg"` (or `"omarchy"`, your theme's background) puts
+your picture under the widgets, with Pulse's live weather, planes and fireworks on top, or the panels alone; with
+`wallpaper_colors = "picture"` the panels take their colours from it.
+([section 60](docs/GUIDE.md#60-your-own-wallpaper-151))
 
 **Reduced motion.** `motion = "reduced"`: everything keeps still and still shows your data, community scenes too.
 ([section 59](docs/GUIDE.md#59-reduced-motion-15))
