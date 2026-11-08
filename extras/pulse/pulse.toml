@@ -21,6 +21,8 @@ pause_when_covered = true        # pause drawing on monitors almost fully covere
 privacy_on_screenshare = true    # sharing or recording the screen hides cameras, notifications and private panels
 temp_crit = 90                   # °C: CPU temperature alert
 gpu = "auto"                     # "never" if the wallpaper is heavy on a PC without a working GPU driver
+gpu_prefer = "auto"              # 1.5.2, laptops with two GPUs: "discrete" draws on the NVIDIA/AMD one (much faster
+                                 # when the integrated GPU struggles, more battery); "auto" lets the system choose
 dmabuf = "auto"                  # NVIDIA: "auto" keeps WebKit's DMA-BUF renderer off (some drivers draw nothing with
                                  # it); "on" is much lighter on recent drivers, above all with 4K or several monitors
 face = "agents"                  # the agent's face in the core: "agents" (while one works) | "always" | "off"
