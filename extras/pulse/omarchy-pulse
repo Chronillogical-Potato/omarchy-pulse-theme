@@ -3022,9 +3022,10 @@ class Hub:
                     for k, v in (("cpu", cpu), ("rx", rxr), ("tx", txr), ("ram", s["ram"]), ("gpu", gpu or 0),
                                  ("temp", temp or 0)):
                         self.hist[k].append(round(v, 1))
-                # built-in alerts: a hot CPU, a full disk
+                # built-in alerts: a hot CPU, a full disk. One sample is not
+                # enough: a coretemp input can read ~100 °C for under a second.
                 if temp:
-                    self.edge_alert("temp", "CPU temperature", temp >= float(self.conf("pulse", "temp_crit", default=90)),
+                    self.edge_alert("temp", "CPU temperature", self._temp_hot(temp),
                                     f"{temp:.0f} °C")
                 self.edge_alert("disk", "Disk /", s["disk"] >= 95, f"{s['disk']:.0f}% used")
             except Exception as e:   # noqa: BLE001
@@ -3032,6 +3033,16 @@ class Hub:
             time.sleep(2)
 
     _edges: dict = {}
+
+    def _temp_hot(self, temp) -> bool:
+        """True only after two samples in a row at or above temp_crit."""
+        try:
+            limit = float(self.conf("pulse", "temp_crit", default=90))
+        except (TypeError, ValueError):
+            limit = 90.0
+        hot = temp is not None and temp >= limit
+        self._temp_hot_run = (getattr(self, "_temp_hot_run", 0) + 1) if hot else 0
+        return self._temp_hot_run >= 2
 
     def edge_alert(self, key: str, title: str, bad: bool, text: str) -> None:
         if bad and not self._edges.get(key):
@@ -3510,23 +3521,75 @@ def read_gpu():
     return None
 
 
+# A lone core this far above the median is a bad sample, not heat.
+_TEMP_OUTLIER_C = 25
+
+
+def _temp_c(path: Path):
+    try:
+        fault = path.with_name(path.name.replace("_input", "_fault"))
+        if fault.exists() and fault.read_text().strip() not in ("0", ""):
+            return None
+        v = int(path.read_text()) / 1000
+    except Exception:   # noqa: BLE001
+        return None
+    return v if 0 < v < 130 else None
+
+
+def _cpu_temp(package, cores):
+    """°C from a package reading and per-core readings.
+
+    One coretemp input can read ~100 °C for a single sample while the package
+    and the other cores stay near idle (seen on a Core Ultra 9 285H). Taking
+    the max of those inputs reports that glitch. A core more than 25 °C above
+    the median is dropped. The package is kept: a hot package is still heat.
+    """
+    if not cores:
+        return round(package, 1) if package is not None else None
+    ordered = sorted(cores)
+    median = ordered[len(ordered) // 2]
+    plausible = [c for c in ordered if c <= median + _TEMP_OUTLIER_C]
+    core_temp = max(plausible) if plausible else median
+    if package is None:
+        return round(core_temp, 1)
+    return round(max(package, core_temp), 1)
+
+
 def read_temp():
-    best = None
-    for hw in Path("/sys/class/hwmon").glob("hwmon*"):
+    return _read_hwmon_temp(Path("/sys/class/hwmon"))
+
+
+def _read_hwmon_temp(root: Path):
+    cpu_names = ("coretemp", "k10temp", "zenpower", "cpu_thermal", "macsmc_hwmon", "thinkpad")
+    cores, package, fallback = [], None, None
+    for hw in root.glob("hwmon*"):
         try:
             name = (hw / "name").read_text().strip()
         except Exception:   # noqa: BLE001
             continue
-        if name not in ("coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz", "macsmc_hwmon", "thinkpad"):
+        cpu = name in cpu_names
+        if not cpu and name != "acpitz":
             continue
         for t in hw.glob("temp*_input"):
+            v = _temp_c(t)
+            if v is None:
+                continue
+            if not cpu:
+                fallback = v if fallback is None else max(fallback, v)
+                continue
+            label = ""
             try:
-                v = int(t.read_text()) / 1000
-                if 0 < v < 130:
-                    best = v if best is None else max(best, v)
+                label = t.with_name(t.name.replace("_input", "_label")).read_text().strip()
             except Exception:   # noqa: BLE001
                 pass
-    return round(best, 1) if best is not None else None
+            if label.lower().startswith("package") or label in ("Tctl", "Tdie"):
+                package = v if package is None else max(package, v)
+            else:
+                cores.append(v)
+    chosen = _cpu_temp(package, cores)
+    if chosen is not None:
+        return chosen
+    return round(fallback, 1) if fallback is not None else None
 
 
 def sound_conf(c: dict, meeting: bool = False, private: bool = False) -> dict | None:
