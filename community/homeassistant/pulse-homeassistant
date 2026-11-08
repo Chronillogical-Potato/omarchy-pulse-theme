@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Home Assistant entities as Pulse status tiles, each with the age of its last report, so a stale "all clear"
+never looks like a healthy system. Read-only. Needs: python3 (standard library only).
+
+Env: HA_URL (http://homeassistant.local:8123), HA_TOKEN_FILE (or HA_TOKEN), HA_ENTITIES:
+    a comma-separated list of entity_id[=max_age], max_age like 90s, 15m, 2h, 1d (default HA_MAX_AGE, 1h).
+"""
+from __future__ import annotations
+
+import calendar
+import json
+import os
+import re
+import sys
+import time
+import urllib.request
+
+BAD = {"unavailable", "unknown", "none", ""}
+OK_STATES = {"off", "closed", "locked", "home", "idle", "ok", "clear", "false", "normal", "standby", "docked"}
+ALERT_STATES = {"on", "open", "unlocked", "problem", "detected", "true", "wet", "smoke", "alarm", "triggered", "leak"}
+
+
+def age_secs(v: str) -> float:
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*", str(v or ""))
+    if not m:
+        return 3600.0
+    return float(m.group(1)) * {"s": 1, "": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+
+
+def iso_epoch(v: str) -> float | None:
+    """2026-11-08T08:12:31.123456+00:00 -> epoch (Home Assistant times are UTC)."""
+    m = re.match(r"(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d+)?([+-]\d\d:\d\d|Z)?", str(v or ""))
+    if not m:
+        return None
+    y, mo, d, h, mi, s, tz = m.groups()
+    t = calendar.timegm((int(y), int(mo), int(d), int(h), int(mi), int(s)))
+    if tz and tz != "Z":
+        sign = 1 if tz[0] == "+" else -1
+        t -= sign * (int(tz[1:3]) * 3600 + int(tz[4:6]) * 60)
+    return float(t)
+
+
+def human(secs: float) -> str:
+    return f"{int(secs)}s" if secs < 90 else f"{int(secs // 60)}m" if secs < 5400 else f"{secs / 3600:.0f}h" if secs < 172800 else f"{secs / 86400:.0f}d"
+
+
+def tile(ent: dict, max_age: float, now: float, hide: bool = False, idx: int = 0) -> dict:
+    """One entity as a status item. The time is last_reported (Home Assistant 2024.3+): it moves at every report even
+    when the value stays the same, so a door that stays closed is not stale. Older versions: last_updated."""
+    eid = ent.get("entity_id", "?")
+    attrs = ent.get("attributes") or {}
+    name = f"sensor {idx + 1}" if hide else str(attrs.get("friendly_name") or eid)
+    state = str(ent.get("state", ""))
+    unit = attrs.get("unit_of_measurement") or ""
+    seen = iso_epoch(ent.get("last_reported") or ent.get("last_updated") or ent.get("last_changed"))
+    age = now - seen if seen else None
+    value = f"{state} {unit}".strip()
+    if state.lower() in BAD:
+        return {"title": name, "text": f"{state or 'no state'}" + (f" · {human(age)} ago" if age is not None else ""),
+                "level": "crit", "t": seen}
+    if age is None or age > max_age:
+        return {"title": name, "text": f"{value} · stale {human(age) if age is not None else '?'} (max {human(max_age)})",
+                "level": "warn", "t": seen}
+    low = state.lower()
+    level = "warn" if low in ALERT_STATES and ent.get("entity_id", "").startswith("binary_sensor.") and attrs.get("device_class") in (
+        "door", "window", "opening", "moisture", "smoke", "gas", "problem", "safety", "tamper", "carbon_monoxide") else "ok"
+    return {"title": name, "text": value, "level": level, "t": seen}
+
+
+def main() -> int:
+    url = os.environ.get("HA_URL", "").rstrip("/")
+    tok = os.environ.get("HA_TOKEN", "")
+    if not tok and os.environ.get("HA_TOKEN_FILE"):
+        tok = open(os.path.expanduser(os.environ["HA_TOKEN_FILE"])).read().strip()
+    ents = [e.strip() for e in os.environ.get("HA_ENTITIES", "").split(",") if e.strip()]
+    if not url or not tok or not ents:
+        print("set HA_URL, HA_TOKEN_FILE (or HA_TOKEN) and HA_ENTITIES", file=sys.stderr)
+        return 1
+    default_age = age_secs(os.environ.get("HA_MAX_AGE", "1h"))
+    hide = os.environ.get("HA_HIDE_NAMES") == "1"
+    now, items = time.time(), []
+    for i, spec in enumerate(ents[:24]):
+        eid, _, mx = spec.partition("=")
+        req = urllib.request.Request(f"{url}/api/states/{eid}", headers={"Authorization": "Bearer " + tok})
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                ent = json.loads(r.read(200_000))
+        except Exception as e:   # noqa: BLE001
+            items.append({"title": f"sensor {i + 1}" if hide else eid, "text": f"cannot read: {str(e)[:40]}", "level": "crit"})
+            continue
+        items.append(tile(ent, age_secs(mx) if mx else default_age, now, hide, i))
+    print(json.dumps({"type": "status", "items": items}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -18,6 +18,9 @@ html { font-size: calc(100vh / 68); }
 html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
   font-family: var(--font); cursor: default; user-select: none; -webkit-font-smoothing: antialiased; }
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; will-change: transform; }
+#pscene { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; }   /* 1.5: a community scene */
+body.suspended #pscene { visibility: hidden; }
+body.plugin #drones { display: none; }   /* the scene shows the agents its own way */
 #vig { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse 75% 70% at 50% 55%, transparent 45%, rgba(0,0,0,.55) 100%); }
 
 #ui { position: fixed; inset: 3.6rem 2.2rem 3rem; display: grid; grid-template-columns: 25rem 1fr 25rem;
@@ -229,3 +232,10 @@ body.sceneonly #digest, body.suspended #digest { display: none !important; }
 .drone u { text-decoration: none; color: var(--accent2); font-weight: 700; margin-right: .2rem; }
 #clock .who .heart { color: var(--crit); }
 body.sceneonly #heard, body.suspended #heard { display: none !important; }
+
+/* 1.5 beta: NOC mode */
+body.noc .panel.noc-hide { display: none; }
+#incident { position: fixed; left: 50%; bottom: 3.4rem; transform: translateX(-50%); z-index: 12; min-width: 32rem; max-width: 46rem;
+  background: rgba(20, 0, 4, .82); border: 1px solid var(--crit); padding: .7rem 1rem; cursor: pointer; font-size: .9rem; }
+#incident .tag { color: var(--crit); letter-spacing: .14em; margin-bottom: .35rem; }
+#incident .ev { color: var(--fg); opacity: .9; } #incident .ev b { color: var(--crit); font-weight: normal; margin-right: .4rem; }

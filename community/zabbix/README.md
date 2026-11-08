@@ -29,4 +29,9 @@ Pulse runs as a systemd user service and does **not** see your terminal environm
 
 ## Notes
 
-Read-only: calls `problem.get` only. Contacts only the host in `ZABBIX_URL`.
+Read-only by default: calls `problem.get` only. Contacts only the host in `ZABBIX_URL`.
+
+**Acknowledge from the wallpaper (Pulse 1.5, off by default).** When this panel has a critical problem, a storm
+hangs over the city. Add `ack = '''... pulse-zabbix --ack'''` to the source (see `source.toml`) and a **double
+click** on the storm (two clicks within 5 seconds) acknowledges its problems on Zabbix with the message
+"acknowledged from Omarchy Pulse" (`event.acknowledge`, action 6). The token needs the right to acknowledge.

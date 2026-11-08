@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse scene lab</title>
+<!-- Omarchy Pulse 1.5: the scene lab. (c) 2026 Marco Porro (x.com/MarcoPorro), MIT. -->
+<style>
+:root { --bg: #0d0f17; --fg: #d8dee9; --dim: #6b7389; --line: #232838; --ac: #7aa2f7; --ok: #9ece6a; --warn: #e0af68; --crit: #f7768e; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.45 ui-monospace, "JetBrainsMono Nerd Font", monospace; }
+header { display: flex; gap: 1rem; align-items: center; padding: .7rem 1rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header b { color: var(--ac); letter-spacing: .08em; }
+select, button, input { font: inherit; color: var(--fg); background: #151927; border: 1px solid var(--line); border-radius: 4px; padding: .25rem .5rem; }
+button { cursor: pointer; } button:hover { border-color: var(--ac); }
+main { display: grid; grid-template-columns: minmax(280px, 34%) 1fr; gap: 1rem; padding: 1rem; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.box { border: 1px solid var(--line); border-radius: 6px; padding: .7rem .8rem; margin-bottom: 1rem; }
+.box h3 { margin: 0 0 .5rem; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .12em; font-weight: normal; }
+pre#src { margin: 0; max-height: 46vh; overflow: auto; white-space: pre; font-size: 12px; color: #c0caf5; }
+pre#src i { color: var(--dim); font-style: normal; display: inline-block; width: 3ch; text-align: right; margin-right: 1ch; user-select: none; }
+#stage { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+#stage canvas, #stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+#stage iframe { pointer-events: none; }
+.row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .35rem 0; }
+.row label { min-width: 7ch; color: var(--dim); }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .crit { color: var(--crit); }
+#errs { color: var(--crit); } #errs.note { color: var(--dim); } #errs { white-space: pre-wrap; font-size: 12px; max-height: 18vh; overflow: auto; }
+.agent { display: flex; gap: .4rem; align-items: center; margin: .25rem 0; }
+#shown { min-height: 1.4em; color: var(--ac); }
+.note { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <b>PULSE · SCENE LAB</b>
+  <select id="pick"></select>
+  <span id="path" class="note"></span>
+  <span style="flex:1"></span>
+  <button id="snap">PNG</button> <button id="rec">video 6 s</button>
+</header>
+<main>
+  <div>
+    <div class="box"><h3>checks</h3><div id="checks"></div><div id="perf" style="margin-top:.4rem"></div></div>
+    <div class="box"><h3>errors</h3><div id="errs" class="note">none</div></div>
+    <div class="box"><h3>the code · it reloads when you save</h3><pre id="src"></pre></div>
+  </div>
+  <div>
+    <div id="stage"><canvas id="sky"></canvas></div>
+    <div id="shown" class="row"></div>
+    <div class="box"><h3>agents</h3><div id="agents"></div><div class="row"><button id="addAgent">+ agent</button></div></div>
+    <div class="box"><h3>your PC</h3>
+      <div class="row"><label>cpu</label><input id="cpu" type="range" min="0" max="100" value="18"><span id="cpuV"></span></div>
+      <div class="row"><label>ram</label><input id="ram" type="range" min="0" max="100" value="46"><span id="ramV"></span></div>
+      <div class="row"><label>gpu</label><input id="gpu" type="range" min="0" max="100" value="9"><span id="gpuV"></span></div>
+      <div class="row"><label>net</label><input id="net" type="range" min="0" max="100" value="10"><span id="netV"></span></div>
+    </div>
+    <div class="box"><h3>git and CI</h3>
+      <div class="row"><label>repo</label><select id="ci"><option value="ok">CI green</option><option value="run">CI running</option><option value="fail">CI failed</option><option value="">no CI</option></select>
+        <button id="commit">a commit</button><button id="push">a push</button></div>
+    </div>
+    <div class="box"><h3>world</h3>
+      <div class="row"><label>hour</label><input id="hour" type="range" min="0" max="23" value="21"><span id="hourV"></span>
+        <label>weather</label><select id="wx"><option value="0">clear</option><option value="3">cloudy</option><option value="61">rain</option><option value="71">snow</option><option value="95">storm</option><option value="45">fog</option></select></div>
+      <div class="row"><label>motion</label><select id="motion"><option>full</option><option>reduced</option></select>
+        <label>quality</label><select id="quality"><option>full</option><option>half</option></select>
+        <label>privacy</label><select id="privacy"><option value="0">off</option><option value="1">on</option></select></div>
+      <div class="row"><label>moments</label><button id="focus">focus 25</button><button id="away">away</button><button id="xmas">24 Dec</button><button id="ny">31 Dec 23:59</button></div>
+    </div>
+    <p class="note">Demo data only: everything here is made up, so screenshots and videos are safe to share.</p>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+  var Q = new URLSearchParams(location.search), TOKEN = Q.get("token") || "", $ = function (s) { return document.querySelector(s); };
+  var api = function (p) { return fetch(p + (p.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(TOKEN)).then(function (r) { return r.json(); }); };
+  var name = Q.get("scene") || "", ticket = "", mtime = 0, frame = null, base = {}, perf = null, events = [], t0 = Date.now() / 1000;
+  var names = ["claude", "codex", "grok", "hermes", "opencode", "aider"], states = ["working", "waiting", "done", "failed", "idle"];
+  var agents = [{ name: "claude", state: "working", since: t0 - 300 }, { name: "codex", state: "waiting", since: t0 - 900 }];
+  var mode = { focus: null, away: false, date: null };
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+  function drawAgents() {
+    var el = $("#agents"); el.innerHTML = "";
+    agents.forEach(function (a, i) {
+      var d = document.createElement("div"); d.className = "agent";
+      d.innerHTML = '<span style="min-width:9ch">' + esc(a.name) + "</span><select>" + states.map(function (s) { return "<option" + (s === a.state ? " selected" : "") + ">" + s + "</option>"; }).join("") + '</select><button>×</button>';
+      d.querySelector("select").onchange = function (e) { a.state = e.target.value; a.since = Date.now() / 1000; if (a.state === "done") events.push({ kind: "fireworks", text: a.name + " · done", t: Date.now() / 1000 }); };
+      d.querySelector("button").onclick = function () { agents.splice(i, 1); drawAgents(); };
+      el.appendChild(d);
+    });
+  }
+  $("#addAgent").onclick = function () { var n = names[agents.length % names.length]; agents.push({ name: agents.length >= names.length ? n + agents.length : n, state: "working", since: Date.now() / 1000 }); drawAgents(); };
+  $("#commit").onclick = function () { events.push({ kind: "commit", text: "omarchy-pulse-theme", t: Date.now() / 1000 }); };
+  $("#push").onclick = function () { events.push({ kind: "push", text: "omarchy-pulse-theme · pushed", t: Date.now() / 1000 }); };
+  $("#focus").onclick = function () { var n = Date.now() / 1000; mode.focus = mode.focus ? null : { start: n, until: n + 1500 }; };
+  $("#away").onclick = function () { mode.away = !mode.away; };
+  $("#xmas").onclick = function () { mode.date = mode.date === "xmas" ? null : "xmas"; };
+  $("#ny").onclick = function () { mode.date = mode.date === "ny" ? null : "ny"; mode.nyAt = Date.now(); };
+  function demoState() {
+    var v = function (id) { var x = +$("#" + id).value; var s = $("#" + id + "V"); if (s) s.textContent = id === "hour" ? x + ":00" : x + "%"; return x; };
+    var cpu = v("cpu"), net = v("net"), hour = v("hour"), now = Date.now() / 1000, priv = $("#privacy").value === "1";
+    var cores = []; for (var i = 0; i < 12; i++) cores.push(Math.max(0, Math.min(100, cpu + Math.sin(now * 0.7 + i * 1.9) * 15)));
+    var month = 11, day = 8, h = hour, m = 0, s = 0;
+    if (mode.date === "xmas") { month = 12; day = 24; }
+    if (mode.date === "ny") { month = 12; day = 31; var left = 60 - Math.floor((Date.now() - mode.nyAt) / 1000); if (left > 0) { h = 23; m = 59; s = 60 - left; } else { month = 1; day = 1; h = 0; m = 0; s = -left; } }
+    var code = +$("#wx").value;
+    return {
+      v: base.v || "1.5.0", t: now, demo: true, privacy: priv,
+      time: { hour: h, minute: m, second: s, weekday: 0, day: day, month: month, year: month === 1 ? 2027 : 2026 },
+      sys: { cpu: cpu, cores: cores, ram: v("ram"), swap: 3, gpu: v("gpu"), temp: 40 + cpu / 2, disk: 61, rx: Math.pow(10, net / 14), tx: Math.pow(10, net / 16), load: [String(cpu / 25), "1.0", "0.8"] },
+      agents: agents.map(function (a) { return { name: priv ? "" : a.name, state: a.state, since: a.since, text: "" }; }),
+      git: [{ name: priv ? "" : "omarchy-pulse-theme", branch: priv ? "" : "main", week: 23, last: now - 600, dirty: 2, ci: $("#ci").value },
+            { name: priv ? "" : "dotfiles", branch: priv ? "" : "main", week: 4, last: now - 86400, dirty: 0, ci: "ok" }],
+      weather: { code: code, temp: code === 71 ? -2 : 9, day: hour >= 7 && hour < 17 ? 1 : 0, wind: 12, windDir: 250, cloud: code ? 90 : 5, rain: code >= 61 && code < 70 ? 1.2 : 0 },
+      focus: mode.focus, away: mode.away, meeting: false,
+      theme: base.theme || { bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7", accent2: "#bb9af7", ok: "#9ece6a", warn: "#e0af68", crit: "#f7768e", dim: "#565f89" },
+      ui: { quality: $("#quality").value, motion: $("#motion").value, fps: 30 },
+      events: events.slice(-12),
+      layout: { horizon: 0.745 }
+    };
+  }
+  // the sky behind the scene, as Pulse draws it (simplified): the scene must look right on top of it
+  function sky() {
+    var c = $("#sky"), g = c.getContext("2d"), r = c.getBoundingClientRect(), th = (base.theme || {});
+    c.width = r.width; c.height = r.height;
+    var hex = function (h, d) { h = (h || d).slice(1); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; };
+    var bg = hex(th.bg, "#1a1b26"), a2 = hex(th.accent2, "#bb9af7"), hz = c.height * 0.745;
+    var mix = function (a, b, k) { return "rgb(" + [0, 1, 2].map(function (i) { return Math.round(a[i] + (b[i] - a[i]) * k); }).join(",") + ")"; };
+    var s = g.createLinearGradient(0, 0, 0, hz); s.addColorStop(0, mix(bg, [0, 0, 0], 0.35)); s.addColorStop(1, mix(bg, a2, 0.28));
+    g.fillStyle = s; g.fillRect(0, 0, c.width, hz);
+    var f = g.createLinearGradient(0, hz, 0, c.height); f.addColorStop(0, mix(bg, a2, 0.2)); f.addColorStop(1, mix(bg, [0, 0, 0], 0.5));
+    g.fillStyle = f; g.fillRect(0, hz, c.width, c.height - hz);
+    g.strokeStyle = "rgba(255,255,255,.08)"; g.beginPath(); g.moveTo(0, hz); g.lineTo(c.width, hz); g.stroke();
+  }
+  addEventListener("resize", sky);
+  function load(n) {
+    name = n; history.replaceState(null, "", "?token=" + encodeURIComponent(TOKEN) + "&scene=" + encodeURIComponent(n));
+    if (frame) frame.remove();
+    $("#errs").textContent = "none"; $("#errs").className = "note"; perf = null;
+    frame = document.createElement("iframe"); frame.setAttribute("sandbox", "allow-scripts");
+    frame.src = "/scene/" + encodeURIComponent(n) + "?ticket=" + encodeURIComponent(ticket) + "&_=" + Date.now();
+    $("#stage").appendChild(frame);
+    src(true);
+  }
+  function src(force) {
+    if (!name) return;
+    api("/api/scene-src?name=" + encodeURIComponent(name)).then(function (j) {
+      if (!force && j.mtime === mtime) return;
+      var reload = mtime && j.mtime !== mtime; mtime = j.mtime;
+      $("#path").textContent = j.path || "not found";
+      $("#src").innerHTML = String(j.src || "").split("\n").map(function (l, i) { return "<i>" + (i + 1) + "</i>" + esc(l); }).join("\n");
+      $("#checks").innerHTML = (j.checks || []).map(function (c) { return '<div class="' + c[0] + '">' + { ok: "✓", warn: "!", crit: "✗" }[c[0]] + " " + esc(c[1]) + "</div>"; }).join("");
+      if (reload && !force) load(name);
+    });
+  }
+  addEventListener("message", function (ev) {
+    if (!frame || ev.source !== frame.contentWindow) return;
+    var m = ev.data || {};
+    if (m.pulseScene === "error") { var e = $("#errs"); if (e.className) { e.textContent = ""; e.className = ""; } e.textContent += "[" + m.where + "] " + m.error + "\n"; }
+    else if (m.pulseScene === "show") { $("#shown").textContent = "click → " + m.text; }
+    else if (m.pulseScene === "perf") {
+      perf = m; var full = $("#quality").value === "full", budget = full ? 8 : 5;
+      var verdict = m.draw <= budget ? '<span class="ok">✓ light enough</span>' : m.draw <= budget * 2 ? '<span class="warn">! a bit heavy</span>' : '<span class="crit">✗ too slow for a wallpaper</span>';
+      $("#perf").innerHTML = "draw " + m.draw + " ms (worst " + m.worst + ") · " + m.fps + " fps · " + m.w + "×" + m.h + " · " + verdict;
+    }
+    else if (m.pulseScene === "snap") { var a = document.createElement("a"); a.href = m.url; a.download = name + ".png"; a.click(); }
+    else if (m.pulseScene === "video") { if (m.error) { alert(m.error); return; } var b = document.createElement("a"); b.href = m.url; b.download = name + ".webm"; b.click(); $("#rec").textContent = "video 6 s"; }
+  });
+  $("#stage").addEventListener("click", function (e) {
+    var r = e.currentTarget.getBoundingClientRect();
+    if (frame) frame.contentWindow.postMessage({ pulse: "click", x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }, "*");
+  });
+  $("#snap").onclick = function () { if (frame) frame.contentWindow.postMessage({ pulse: "snap" }, "*"); };
+  $("#rec").onclick = function () { if (frame) { $("#rec").textContent = "recording…"; frame.contentWindow.postMessage({ pulse: "record", secs: 6 }, "*"); } };
+  $("#pick").onchange = function (e) { mtime = 0; load(e.target.value); };
+  setInterval(function () {
+    if (frame && frame.contentWindow) frame.contentWindow.postMessage({ pulse: "state", state: demoState(), fps: 30, scale: $("#quality").value === "half" ? 0.5 : 1 }, "*");
+  }, 250);
+  setInterval(function () { src(false); }, 1000);
+  drawAgents();
+  Promise.all([api("/api/scenes"), api("/api/scene-state")]).then(function (r) {
+    ticket = r[0].ticket; base = r[1] || {}; sky();
+    var list = Object.keys(r[0].scenes || {});
+    $("#pick").innerHTML = list.map(function (n) { return "<option" + (n === name ? " selected" : "") + ">" + esc(n) + "</option>"; }).join("");
+    if (!name || list.indexOf(name) < 0) name = list[0] || "";
+    if (name) load(name); else $("#checks").innerHTML = '<span class="warn">no community scene yet: omarchy-pulse scene new NAME</span>';
+  }).catch(function () { $("#checks").innerHTML = '<span class="crit">cannot reach Pulse (open this from omarchy-pulse scene lab)</span>'; });
+})();
+</script>
+</body>
+</html>

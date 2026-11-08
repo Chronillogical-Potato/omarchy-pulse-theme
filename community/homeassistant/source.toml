@@ -1,0 +1,11 @@
+# Home Assistant entities as status tiles, each with how long ago it last reported.
+# A sensor that stops reporting turns amber ("stale 3h") instead of showing an old "all clear".
+[[source]]
+name = "home-sensors"
+title = "home"
+icon = "󰟐"
+every = 30
+slot = "left"
+private = true
+# entity=max age (90s, 15m, 2h, 1d); without one, HA_MAX_AGE (default 1h)
+command = '''HA_URL=http://homeassistant.local:8123 HA_TOKEN_FILE=~/.config/pulse-homeassistant/token HA_ENTITIES="binary_sensor.front_door=2h,sensor.server_room_temperature=15m,binary_sensor.water_leak=6h" pulse-homeassistant'''

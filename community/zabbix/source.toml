@@ -9,3 +9,6 @@ notify = true
 # Pulse runs as a systemd user service and does not see your shell env.
 # Set the variables inline in the command (or Environment= in the unit):
 command = '''ZABBIX_URL=https://zabbix.example.lan ZABBIX_TOKEN=YOUR_TOKEN pulse-zabbix'''
+# Pulse 1.5: a double click on this panel's storm acknowledges its problems on Zabbix (off unless you add this line;
+# the token then needs the right to acknowledge)
+# ack = '''ZABBIX_URL=https://zabbix.example.com ZABBIX_TOKEN=... pulse-zabbix --ack'''

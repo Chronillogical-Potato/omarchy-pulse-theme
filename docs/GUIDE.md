@@ -53,6 +53,21 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [44. Pulse Wrapped](#44-pulse-wrapped) ·
   [45. Robots on the floor](#45-robots-on-the-floor) ·
   [46. The banner plane](#46-the-banner-plane)
+- New in 1.5:
+  [47. Community scenes](#47-community-scenes-15) ·
+  [48. The holidays](#48-the-holidays-15) ·
+  [49. Eclipses](#49-eclipses-15) ·
+  [50. The code construction site](#50-the-code-construction-site-15) ·
+  [51. What expires](#51-what-expires-15) ·
+  [52. The weather of your infrastructure](#52-the-weather-of-your-infrastructure-15) ·
+  [53. Home Assistant with the age of every sensor](#53-home-assistant-with-the-age-of-every-sensor-15) ·
+  [54. The energy of your home](#54-the-energy-of-your-home-15) ·
+  [55. The noir scene](#55-the-noir-scene-15) ·
+  [56. The hacker scene and the terminal](#56-the-hacker-scene-and-the-terminal-15) ·
+  [57. Pulse Net](#57-pulse-net-15-beta-read-only) ·
+  [58. NOC mode](#58-noc-mode-15-beta) ·
+  [59. Reduced motion](#59-reduced-motion-15)
+- Creating scenes: [docs/SCENES.md](SCENES.md)
 
 ---
 
@@ -107,11 +122,14 @@ Nothing in the scene is decoration only:
 Scenes (`scene =` in `[pulse]`): **sphere** (the LED sphere in the middle of the city, the default from 1.1),
 **skyline** (the city around a wireframe core), **orbit** (each core becomes a moon on its own ring around a
 larger core; faster moons, busier cores) and **calm** (a still grid, at most 10 frames a second).
+New in 1.5: **noir** (a futuristic megacity at night, a big screen instead of the sphere; section 55), **hacker**
+(phosphor green or neon noir, a radar on your network; section 56) and the community scenes, such as **pond**, or
+your own (section 47).
 
 To change the scene, edit `scene` in `~/.config/omarchy-pulse/pulse.toml`, or in one line:
 
 ```
-sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm
+sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm | noir | hacker | pond
 ```
 
 The live wallpaper switches by itself within about 3 seconds (`omarchy-pulse reload` to do it now). Check the
@@ -460,6 +478,13 @@ In `[builtin]` (`false` hides one):
 - Sources run as you, with your permissions: only put commands you trust in `pulse.toml`.
 - In privacy mode the drones, the names and addresses of the cars and the private lines of "while you were away"
   are hidden, and the voice is silent. MAC addresses never leave the hub; the pointer position never leaves the PC.
+- 1.5: community scenes run in a sandbox with no network, no token and no access to Pulse, and get only a small
+  read-only part of the state (no location, devices, calendar or notifications; no names while sharing). Eclipses and
+  holidays are computed on your PC. Certificates are read from the servers you list, domains with whois. Pulse Net is
+  off by default and only reads from your devices (secrets in files, TLS verified unless you say otherwise); no
+  address and no MAC ever reaches the page, and no name while you share the screen; the syslog listener takes only
+  the addresses you allow. The terminal's lines are hidden while sharing. The only write to another system is the
+  Zabbix acknowledgement, off unless you add `ack`, and only with a double click.
 - 1.4: the night sky is computed on your PC (nothing is sent). Starlink orbits are downloaded from CelesTrak (nothing
   about you is sent). Storms and air quality ask Open-Meteo about your city's coordinates, like the weather. The
   lights and the speakers are driven on your network (Home Assistant, the Hue bridge). Phone notifications go through
@@ -546,6 +571,11 @@ In `[builtin]` (`false` hides one):
 | Nothing on my phone | `omarchy-pulse phone test`; the ntfy app must be subscribed to the same topic. |
 | The car does not appear | `[car] enabled = true` and the Tessie `token` (or the Home Assistant entities); the log says `car: ...`. A car being driven is hidden. |
 | No tsunami wave | it only comes when USGS marks an earthquake with a tsunami message; try `curl -X POST -H "X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)" "localhost:47800/api/fx?kind=quake&mag=7&tsunami=1"`. |
+| A community scene shows nothing | `omarchy-pulse scene check NAME`, then `omarchy-pulse scene lab NAME`: its errors are listed there (and once a minute in the log, `scene NAME: ...`). |
+| No eclipse | `omarchy-pulse sky` lists the next ones you can see from your city; most years have none or only a small one where you are. |
+| A candle says `?` | the date could not be read: for a domain install `whois`; for a certificate check the host and port. |
+| Pulse Net shows nothing | `[net] enabled = true`; the log says `net switches: ...`, `net fw: ...`; try `snmpbulkwalk -v2c -c public HOST 1.3.6.1.2.1.2.2.1.8` yourself; for a self-signed certificate `verify = false` or `ca_file`. |
+| No syslog bolts | the device must send to this PC's address, UDP 5514 (or your `listen`), and be in `allow`; only errors and worse (`max_severity`). |
 | The city looks soft | `quality = "full"` in `[pulse]` (section 12); `auto` draws it at half on battery and on screens above 2560x1440. |
 | Choppy, or a `WebKitWebProcess` at 100% (NVIDIA, 4K, two monitors) | `quality = "half"`; `omarchy-pulse perf`; if frames take much longer to reach the screen than to draw, try `dmabuf = "on"` (section 12). |
 | A panel does not appear | read the amber line at its bottom; run the command yourself in a terminal; `omarchy-pulse reload`. |
@@ -592,6 +622,7 @@ browser; `omarchy-pulse serve --demo` does the same with demo data (no personal 
 ~/.local/state/omarchy-pulse/timelapse/    today's pictures of the scene, made into a video at midnight (1.3)
 ~/.local/state/omarchy-pulse/stats.json    the numbers of your year, for Pulse Wrapped (1.4)
 ~/.local/state/omarchy-pulse/starlink.json the orbits of the last Starlink launches, from CelesTrak (1.4)
+~/.config/omarchy-pulse/scenes/            your community scenes (1.5)
 ~/Videos/omarchy-pulse/pulse-DATE.mp4      your days as videos (1.3)
 ```
 
@@ -1172,7 +1203,7 @@ generic one, of no brand.
 | `omarchy-pulse city` | your city: buildings, streak, monuments (28) |
 | `omarchy-pulse calendar` | the next events, the trains (31) |
 | `omarchy-pulse timelapse [today \| DATE]` | your day as a video (30) |
-| `omarchy-pulse sky` | tonight: the Moon, the planets, the meteor shower, the next Starlink train, the air (37-40) |
+| `omarchy-pulse sky` | tonight: the Moon, the planets, the meteor shower, the next Starlink train, the next eclipses, the air (37-40, 49) |
 | `omarchy-pulse wrapped [YEAR]` | Pulse Wrapped, your year as a video (44) |
 | `omarchy-pulse lights pair [IP] \| test \| alert \| lightning \| quake` | the lights of your room (42) |
 | `omarchy-pulse phone new \| test` | notifications on your phone (43) |
@@ -1184,6 +1215,10 @@ generic one, of no brand.
 | `omarchy-pulse perf [--probe]` | frame times on every monitor (12) |
 | `omarchy-pulse reload` | read `pulse.toml` again now |
 | `omarchy-pulse doctor` | check dependencies, config and sources |
+| `omarchy-pulse scene list \| new NAME \| check NAME \| lab [NAME]` | community scenes and the scene lab (47, docs/SCENES.md) |
+| `omarchy-pulse term` | (beta) a read-only terminal on the city: scan, ping, status (56) |
+| `omarchy-pulse noc on \| off \| ack` | (beta) NOC mode and its incidents (58) |
+| `omarchy-pulse trap` | (beta) for snmptrapd's traphandle: SNMP traps as bolts (57) |
 
 **Hey sphere** (English or Italian; section 27):
 
@@ -1220,7 +1255,7 @@ curl -H "$T" "localhost:47800/api/state"                            # everything
 ```
 
 **Try the scene** by adding to the page address (`omarchy-pulse serve` prints it): `&wx=rain` (clear, part, cloud,
-rain, snow, storm, fog), `&wind=50` (km/h), `&scene=orbit`, `&prog=weather` (what the sphere shows: clock, weather,
+rain, snow, storm, fog), `&wind=50` (km/h), `&scene=orbit` (or noir, hacker), `&prog=weather` (what the sphere shows: clock, weather,
 cpu, news, car, launch...).
 
 ## 37. The real night sky
@@ -1629,3 +1664,250 @@ omarchy-pulse banner "SHIPPED!"      # now, with these (from a script, a git hoo
 
 The Omarchy icon comes from [Dashboard Icons](https://dashboardicons.com/icons/omarchy) (Apache-2.0). Omarchy is a
 project by Basecamp; Pulse is a community theme that thanks it, not an official Omarchy project.
+
+## 47. Community scenes (1.5)
+
+Anyone can draw a whole new world for Pulse, in one JavaScript file, without touching the engine: a pond, a garage,
+a forest of commits, a room. Pulse keeps the sky, the weather, the planes, the effects and all the panels; the scene
+draws its world on top of the sky. The full guide for creators is [docs/SCENES.md](SCENES.md).
+
+```bash
+omarchy-pulse scene list                 # the built-in scenes and the community ones
+omarchy-pulse scene new myscene          # a new scene from a template, in ~/.config/omarchy-pulse/scenes/
+omarchy-pulse scene lab myscene          # the scene lab in your browser: live preview, demo data, checks, export
+omarchy-pulse scene check myscene        # is it ready to share?
+```
+
+```toml
+[pulse]
+scene = "pond"      # the example that comes with Pulse: every AI agent a fish, every repo a water lily
+```
+
+**Safe by design.** A scene runs alone in a sandboxed frame with no network at all, no token, no access to Pulse, to
+your files or to the page: it only gets a read-only copy of a small part of the state (your agents, CPU, RAM, Git,
+the weather, the theme, the holidays), never your location, your network devices, your calendar or notifications,
+and no names while you share the screen. You can install a scene from anyone without worrying about it.
+
+## 48. The holidays (1.5)
+
+From 8 December to 6 January, lights along the sky and a Christmas tree on the floor; snow when it is really cold
+where you are (2 °C or less); on Christmas morning a greeting. On 31 December, in the last hour, the countdown under
+the city, then the last minute big on the sphere, second by second, on your own clock; at midnight "HAPPY 2027",
+fireworks for a quarter of an hour, the banner plane and the voice (even in the quiet hours, if the voice is on).
+
+```toml
+[festive]
+enabled = true
+christmas = true
+new_year = true
+lights_from = "12-08"
+lights_to = "01-06"
+```
+
+## 49. Eclipses (1.5)
+
+Pulse computes the eclipses you can see from your city, on your PC (the same astronomy as the night sky, with the
+Moon's parallax, which moves it by up to a degree depending on where you stand). During an eclipse of the Sun, the
+Moon's disc covers the Sun where it really is, the light drops with how much is covered, and near totality the stars
+come out and the corona shines. During an eclipse of the Moon, the Moon turns copper red in the Earth's shadow.
+Half an hour before, the voice and your phone tell you; `omarchy-pulse sky` lists the next ones (here from Berlin):
+
+```
+Eclipse of the Moon (penumbral): Sun 21 Feb 2027 00:07, a faint dimming of the Moon, from 22:09 to 02:07
+Eclipse of the Sun (partial): Mon 02 Aug 2027 11:14, 36% of the Sun covered, from 10:17 to 12:12
+```
+
+Times are right to a few minutes and sizes to a few percent: a wallpaper, not an almanac. On the edge of a path of
+totality, check a precise source (for example timeanddate.com) before you travel. `[night] eclipses = false` turns
+them off.
+
+## 50. The code construction site (1.5)
+
+The Git city (section 10) becomes a building site. Every commit lowers a new floor onto its tower; scaffolding stands
+on the top floors while there are changes not committed; a tower crane works next to the tower of every repo an AI
+agent is working on (its name or task mentions the repo; the initial of the agent is on the cab). When the CI of a
+repo fails its roof catches fire and a fire engine drives in and sprays water until the CI is green again; then,
+fireworks.
+
+## 51. What expires (1.5)
+
+Certificates, domains, licences: a candle each, on the floor, as tall as the days left. Under `warn_days` it turns
+amber, under `crit_days` red: an alert, the voice and your phone, once a day. Certificates are read from the server
+itself (no credentials), domains with `whois` (`sudo pacman -S whois`), anything else from a date you write.
+
+```toml
+[expiry]
+hosts = ["example.com", "vpn.example.com:8443"]
+domains = ["example.com"]
+items = [{ name = "licence", date = "2027-03-31" }]
+warn_days = 14
+crit_days = 3
+```
+
+## 52. The weather of your infrastructure (1.5)
+
+A panel in trouble brings the weather over the city: a grey cloud when it is amber, a storm with rain and lightning
+when it is red, with its name under it. When everything is fine, clear sky. It works with every source: Zabbix,
+Prometheus, Uptime Kuma, Home Assistant, your own scripts. `[pulse] infra_weather = false` turns it off.
+
+**Acknowledge from the wallpaper (off by default).** For the Zabbix source, add `ack = '''... pulse-zabbix --ack'''`
+(see community/zabbix): a **double click** on its storm (two clicks within 5 seconds) acknowledges its problems on
+Zabbix. Any source can do the same: `ack` is a command that gets the `id` of every item of the panel. It is the only
+thing in Pulse that writes to another system, and only if you add it.
+
+## 53. Home Assistant with the age of every sensor (1.5)
+
+`community/homeassistant`: your entities as tiles, each with how long ago it last reported. Past its max age a tile
+turns amber and says `stale 3h` instead of showing an old "all clear"; `unavailable` is red. It reads
+`last_reported` (Home Assistant 2024.3+), which moves at every report even when the value stays the same, so a door
+that stays closed for a week is not stale. Details in community/homeassistant/README.md.
+
+## 54. The energy of your home (1.5)
+
+A river across the floor: golden when the sun powers your home, blue when the grid does, wider with more load,
+flowing backwards when you send power to the grid. From Home Assistant (`[home]` url and token, section 32):
+
+```toml
+[energy]
+enabled = true
+solar = "sensor.solar_power"     # W or kW
+grid = "sensor.grid_power"       # positive from the grid, negative to it
+load = "sensor.house_power"      # or nothing: solar + grid
+peak = 6000                      # W, the river at its widest
+```
+
+## 55. The noir scene (1.5)
+
+`scene = "noir"`: a futuristic megacity at night, all original. Towers in layers with thousands of windows, red
+lights on the antennas, searchlights in the clouds, rain that never stops, neon signs, cars in the air with their
+headlights, the city's lights on the wet street. Instead of the sphere, a big screen on the central tower shows
+everything the sphere shows: the clock, the weather, the agent's face when it works, listens or talks ("hey
+sphere" too), the door camera, alerts, the countdowns. Everything else of Pulse stays: panels, planes, real weather,
+drones, the Git city. Keep it as your default if you like it.
+
+## 56. The hacker scene and the terminal (1.5)
+
+`scene = "hacker"`: the city in phosphor green (`hacker_style = "phosphor"`) or in neon noir (`"noir"`), with a
+radar that sweeps your network: every device Pulse knows (your LAN, and with Pulse Net your switches, access points
+and servers) is a blip that lights up when the sweep passes, red when it is down.
+
+`omarchy-pulse term` opens a small terminal; what you type and what it answers also appear on the wallpaper (not
+while you share the screen):
+
+```
+pulse> scan          the devices Pulse knows, and your neighbour table
+pulse> ping nas      three pings, by name
+pulse> status        switches, firewall, Wi-Fi, servers, backups
+```
+
+It only reads. Commands that change something (reboot, block...) answer that they come in a later version, with
+confirmations.
+
+## 57. Pulse Net (1.5 beta, read-only)
+
+Your network as part of the city. Everything is **off by default** and **read-only**: Pulse only reads from your
+devices. It is a beta: each part was built on the vendors' documented APIs and tested on recorded answers, not on
+every model; tell us on GitHub what works on yours. Secrets go in files (`token_file`, `key_file`, `password_file`,
+`chmod 600`), never in pulse.toml. `verify = false` only for a self-signed certificate on your own LAN (or give its
+CA in `ca_file`). Nothing of this is on the page while you share the screen: no names, no addresses ever.
+
+```toml
+[net]
+enabled = true
+every = 60
+```
+
+**Switches (SNMP).** A low building for each switch, a window for each port: lit when the port is up, brighter with
+more traffic, dark when down, red and blinking when it has new errors. The roads between switches are the links
+their LLDP (or Cisco CDP) neighbours tell, with lights running on them; a saturated uplink is a traffic jam. A switch
+that stops answering is an alert. Any managed switch: Cisco, HPE/Aruba, Juniper, MikroTik, UniFi, Netgear...
+(`sudo pacman -S net-snmp`; a read-only community or, better, SNMPv3 in `~/.snmp/snmp.conf`).
+
+```toml
+[[net.switch]]
+name = "core"
+host = "10.0.0.2"
+snmp = "-v2c -c public"     # or "-v3" with your user in ~/.snmp/snmp.conf
+saturate = 0.8              # an uplink above 80% is a jam
+```
+
+**The firewall: the city walls.** A wall along the horizon. Every blocked connection is an arrow that comes from the
+real direction of its country (GeoIP of the firewall itself) and breaks on the wall; a serious IPS event is a meteor;
+VPN users are a lit gate with their number. FortiGate (REST API token, read-only admin profile), OPNsense (API key
+and secret, in one file as `key:secret`), pfSense (with its REST API package; key in `key_file`). OPNsense and pfSense
+do not send countries: their arrows keep a steady direction for each address.
+
+```toml
+[net.firewall]
+type = "fortigate"            # fortigate | opnsense | pfsense
+url = "https://10.0.0.1"
+token_file = "~/.config/omarchy-pulse/fortigate"   # opnsense, pfsense: key_file
+```
+
+**Syslog and SNMP traps: bolts, now.** Pulse can listen for syslog on UDP; an error or worse from one of your devices
+(a link that drops, a power supply, a fan) strikes its building with lightning, the moment it happens, without
+polling. Only from the addresses in `allow`. For SNMP traps, let snmptrapd hand them to Pulse:
+`traphandle default /usr/bin/omarchy-pulse trap` in `/etc/snmp/snmptrapd.conf`.
+
+```toml
+[net.syslog]
+listen = "0.0.0.0:5514"       # point your devices at this PC, UDP 5514
+allow = ["10.0.0.0/24"]
+max_severity = 3              # 0 emergency ... 3 error
+```
+
+**Wi-Fi.** An antenna for each access point, a little person for each client, nearer when the signal is stronger;
+when a phone roams it walks to its new antenna. No MAC addresses on the page. UniFi (API key), MikroTik (REST API,
+RouterOS 7, a read-only user), OpenWrt (ubus over HTTP with an ACL that allows `hostapd.* get_clients`).
+
+```toml
+[net.wifi]
+type = "unifi"                # unifi | mikrotik | openwrt
+url = "https://10.0.0.1"
+key_file = "~/.config/pulse-unifi/key"   # mikrotik, openwrt: user + password_file
+```
+
+**The datacenter.** A tower for each host, a floor for each VM (lit when it runs); a live migration (vMotion) is a lit
+floor that travels from one tower to the other; a host in maintenance has scaffolding. Proxmox (an API token with the
+PVEAuditor role) or vCenter (a read-only user).
+
+```toml
+[net.datacenter]
+type = "proxmox"              # proxmox | vcenter (user + password_file)
+url = "https://10.0.0.10:8006"
+token_file = "~/.config/omarchy-pulse/proxmox"   # PVEAPIToken=pulse@pve!wall=SECRET
+```
+
+**Backups: the night trucks.** A truck for each job. Running: it drives out of the city. Done: it has arrived. Failed,
+or its last good run older than `max_age`: stopped halfway with its hazard lights on, an alert and your phone.
+
+```toml
+[[net.backup]]
+name = "nas"
+type = "restic"               # restic | pbs | veeam | command
+repo = "/mnt/backup/restic"
+password_file = "~/.config/omarchy-pulse/restic"
+max_age = "26h"
+# pbs: url, datastore, token_file · veeam: url, user, password_file, job · command: prints {"state": "ok", "t": EPOCH}
+```
+
+**Intruders.** A security alert is a robot with red eyes walking to the server it hit, bigger when more serious.
+CrowdSec (`cscli`, on this PC) or Wazuh (its indexer, a read-only user).
+
+```toml
+[net.intruders]
+type = "crowdsec"             # crowdsec | wazuh (url, user, password_file, min_level = 10)
+```
+
+## 58. NOC mode (1.5 beta)
+
+For a screen that watches your infrastructure (a second monitor, the TV in the office): `omarchy-pulse noc on`. The
+personal panels go away (`noc_hide`, by default music and notifications); a critical event (a red panel, an alert,
+a switch that stops answering, a bolt from syslog) opens an **incident**: the screen turns red, with its timeline,
+until someone acknowledges it with a click on the incident or `omarchy-pulse noc ack`. `[pulse] noc = true` keeps it
+on.
+
+## 59. Reduced motion (1.5)
+
+`[pulse] motion = "reduced"`: nothing runs or swings. The grid stands still, no shaking in a quake, cranes, flames,
+trucks and lights keep still, fireworks are rare, and community scenes are told to keep still too.
