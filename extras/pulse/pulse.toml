@@ -7,7 +7,9 @@
 city = ""                        # weather: "Milan", "Berlin"... (or latitude = 45.46 / longitude = 9.19)
 units = "metric"                 # or "imperial"
 clock = "24h"                    # or "12h"
-scene = "sphere"                 # sphere (the LED sphere) | skyline | orbit | calm
+scene = "sphere"                 # sphere (the LED sphere) | skyline | orbit | calm | hacker (1.5), or a community
+                                 # scene: "pond" or your own (omarchy-pulse scene list, docs/SCENES.md)
+motion = "full"                  # "reduced": nothing runs or swings (the grid, cranes, flames, community scenes keep still)
 skyline = "auto"                 # the real city behind the towers: "auto" (the weather's city), "off", or one of
                                  # 90+ cities: rome, milan, alessandria, new-york, tokyo, paris... (docs/GUIDE.md 22)
 sphere = "real"                  # the sphere's look: "real" (one continuous image) | "led" (thousands of separate lights)
@@ -27,6 +29,10 @@ banner_every = 45                # minutes, more or less; a new Omarchy release 
 agents_as = "drones"             # your AI agents (Claude Code, Codex, Grok, Hermes...): "drones" in the sky | "robots" on the floor | "both"
 celebrate = true                 # fireworks when an agent finishes, a focus ends or an alert is back to green
 sun = true                       # the sky follows the real sun (dawn, day, dusk, night)
+infra_weather = true             # 1.5: a panel in trouble brings a cloud over the city, a storm when it is critical
+hacker_style = "phosphor"        # 1.5, scene = "hacker": "phosphor" (green terminal) | "noir" (neon rain, signs, cars in the air)
+noc = false                      # 1.5 beta: NOC mode (omarchy-pulse noc on|off|ack): personal panels hidden, a red
+noc_hide = ["media", "notifications"]   # incident on screen from a critical event until someone acknowledges it
 # title = "MISSION CONTROL"      # a word under the clock
 # font = "CaskaydiaMono Nerd Font"
 # port = 47800
@@ -149,6 +155,30 @@ allow_unlock = false             # unlocking from the wallpaper stays off unless
 [night]
 enabled = true                   # the real night sky over you: the Moon (its real phase), Venus, Mars, Jupiter, Saturn,
                                  # the bright stars and their constellations, and more shooting stars in a meteor shower
+eclipses = true                  # 1.5: eclipses of the Sun and the Moon seen from your city, at their real time
+                                 # (omarchy-pulse sky lists the next ones); half an hour before, the voice and the phone
+
+[festive]
+enabled = true                   # 1.5: Christmas lights and a tree, snow when it is really cold, the New Year's
+christmas = true                 # countdown on the sphere and fireworks at midnight, on your own clock
+new_year = true
+lights_from = "12-08"            # month-day
+lights_to = "01-06"
+
+[expiry]
+# 1.5: what expires, as candles that burn down: amber under warn_days, red and aloud under crit_days
+# hosts = ["example.com", "vpn.example.com:8443"]   # TLS certificates (read from the server, no credentials)
+# domains = ["example.com"]                         # domains (needs whois: sudo pacman -S whois)
+# items = [{ name = "licence", date = "2027-03-31" }]
+warn_days = 14
+crit_days = 3
+
+[energy]
+enabled = false                  # 1.5: your home's energy as a river across the floor (Home Assistant, [home] url and token)
+# solar = "sensor.solar_power"   # W or kW
+# grid = "sensor.grid_power"     # positive = from the grid, negative = to the grid
+# load = "sensor.house_power"    # (or solar + grid)
+peak = 6000                      # W: the river at its widest
 
 [starlink]
 enabled = true                   # the Starlink trains of the last launches when they really pass over you (CelesTrak)
@@ -334,3 +364,37 @@ slot = "right"
 # name = "deploy"
 # push = true
 # type = "gauge"
+
+# ---------------------------------------------------------------- 1.5 beta: Pulse Net (read-only, off by default)
+# Your network as part of the city: docs/GUIDE.md section 57. Secrets go in files (token_file, key_file,
+# password_file, chmod 600), never here. verify = false only for a self-signed certificate on your own LAN.
+[net]
+enabled = false
+every = 60                       # seconds between reads
+# [[net.switch]]                 # a building per switch, a window per port (SNMP: sudo pacman -S net-snmp)
+# name = "core"
+# host = "10.0.0.2"
+# snmp = "-v2c -c public"        # or "-v3" with your user in ~/.snmp/snmp.conf
+# [net.firewall]                 # the city walls: fortigate (token_file) | opnsense (key_file "key:secret") | pfsense (REST API package, key_file)
+# type = "fortigate"
+# url = "https://10.0.0.1"
+# token_file = "~/.config/omarchy-pulse/fortigate"
+# [net.wifi]                     # unifi (key_file) | mikrotik (user, password_file) | openwrt (user, password_file)
+# type = "unifi"
+# url = "https://10.0.0.1"
+# key_file = "~/.config/pulse-unifi/key"
+# [net.datacenter]               # proxmox (token_file: PVEAPIToken=user@pve!pulse=SECRET) | vcenter (user, password_file)
+# type = "proxmox"
+# url = "https://10.0.0.10:8006"
+# token_file = "~/.config/omarchy-pulse/proxmox"
+# [[net.backup]]                 # restic (repo, password_file) | pbs (url, datastore, token_file) | veeam (url, user, password_file, job) | command
+# name = "nas"
+# type = "restic"
+# repo = "/mnt/backup/restic"
+# password_file = "~/.config/omarchy-pulse/restic"
+# max_age = "26h"
+# [net.intruders]                # crowdsec (cscli) | wazuh (indexer url, user, password_file, min_level)
+# type = "crowdsec"
+# [net.syslog]                   # devices send syslog here; a bolt on their building for errors and worse
+# listen = "0.0.0.0:5514"
+# allow = ["10.0.0.0/24"]

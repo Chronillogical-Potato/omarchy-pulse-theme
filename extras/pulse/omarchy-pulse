@@ -40,6 +40,11 @@
   omarchy-pulse notifications clear   empty the notifications panel (or click it)
   omarchy-pulse reload           re-read pulse.toml now (it is also re-read by itself when you save it)
   omarchy-pulse doctor           check dependencies, config and sources
+  omarchy-pulse term             (beta) a terminal on the city: scan, ping NAME, status; read-only
+  omarchy-pulse noc on|off|ack   (beta) NOC mode: the city of your infrastructure, an incident until you ack it
+  omarchy-pulse trap             (beta) for snmptrapd: traphandle default /usr/bin/omarchy-pulse trap
+  omarchy-pulse scene list | new NAME | check NAME | lab [NAME]
+                                 community scenes: your own world on the wallpaper (docs/SCENES.md)
 
 Config: ~/.config/omarchy-pulse/pulse.toml (written on the first run; your own scripts go in
 ~/.config/omarchy-pulse/sources/, which is on the PATH of every source command).
@@ -83,7 +88,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -212,6 +217,8 @@ def _items(lst) -> list:
     for it in lst[:40]:
         if isinstance(it, dict):
             d = {k: it[k] for k in ("title", "text", "right", "note", "t", "value", "unit") if k in it}
+            if it.get("id") is not None:   # 1.5: what its own system calls it (to acknowledge it there)
+                d["id"] = str(it["id"])[:64]
             d["title"] = str(it.get("title", it.get("name", it.get("label", it.get("summary", "")))))[:120]
             if "text" in d:
                 d["text"] = str(d["text"])[:300]
@@ -412,6 +419,16 @@ class Hub:
         self.listen_stop = threading.Event()
         self.speaking = False
         self.scene_override = ""
+        self.scene_err_t = 0.0
+        self.eclipse_list: list = []
+        self.expiry: list = []
+        self.energy: dict | None = None
+        self.net: dict | None = None
+        self.bolts: list = []
+        self.term: collections.deque = collections.deque(maxlen=14)
+        self.incident: dict | None = None
+        self.noc_override: bool | None = None
+        self.ack_pending: dict = {}
         self.skyline_override = ""
         self.perf_logged: dict = {}
         self.perf_probe = 0.0                  # until when the pages run uncapped, to measure (omarchy-pulse perf --probe)
@@ -489,6 +506,8 @@ class Hub:
             w = self.widgets.get(wid) or {"id": wid, "title": wid, "type": "text", "slot": "auto", "data": {}}
             old = w.get("level")
             w.update({k: v for k, v in f.items() if v is not None})
+            if w.get("level") == "crit" and old != "crit" and wid not in BUILTIN_IDS:
+                self.noc_event(f"{w.get('title', wid)} is critical")
             w["updated"] = time.time()
             if f.get("error") is None:
                 w.pop("error", None)
@@ -534,6 +553,8 @@ class Hub:
                               "Pulse · " + notify[0], notify[1]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def raise_alert(self, wid: str, title: str, text: str, level: str, speak: bool = True) -> None:
+        if level == "crit":
+            self.noc_event(f"{title} · {text}")
         with self.lock:
             self.alert_seq += 1
             self.alerts.append({"seq": self.alert_seq, "id": wid, "title": title, "text": text, "level": level,
@@ -1184,7 +1205,7 @@ class Hub:
         while True:
             try:
                 if self.location and self.conf("night", "enabled", default=True) is not False:
-                    self.night = night_sky(*self.location, time.time() + float(os.environ.get("PULSE_DEMO_SKY_OFFSET") or 0))
+                    self.night = night_sky(*self.location, self.demo_now())
                     fl = os.environ.get("PULSE_DEMO_SHOWER", "")
                     if self.demo and fl and os.path.exists(fl):   # the demo video: a strong shower while its flag file exists
                         sh0 = meteor_shower(time.time() + float(os.environ.get("PULSE_DEMO_SKY_OFFSET") or 0)) or {}
@@ -1198,6 +1219,464 @@ class Hub:
             except Exception as e:   # noqa: BLE001
                 log(f"night: {e}")
             time.sleep(60 if not self.demo else 1)
+
+    # -- 1.5 beta: Pulse Net, read-only (see the net_* helpers and docs/GUIDE.md section 57)
+    def net_conf(self) -> dict:
+        c = self.conf("net", default={}) or {}
+        return c if c.get("enabled") is True else {}
+
+    def net_http(self, url: str, c: dict, headers: dict | None = None, data: bytes | None = None, method: str | None = None):
+        """A read from one of your devices. TLS is verified unless that device says verify = false (a self-signed
+        certificate on the LAN) or gives its own CA in ca_file."""
+        import ssl
+        ctx = None
+        if url.startswith("https"):
+            if c.get("verify") is False:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+            elif c.get("ca_file"):
+                ctx = ssl.create_default_context(cafile=str(Path(str(c["ca_file"])).expanduser()))
+        req = urllib.request.Request(url, data=data, method=method or ("POST" if data else "GET"),
+                                     headers={"User-Agent": "omarchy-pulse/" + VERSION, "Accept": "application/json", **(headers or {})})
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+            body = r.read(5_000_000)
+            return json.loads(body or b"null"), r.headers
+
+    @staticmethod
+    def secret(c: dict, key: str = "token") -> str:
+        """A secret from its file (key_file, token_file, password_file), never from pulse.toml itself if it can be helped."""
+        f = c.get(key + "_file")
+        if f:
+            return Path(str(f)).expanduser().read_text().strip()
+        return str(c.get(key) or "")
+
+    def net_switches(self, c: dict, prev: dict) -> list:
+        out = []
+        for sw in (c.get("switch") or [])[:16]:
+            name, host = str(sw.get("name") or sw.get("host")), str(sw.get("host") or "")
+            try:
+                args = str(sw.get("snmp") or "-v2c -c public")
+                walks = {k: snmp_walk(host, oid, args) for k, oid in IF_OIDS.items() if k != "alias"}
+                for k, oid in (("lldp", LLDP_REM_NAME), ("cdp", CDP_DEVICE_ID)):
+                    try:
+                        walks[k] = snmp_walk(host, oid, args)
+                    except (OSError, subprocess.TimeoutExpired):
+                        walks[k] = {}
+                v = switch_view(name, walks, prev.get(name), time.time(), float(sw.get("saturate", 0.8)))
+            except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+                v = {"name": name, "up": False, "ports": [], "peers": [], "error": str(e)[:60]}
+            v["host"] = host
+            if prev.get(name, {}).get("up") and not v["up"]:
+                self.raise_alert("net:" + name, f"switch {name}", "not answering", "crit", speak=True)
+            out.append(v)
+        return out
+
+    def net_firewall(self, c: dict, seen: set) -> dict:
+        fw = c.get("firewall") or {}
+        if not fw.get("url"):
+            return {}
+        url, kind, home = str(fw["url"]).rstrip("/"), str(fw.get("type", "fortigate")), self.location
+        ev, vpn = [], None
+        if kind == "fortigate":
+            h = {"Authorization": "Bearer " + self.secret(fw)}
+            j, _ = self.net_http(url + "/api/v2/log/memory/traffic/forward?rows=60&filter=action%3D%3Ddeny", fw, h)
+            ev += fortigate_events(j, home, "deny")
+            try:
+                j, _ = self.net_http(url + "/api/v2/log/memory/ips?rows=20", fw, h)
+                ev += fortigate_events(j, home, "ips")
+                j, _ = self.net_http(url + "/api/v2/monitor/vpn/ssl", fw, h)
+                vpn = fortigate_vpn(j)
+            except (OSError, ValueError):
+                pass
+        elif kind == "opnsense":
+            key = self.secret(fw, "key")
+            h = {"Authorization": "Basic " + base64.b64encode(key.encode()).decode()}
+            j, _ = self.net_http(url + "/api/diagnostics/firewall/log", fw, h)
+            ev += opnsense_events(j if isinstance(j, list) else (j or {}).get("rows", []), home)
+        elif kind == "pfsense":
+            j, _ = self.net_http(url + "/api/v2/status/logs/firewall?limit=60", fw, {"X-API-Key": self.secret(fw, "key")})
+            ev += pfsense_events(j, home)
+        new = []
+        for e in ev:
+            k = hashlib.sha1(json.dumps(e, sort_keys=True, default=str).encode()).hexdigest()
+            if k not in seen:
+                seen.add(k)
+                new.append({**e, "t": time.time()})
+        if len(seen) > 5000:
+            seen.clear()
+        for e in new:
+            if e["src"] == "ips" and e["level"] == "crit":
+                self.note("net", "IPS: a serious attack blocked", "warn")
+        return {"new": new[-40:], "vpn": vpn}
+
+    def net_wifi(self, c: dict) -> dict:
+        w = c.get("wifi") or {}
+        if not w.get("url"):
+            return {}
+        url, kind = str(w["url"]).rstrip("/"), str(w.get("type", "unifi"))
+        if kind == "unifi":
+            site, h = str(w.get("site", "default")), {"X-API-KEY": self.secret(w, "key")}
+            sta, _ = self.net_http(f"{url}/proxy/network/api/s/{site}/stat/sta", w, h)
+            dev, _ = self.net_http(f"{url}/proxy/network/api/s/{site}/stat/device", w, h)
+            return unifi_wifi((sta or {}).get("data", []), (dev or {}).get("data", []))
+        if kind == "mikrotik":
+            auth = "Basic " + base64.b64encode(f"{w.get('user', 'pulse')}:{self.secret(w, 'password')}".encode()).decode()
+            for path in ("/rest/interface/wifi/registration-table", "/rest/interface/wireless/registration-table"):
+                try:
+                    rows, _ = self.net_http(url + path, w, {"Authorization": auth})
+                    return mikrotik_wifi(rows, str(w.get("name", "router")))
+                except urllib.error.HTTPError:
+                    continue
+            return {}
+        if kind == "openwrt":   # ubus over HTTP (uhttpd-mod-ubus, with an ACL that allows hostapd get_clients)
+            def call(sid, obj, meth, args):
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "call", "params": [sid, obj, meth, args]}).encode()
+                j, _ = self.net_http(url + "/ubus", w, {"Content-Type": "application/json"}, body)
+                return ((j or {}).get("result") or [1, {}])
+            r = call("00000000000000000000000000000000", "session", "login", {"username": w.get("user", "root"), "password": self.secret(w, "password")})
+            sid = (r[1] if len(r) > 1 else {}).get("ubus_rpc_session", "")
+            per = {}
+            for iface in (w.get("interfaces") or ["phy0-ap0", "phy1-ap0"])[:6]:
+                res = call(sid, f"hostapd.{iface}", "get_clients", {})
+                if res and res[0] == 0 and len(res) > 1:
+                    per[iface] = res[1]
+            return openwrt_wifi(per, str(w.get("name", "openwrt")))
+        return {}
+
+    def net_datacenter(self, c: dict, prev: dict) -> dict:
+        d = c.get("datacenter") or {}
+        if not d.get("url"):
+            return {}
+        url, kind = str(d["url"]).rstrip("/"), str(d.get("type", "proxmox"))
+        if kind == "proxmox":   # an API token: PVEAPIToken=user@pam!pulse=SECRET in token_file (the PVEAuditor role is enough)
+            j, _ = self.net_http(url + "/api2/json/cluster/resources", d, {"Authorization": self.secret(d)})
+            cur = proxmox_view((j or {}).get("data", []))
+        else:   # vCenter: a read-only user
+            auth = "Basic " + base64.b64encode(f"{d.get('user')}:{self.secret(d, 'password')}".encode()).decode()
+            sid, _ = self.net_http(url + "/api/session", d, {"Authorization": auth}, b"", "POST")
+            h = {"vmware-api-session-id": str(sid)}
+            hosts, _ = self.net_http(url + "/api/vcenter/host", d, h)
+            by = {}
+            for hh in (hosts or [])[:32]:
+                vms, _ = self.net_http(url + "/api/vcenter/vm?hosts=" + urllib.parse.quote(hh.get("host", "")), d, h)
+                by[hh.get("host")] = vms or []
+            cur = vcenter_view(hosts, by)
+        cur["moves"] = (dc_moves(prev, cur) + [m for m in (prev or {}).get("moves", []) if time.time() - m["t"] < 30])[-8:]
+        return cur
+
+    def net_backups(self, c: dict, prev: list) -> list:
+        out, now = [], time.time()
+        old = {b["name"]: b for b in prev or []}
+        for b in (c.get("backup") or [])[:12]:
+            name, kind = str(b.get("name") or b.get("type")), str(b.get("type", "command"))
+            max_age = parse_age(b.get("max_age", "26h"))
+            try:
+                if kind == "restic":
+                    import shlex
+                    r = subprocess.run(["restic", "-r", str(b.get("repo")), "--password-file", str(Path(str(b.get("password_file"))).expanduser()),
+                                        "snapshots", "--json", "--latest", "1", *shlex.split(str(b.get("args") or ""))],
+                                       capture_output=True, text=True, timeout=120)
+                    data = json.loads(r.stdout or "[]")
+                elif kind == "pbs":
+                    data, _ = self.net_http(f"{str(b['url']).rstrip('/')}/api2/json/admin/datastore/{b.get('datastore', 'backup')}/snapshots", b,
+                                            {"Authorization": self.secret(b)})
+                elif kind == "veeam":
+                    base = str(b["url"]).rstrip("/")
+                    tok, _ = self.net_http(base + "/api/oauth2/token", b, {"x-api-version": "1.1-rev0", "Content-Type": "application/x-www-form-urlencoded"},
+                                           urllib.parse.urlencode({"grant_type": "password", "username": b.get("user", ""),
+                                                                   "password": self.secret(b, "password")}).encode())
+                    j, _ = self.net_http(base + "/api/v1/jobs/states", b, {"x-api-version": "1.1-rev0", "Authorization": "Bearer " + tok.get("access_token", "")})
+                    data = next((x for x in (j or {}).get("data", []) if x.get("name") == b.get("job", name)), {})
+                else:
+                    import shlex
+                    r = subprocess.run(shlex.split(str(b.get("command") or "false")), capture_output=True, text=True, timeout=60)
+                    data = json.loads(r.stdout or "{}")
+                v = backup_state(name, kind, data, max_age, now)
+            except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
+                v = {"name": name[:24], "state": "failed", "t": None, "error": str(e)[:60]}
+            if v["state"] in ("failed", "late") and old.get(name, {}).get("state") not in ("failed", "late"):
+                self.raise_alert("backup:" + name, f"backup {name}", v["state"], "warn", speak=True)
+                self.phone("alerts", f"backup {name}: {v['state']}", tags="truck")
+            out.append(v)
+        return out
+
+    def net_intruders(self, c: dict) -> list:
+        i = c.get("intruders") or {}
+        kind = str(i.get("type", ""))
+        if kind == "crowdsec":
+            r = subprocess.run(["cscli", "alerts", "list", "-o", "json", "--since", str(i.get("since", "1h"))],
+                               capture_output=True, text=True, timeout=30)
+            return crowdsec_alerts(json.loads(r.stdout or "[]"))[:12]
+        if kind == "wazuh" and i.get("url"):
+            auth = "Basic " + base64.b64encode(f"{i.get('user', 'admin')}:{self.secret(i, 'password')}".encode()).decode()
+            q = {"size": 20, "sort": [{"timestamp": "desc"}], "query": {"bool": {"filter": [
+                {"range": {"rule.level": {"gte": int(i.get("min_level", 10))}}}, {"range": {"timestamp": {"gte": "now-" + str(i.get("since", "1h"))}}}]}}}
+            j, _ = self.net_http(str(i["url"]).rstrip("/") + "/wazuh-alerts-*/_search", i,
+                                 {"Authorization": auth, "Content-Type": "application/json"}, json.dumps(q).encode())
+            return wazuh_alerts(j, int(i.get("min_level", 10)))[:12]
+        return []
+
+    def loop_net(self) -> None:
+        prev_sw, seen, last = {}, set(), 0.0
+        while True:
+            c = self.net_conf()
+            if not c or self.demo:
+                time.sleep(20)
+                continue
+            now = time.time()
+            if now - last < float(c.get("every", 60)):
+                time.sleep(2)
+                continue
+            last, view = now, dict(self.net or {})
+            for key, fn in (("switches", lambda: self.net_switches(c, prev_sw)), ("fw", lambda: self.net_firewall(c, seen)),
+                            ("wifi", lambda: self.net_wifi(c)), ("dc", lambda: self.net_datacenter(c, (self.net or {}).get("dc"))),
+                            ("backups", lambda: self.net_backups(c, (self.net or {}).get("backups"))), ("intruders", lambda: self.net_intruders(c))):
+                try:
+                    view[key] = fn()
+                except Exception as e:   # noqa: BLE001 - one device that fails never stops the others
+                    log(f"net {key}: {e}")
+            prev_sw = {s["name"]: s for s in view.get("switches") or []}
+            fw = view.get("fw") or {}
+            fw["events"] = ([e for e in (self.net or {}).get("fw", {}).get("events", []) if now - e["t"] < 60] + fw.pop("new", []))[-60:]
+            view["fw"] = fw
+            with self.lock:
+                self.net = view
+            for a in view.get("intruders") or []:
+                if a["level"] == "crit" and now - a["t"] < 600:
+                    self.raise_alert("intruder:" + a["target"], f"intruder · {a['target']}", a["what"], "crit", speak=False)
+
+    def bolt(self, ev: dict) -> None:
+        """A device in trouble, told by syslog or by an SNMP trap: a bolt on its building, now."""
+        sws = (self.net or {}).get("switches") or []
+        ev["target"] = next((s["name"] for s in sws if ev.get("addr") and s.get("host") == ev["addr"] or s["name"] == ev.get("host")), ev.get("host", "?"))
+        with self.lock:
+            self.bolts = [b for b in self.bolts if time.time() - b["t"] < 120][-30:] + [ev]
+        if ev["sev"] <= 2:
+            self.note("net", f"{ev['target']}: {ev['text'][:60]}", "crit")
+            self.noc_event(f"{ev['target']}: {ev['text'][:80]}")
+
+    def loop_syslog(self) -> None:
+        while True:
+            s = (self.net_conf().get("syslog") or {})
+            if not s.get("listen") or self.demo:
+                time.sleep(20)
+                continue
+            host, _, port = str(s["listen"]).rpartition(":")
+            allow = [ipaddress.ip_network(str(a), strict=False) for a in (s.get("allow") or ["127.0.0.1/32"])]
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.bind((host or "0.0.0.0", int(port or 5514)))
+                sock.settimeout(5)
+            except OSError as e:
+                log(f"syslog: {e}")
+                time.sleep(60)
+                continue
+            log(f"syslog: listening on {s['listen']}")
+            while self.net_conf().get("syslog", {}).get("listen") == s["listen"]:
+                try:
+                    data, (addr, _) = sock.recvfrom(4096)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                if not any(ipaddress.ip_address(addr) in n for n in allow):   # only your own devices
+                    continue
+                ev = syslog_parse(data.decode("utf-8", "replace"), addr)
+                if ev and ev["sev"] <= int(s.get("max_severity", 3)):
+                    self.bolt(ev)
+            sock.close()
+
+    def noc_event(self, text: str, level: str = "crit") -> None:
+        """NOC mode: a critical event opens an incident (the screen turns red) until someone acknowledges it."""
+        if not self.noc_on():
+            return
+        with self.lock:
+            if not self.incident:
+                self.incident = {"start": time.time(), "events": []}
+            self.incident["events"] = (self.incident["events"] + [{"t": time.time(), "text": text[:100], "level": level}])[-12:]
+
+    def ack(self, wid: str) -> dict:
+        """The double click on a storm: run the source's ack command with the ids of its problems. Off unless the source
+        has ack = "..." in pulse.toml; the page asks for a second click within 5 seconds first."""
+        src = next((x for x in (self.cfg.get("source") or []) if isinstance(x, dict) and x.get("name") == wid), None)
+        w = self.widgets.get(wid) or {}
+        ids = [str(it.get("id")) for it in ((w.get("data") or {}).get("items") or []) if it.get("id") is not None]
+        if not src or not src.get("ack") or not ids:
+            return {"ok": False, "why": "no ack for this panel"}
+        import shlex
+        try:
+            r = subprocess.run(["bash", "-c", str(src["ack"]) + " " + " ".join(shlex.quote(i) for i in ids[:50])],
+                               capture_output=True, text=True, timeout=30,
+                               env={**os.environ, "PATH": f"{CONF_DIR / 'sources'}:{HERE / 'sources'}:{os.environ.get('PATH', '/usr/bin')}"})
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return {"ok": False, "why": str(e)[:80]}
+        ok = r.returncode == 0
+        log(f"ack {wid}: {len(ids)} problems, {'done' if ok else r.stderr.strip()[:120]}")
+        self.add_fx("summary", f"{w.get('title', wid)} · {'acknowledged' if ok else 'ack failed'}")
+        return {"ok": ok, "n": len(ids)}
+
+    def noc_on(self) -> bool:
+        return self.noc_override if self.noc_override is not None else self.conf("pulse", "noc", default=False) is True
+
+    # -- 1.5: certificates, domains and anything with a date, as candles that burn down
+    def loop_expiry(self) -> None:
+        told: set = set()
+        last, items = 0.0, []
+        while True:
+            c = self.conf("expiry", default={}) or {}
+            if c.get("enabled") is False or not (c.get("hosts") or c.get("domains") or c.get("items")) or self.demo:
+                if not self.demo:
+                    self.expiry = []
+                time.sleep(30)
+                continue
+            now = time.time()
+            try:
+                if now - last > float(c.get("every", 6 * 3600)):
+                    last, items = now, []
+                    for h in (c.get("hosts") or [])[:24]:
+                        host, _, port = str(h).partition(":")
+                        try:
+                            r = tls_expiry(host, int(port or 443))
+                            items.append({"name": host, "kind": "certificate", "at": r["at"], "valid": r["valid"]})
+                        except (OSError, ValueError) as e:
+                            items.append({"name": host, "kind": "certificate", "at": None, "error": str(e)[:60]})
+                    for d in (c.get("domains") or [])[:24]:
+                        items.append({"name": str(d), "kind": "domain", "at": whois_expiry(str(d))})
+                    for it in (c.get("items") or [])[:24]:
+                        try:
+                            at = time.mktime(time.strptime(str(it.get("date")), "%Y-%m-%d"))
+                        except (ValueError, TypeError):
+                            at = None
+                        items.append({"name": str(it.get("name") or "item")[:32], "kind": "date", "at": at})
+                view = expiry_view(items, now, int(c.get("warn_days", 14)), int(c.get("crit_days", 3)))
+                with self.lock:
+                    self.expiry = view
+                today = time.strftime("%Y-%m-%d")
+                for x in view:
+                    if x["level"] == "crit" and (x["name"], today) not in told:
+                        told.add((x["name"], today))
+                        what = f"{x['name']} {'expires' if (x['days'] or 0) >= 0 else 'expired'}" + (f" in {max(0, round(x['days']))} days" if x["days"] is not None and x["days"] >= 0 else "")
+                        self.raise_alert("expiry:" + x["name"], f"{x['kind']} · {x['name']}", what, "warn", speak=False)
+                        self.say(what, "alerts")
+                        self.phone("alerts", what, tags="hourglass")
+            except Exception as e:   # noqa: BLE001
+                log(f"expiry: {e}")
+            time.sleep(60)
+
+    # -- 1.5: the energy of your home as the river of the city (Home Assistant)
+    def loop_energy(self) -> None:
+        while True:
+            c = self.conf("energy", default={}) or {}
+            h = self.conf("home", default={}) or {}
+            if c.get("enabled") is not True or not h.get("url") or self.demo:
+                if not self.demo:
+                    self.energy = None
+                time.sleep(20)
+                continue
+            try:
+                def get(k):
+                    if not c.get(k):
+                        return None
+                    st = self.ha("/api/states/" + urllib.parse.quote(str(c[k]))) or {}
+                    return power_w(st.get("state"), (st.get("attributes") or {}).get("unit_of_measurement", ""))
+                solar, grid, load, bat = get("solar"), get("grid"), get("load"), get("battery")
+                if load is None and solar is not None and grid is not None:
+                    load = max(0.0, solar + grid)
+                with self.lock:
+                    self.energy = {"solar": solar, "grid": grid, "load": load, "battery": bat, "t": time.time(),
+                                   "peak": float(c.get("peak", 6000))}
+            except Exception as e:   # noqa: BLE001
+                log(f"energy: {e}")
+            time.sleep(max(5, int(c.get("every", 15))))
+
+    # -- 1.5: the holidays and the eclipses, on your own clock and over your own city
+    def season_state(self, t: float | None = None) -> dict:
+        """Christmas lights (8 December to 6 January, [festive]), the New Year's countdown and party, an eclipse now."""
+        t = t if t is not None else self.demo_now()
+        c = self.conf("festive", default={}) or {}
+        out: dict = {}
+        if c.get("enabled") is not False:
+            lt = time.localtime(t)
+            md = lt.tm_mon * 100 + lt.tm_mday
+            frm, to = (int(str(c.get(k, d)).replace("-", "")) for k, d in (("lights_from", "12-08"), ("lights_to", "01-06")))
+            if c.get("christmas", True) is not False and (md >= frm or md <= to):
+                out["xmas"] = {"day": md in (1224, 1225, 1226), "snow": bool(self.weather and (self.weather.get("temp") or 9) <= 2)}
+            if c.get("new_year", True) is not False:
+                nxt = time.mktime((lt.tm_year + 1, 1, 1, 0, 0, 0, 0, 0, -1))
+                if md == 1231 and nxt - t <= 3600:
+                    out["newYear"] = {"left": round(nxt - t, 1), "year": lt.tm_year + 1}
+                elif md == 101 and lt.tm_hour == 0 and lt.tm_min < 15:
+                    out["newYear"] = {"left": 0, "year": lt.tm_year, "party": True}
+        ec = self.eclipse_now(t)
+        if ec:
+            out["eclipse"] = ec
+        return out
+
+    def eclipse_now(self, t: float) -> dict | None:
+        """An eclipse happening over you right now: how much is covered and where the Moon's disc is on the Sun."""
+        for e in self.eclipse_list:
+            if e["start"] - 600 <= t <= e["end"] + 600:
+                lat, lon = self.location
+                if e["kind"] == "solar":
+                    sl = solar_local(t, lat, lon)
+                    g = sl["g"]
+                    import math
+                    dx = (g["moon"][0] - g["sun"][0] + 540) % 360 - 180
+                    dx *= math.cos(math.radians(g["sun"][1]))
+                    dy = g["moon"][1] - g["sun"][1]
+                    return {"kind": "solar", "type": e["type"], "obsc": round(max(0.0, sl["obsc"]), 3),
+                            "mag": round(sl["mag"], 3), "off": [round(dx / g["rs"], 3), round(dy / g["rs"], 3)],
+                            "rm": round(g["rm"] / g["rs"], 3), "max": e["max"], "end": e["end"]}
+                ls = lunar_shadow(t)
+                return {"kind": "lunar", "type": e["type"], "umag": round(ls["umag"], 3), "pmag": round(ls["pmag"], 3),
+                        "max": e["max"], "end": e["end"]}
+        return None
+
+    def loop_season(self) -> None:
+        said: set = set()
+        computed = 0.0
+        while True:
+            try:
+                now = self.demo_now()
+                if self.location and (abs(now - computed) > 6 * 3600 or self.__dict__.get("eclipse_loc") != self.location):
+                    if self.conf("night", "eclipses", default=True) is not False:
+                        self.eclipse_list = eclipses(*self.location, t0=now - 86400, days=800)
+                    self.eclipse_loc, computed = self.location, now
+                lt = time.localtime(now)
+                v = self.conf("voice", default={}) or {}
+                speak = v.get("enabled") in (True, "on") and not self.away and not self.privacy()
+                lang = voice_lang(v)
+                st = self.season_state(now)
+                ny = st.get("newYear")
+                if ny and ny.get("party") and ("ny", ny["year"]) not in said:
+                    said.add(("ny", ny["year"]))
+                    self.add_fx("fireworks", f"HAPPY {ny['year']}")
+                    self.add_fx("banner", f"HAPPY {ny['year']} · OMARCHY")
+                    if speak:
+                        self.say(phrase("new_year", lang, year=ny["year"]), "focus", force=True)
+                    self.phone("space", phrase("new_year", lang, year=ny["year"]), tags="fireworks")
+                xm = st.get("xmas")
+                if xm and lt.tm_mon == 12 and lt.tm_mday == 25 and lt.tm_hour >= 9 and ("xmas", lt.tm_year) not in said:
+                    said.add(("xmas", lt.tm_year))
+                    self.add_fx("fireworks", phrase("xmas", lang), small=True)
+                    self.say(phrase("xmas", lang), "focus")
+                for e in self.eclipse_list:
+                    body = {"en": ("Sun", "Moon"), "it": ("Sole", "Luna"), "es": ("Sol", "Luna"), "fr": ("Soleil", "Lune"),
+                            "de": ("Sonnen", "Mond")}.get(lang, ("Sun", "Moon"))[e["kind"] == "lunar"]
+                    pct = f"{round(100 * (e['obsc'] if e['kind'] == 'solar' else min(1.0, max(0.0, e['mag']))))}%"
+                    if 0 < e["max"] - now <= 1800 and ("soon", e["max"]) not in said and (e["kind"] == "solar" or e["mag"] > 0):
+                        said.add(("soon", e["max"]))
+                        mins = round((e["max"] - now) / 60)
+                        self.note("space", f"eclipse of the {'Moon' if e['kind'] == 'lunar' else 'Sun'} at {time.strftime('%H:%M', time.localtime(e['max']))}", "info")
+                        self.say(phrase("eclipse_soon", lang, min=mins, body=body, pct=pct), "space")
+                        self.phone("space", phrase("eclipse_soon", lang, min=mins, body=body, pct=pct), tags="new_moon")
+                    if 0 <= now - e["max"] < 90 and ("max", e["max"]) not in said:
+                        said.add(("max", e["max"]))
+                        self.add_fx("summary", f"eclipse · {pct}")
+                        self.say(phrase("eclipse_max", lang), "space")
+            except Exception as e:   # noqa: BLE001
+                log(f"season: {e}")
+            time.sleep(1 if not self.demo else 0.5)
 
     # -- Starlink trains: the satellites of the last launches, when they really pass over you, lit by the Sun
     def loop_starlink(self) -> None:
@@ -2836,6 +3315,16 @@ class Hub:
                     "calendar": [{**e, "title": "" if self.privacy() else e["title"]} for e in self.calendar],
                     "meeting": self.in_meeting,
                     "night": self.night,
+                    "season": self.season_state(),
+                    "eclipses": [e for e in self.eclipse_list if e["end"] > time.time()][:3],
+                    "expiry": [{**x, "name": "" if self.privacy() else x["name"]} for x in self.expiry][:8],
+                    "energy": self.energy if self.energy and time.time() - self.energy["t"] < 300 else None,
+                    "net": self.net_public(),
+                    "bolts": [{**b, "target": "" if self.privacy() else b["target"], "text": "", "addr": ""}
+                              for b in self.bolts if time.time() - b["t"] < 30],
+                    "term": [] if self.privacy() else [x for x in self.term if time.time() - x["t"] < 180],
+                    "noc": {"on": self.noc_on(), "incident": self.incident if not self.privacy() else
+                            ({**self.incident, "events": [{**e, "text": ""} for e in self.incident["events"]]} if self.incident else None)},
                     "starlink": self.starlink,
                     "storms": self.storms,
                     "air": self.air,
@@ -2849,9 +3338,12 @@ class Hub:
                     "away": bool(self.away), "digest": self.public_digest(),
                     "lan": [{**d, "name": "" if self.privacy() else d["name"], "ip": "" if self.privacy() else d["ip"]}
                             for d in self.lan["devices"]],
+                    "scene": self.scene_state() if scene_path(self.scene_kind()) else None,
+                    "sceneTicket": scene_ticket(token()) if scene_path(self.scene_kind()) else "",
                     "ui": {"fps": self.conf("pulse", "fps", default=20), "clock": self.conf("pulse", "clock", default="24h"),
                            "pause_when_covered": self.conf("pulse", "pause_when_covered", default=True),
-                           "scene": self.scene_override or self.conf("pulse", "scene", default="skyline"),
+                           "scene": self.scene_kind(),
+                           "motion": "reduced" if str(self.conf("pulse", "motion", default="full")) == "reduced" else "full",
                            "skyline": self.skyline(),
                            "skylineAuto": str(self.conf("pulse", "skyline", default="auto")) == "auto" and not self.skyline_override,
                            "font": self.conf("pulse", "font", default=""),
@@ -2863,6 +3355,9 @@ class Hub:
                            "banner": str(self.conf("pulse", "banner", default="OMARCHY · WE CAN FIX EVERYTHING"))[:48],
                            "bannerEvery": float(self.conf("pulse", "banner_every", default=45) or 0),
                            "fireworks": self.conf("pulse", "celebrate", default=True) is not False,
+                           "infraWeather": self.conf("pulse", "infra_weather", default=True) is not False,
+                           "hackerStyle": str(self.conf("pulse", "hacker_style", default="phosphor")),
+                           "nocHide": [str(x) for x in (self.conf("pulse", "noc_hide", default=["media", "notifications"]) or [])][:20],
                            "music": self.conf("music", "enabled", default="auto") not in (False, "off"),
                            "sun": self.conf("pulse", "sun", default=True) is not False,
                            "quality": quality_mode(self.conf("pulse", "quality", default="auto")),
@@ -2870,6 +3365,72 @@ class Hub:
                            "sphere": self.conf("pulse", "sphere", default="real"),
                            "cars": self.conf("lan", "cars", default=True) is not False,
                            "eyes": self.conf("presence", "eyes", default=True) is not False}}
+
+    def net_public(self) -> dict | None:
+        """What the page draws of your network: no addresses, and no names while sharing or in privacy."""
+        n = self.net
+        if not n:
+            return None
+        hide = self.privacy()
+        nm = (lambda x: "") if hide else (lambda x: x)
+        return {"switches": [{"name": nm(s["name"]), "up": s["up"], "ports": [{k: p.get(k) for k in ("up", "err", "util", "jam")} | {"peer": nm(p.get("peer", ""))} for p in s["ports"]],
+                              "peers": [nm(x) for x in s.get("peers", [])]} for s in n.get("switches") or []],
+                "fw": {"events": [{k: e[k] for k in ("src", "az", "level", "t")} for e in (n.get("fw") or {}).get("events", [])],
+                       "vpn": (n.get("fw") or {}).get("vpn")},
+                "wifi": {"aps": [nm(a) for a in (n.get("wifi") or {}).get("aps", [])][:8],
+                         "clients": [{"id": c["id"], "ap": nm(c["ap"]), "signal": c.get("signal")} for c in (n.get("wifi") or {}).get("clients", [])][:80]},
+                "dc": {"hosts": [{"name": nm(h["name"]), "up": h["up"], "maint": h.get("maint"), "vms": [{"name": nm(v["name"]), "up": v["up"]} for v in h["vms"]][:40]}
+                                 for h in (n.get("dc") or {}).get("hosts", [])][:8],
+                       "moves": [{"from": nm(m["from"]), "to": nm(m["to"]), "t": m["t"]} for m in (n.get("dc") or {}).get("moves", [])]},
+                "backups": [{"name": nm(b["name"]), "state": b["state"], "t": b.get("t")} for b in n.get("backups") or []],
+                "intruders": [{"level": a["level"], "target": nm(a["target"]), "t": a["t"]} for a in n.get("intruders") or []]}
+
+    def scene_kind(self) -> str:
+        fl = os.environ.get("PULSE_DEMO_SCENE", "") if self.demo else ""
+        if fl and os.path.exists(fl):   # the demo video: the scene of the moment, from its flag file
+            return open(fl).read().strip() or "sphere"
+        return str(self.scene_override or self.conf("pulse", "scene", default="skyline"))
+
+    def demo_now(self) -> float:
+        """The demo video's clock for the sky and the holidays: PULSE_DEMO_WARP holds a moment, which then runs on."""
+        fl = os.environ.get("PULSE_DEMO_WARP", "") if self.demo else ""
+        if fl and os.path.exists(fl):
+            try:
+                return float(open(fl).read().split()[0]) + time.time() - os.path.getmtime(fl)
+            except (OSError, ValueError, IndexError):
+                pass
+        return time.time() + float(os.environ.get("PULSE_DEMO_SKY_OFFSET") or 0)
+
+    def scene_state(self) -> dict:
+        """What a community scene sees (docs/SCENES.md): a read-only copy, without anything private.
+        No location, no network devices, no calendar, no notifications; names hidden while sharing or in privacy."""
+        priv = self.privacy()
+        lt = time.localtime()
+        sy = self.sys or {}
+        w = self.weather or {}
+        cols = (self.colors().get("colors") or {})
+        theme = {k: cols.get(v) for k, v in COLOR_KEYS.items() if cols.get(v)}
+        ag = sorted(list(self.agents.values()) + list(self.crew_agents.values()), key=lambda a: a.get("since", 0))
+        return {
+            "v": VERSION, "t": time.time(), "demo": self.demo, "privacy": priv,
+            "time": {"hour": lt.tm_hour, "minute": lt.tm_min, "second": lt.tm_sec, "weekday": lt.tm_wday,
+                     "day": lt.tm_mday, "month": lt.tm_mon, "year": lt.tm_year},
+            "sys": {k: sy.get(k) for k in ("cpu", "cores", "ram", "swap", "gpu", "temp", "disk", "rx", "tx", "load")},
+            "agents": [{"name": "" if priv else a.get("name", ""), "state": a.get("state", "working"),
+                        "since": a.get("since", 0), "text": "" if priv else a.get("text", "")} for a in ag][:24],
+            "git": [{"name": "" if priv else r["name"], "branch": "" if priv else r["branch"], "week": r["week"],
+                     "last": r["last"], "dirty": r["dirty"], "ci": r["ci"]} for r in self.git],
+            "weather": ({k: w.get(k) for k in ("code", "temp", "day", "wind", "windDir", "cloud", "rain")}
+                        if w and not w.get("error") else None),
+            "focus": {"start": self.focus["start"], "until": self.focus["until"]} if self.focus else None,
+            "away": bool(self.away), "meeting": bool(self.in_meeting),
+            "theme": theme,
+            "ui": {"quality": quality_mode(self.conf("pulse", "quality", default="auto")),
+                   "motion": "reduced" if str(self.conf("pulse", "motion", default="full")) == "reduced" else "full",
+                   "fps": self.conf("pulse", "fps", default=20)},
+            "events": [{"kind": x["kind"], "text": "" if priv else x["text"], "t": x["t"]} for x in list(self.fx)[-12:]],
+            "season": self.season_state(),
+        }
 
     def skyline(self) -> str:
         """The real city behind the towers: "auto" follows the weather's city (not while sharing the screen)."""
@@ -2912,7 +3473,7 @@ class Hub:
                    self.loop_crew_send, self.loop_launches, self.loop_sky, self.loop_calendar, self.loop_home,
                    self.loop_car, self.loop_quakes, self.loop_timelapse,
                    self.loop_night, self.loop_starlink, self.loop_storms, self.loop_air, self.loop_wrapped,
-                   self.loop_robots):
+                   self.loop_robots, self.loop_season, self.loop_expiry, self.loop_energy, self.loop_net, self.loop_syslog):
             threading.Thread(target=fn, daemon=True).start()
 
 
@@ -2966,6 +3527,487 @@ def sound_conf(c: dict, meeting: bool = False, private: bool = False) -> dict | 
     return {"volume": vol, "rain": c.get("rain", True) is not False, "wind": c.get("wind", True) is not False,
             "planes": c.get("planes", True) is not False, "thunder": c.get("thunder", True) is not False,
             "events": c.get("events", True) is not False}
+
+
+# ---------------------------------------------------------------------------- 1.5 beta: Pulse Net (read-only)
+# Your network as part of the city: switches (SNMP, LLDP), the firewall (FortiGate, OPNsense, pfSense with its REST
+# API package), syslog and SNMP traps, Wi-Fi (UniFi, MikroTik, OpenWrt), the datacenter (Proxmox, vCenter), backups
+# (restic, Proxmox Backup Server, Veeam), intruders (CrowdSec, Wazuh). All off by default, all read-only: Pulse
+# only reads. The one exception, off by default too, is acknowledging a Zabbix problem with a double click.
+COUNTRIES = {   # ISO code: (name, latitude, longitude) of the middle of the country, for the direction of an attack
+    "US": ("United States", 39, -98), "CN": ("China", 35, 103), "RU": ("Russian Federation", 60, 90), "DE": ("Germany", 51, 10),
+    "NL": ("Netherlands", 52, 5), "FR": ("France", 46, 2), "GB": ("United Kingdom", 54, -2), "IN": ("India", 22, 79),
+    "BR": ("Brazil", -10, -55), "VN": ("Vietnam", 16, 107), "KR": ("Korea, Republic of", 36, 128), "JP": ("Japan", 36, 138),
+    "IR": ("Iran, Islamic Republic of", 32, 53), "UA": ("Ukraine", 49, 32), "RO": ("Romania", 46, 25), "PL": ("Poland", 52, 19),
+    "IT": ("Italy", 42, 12), "ES": ("Spain", 40, -4), "TR": ("Turkey", 39, 35), "ID": ("Indonesia", -2, 118),
+    "HK": ("Hong Kong", 22.3, 114.2), "SG": ("Singapore", 1.35, 103.8), "TW": ("Taiwan", 23.7, 121), "TH": ("Thailand", 15, 101),
+    "PK": ("Pakistan", 30, 70), "BD": ("Bangladesh", 24, 90), "NG": ("Nigeria", 9, 8), "ZA": ("South Africa", -29, 24),
+    "EG": ("Egypt", 27, 30), "AR": ("Argentina", -34, -64), "MX": ("Mexico", 23, -102), "CA": ("Canada", 56, -106),
+    "AU": ("Australia", -25, 134), "SE": ("Sweden", 62, 15), "NO": ("Norway", 62, 10), "FI": ("Finland", 64, 26),
+    "CH": ("Switzerland", 47, 8), "AT": ("Austria", 47.5, 14.5), "BE": ("Belgium", 50.8, 4.5), "CZ": ("Czech Republic", 49.8, 15.5),
+    "BG": ("Bulgaria", 42.7, 25.5), "GR": ("Greece", 39, 22), "HU": ("Hungary", 47, 19.5), "PT": ("Portugal", 39.5, -8),
+    "IE": ("Ireland", 53, -8), "LT": ("Lithuania", 55, 24), "LV": ("Latvia", 57, 25), "EE": ("Estonia", 59, 26),
+    "BY": ("Belarus", 53, 28), "KZ": ("Kazakhstan", 48, 67), "SA": ("Saudi Arabia", 24, 45), "AE": ("United Arab Emirates", 24, 54),
+    "IL": ("Israel", 31, 35), "MA": ("Morocco", 32, -6), "DZ": ("Algeria", 28, 3), "KE": ("Kenya", 0, 38), "CO": ("Colombia", 4, -72),
+    "CL": ("Chile", -30, -71), "PE": ("Peru", -10, -76), "VE": ("Venezuela", 7, -66), "PH": ("Philippines", 13, 122),
+    "MY": ("Malaysia", 4, 102), "MD": ("Moldova, Republic of", 47, 29), "RS": ("Serbia", 44, 21), "HR": ("Croatia", 45, 16),
+    "SK": ("Slovakia", 48.7, 19.5), "DK": ("Denmark", 56, 10), "LU": ("Luxembourg", 49.8, 6.1), "NZ": ("New Zealand", -41, 174),
+    "SC": ("Seychelles", -4.6, 55.5), "PA": ("Panama", 9, -80), "BZ": ("Belize", 17, -88.7), "CY": ("Cyprus", 35, 33),
+}
+COUNTRY_BY_NAME = {v[0].lower(): k for k, v in COUNTRIES.items()} | {"russia": "RU", "iran": "IR", "south korea": "KR",
+                   "korea": "KR", "czechia": "CZ", "uk": "GB", "usa": "US", "viet nam": "VN", "moldova": "MD"}
+
+
+def country_code(v: str) -> str:
+    v = str(v or "").strip()
+    if len(v) == 2 and v.upper() in COUNTRIES:
+        return v.upper()
+    return COUNTRY_BY_NAME.get(v.lower(), "")
+
+
+def bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """The direction (degrees from north) from (lat1, lon1) to (lat2, lon2) on the globe."""
+    import math
+    p1, p2, dl = math.radians(lat1), math.radians(lat2), math.radians(lon2 - lon1)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return math.degrees(math.atan2(y, x)) % 360
+
+
+def attack_az(country: str, ip: str, home) -> float:
+    """Where an attack comes from in your sky: the real direction of its country, or (no country) a direction that
+    stays the same for the same address."""
+    cc = country_code(country)
+    if cc and home:
+        _, la, lo = COUNTRIES[cc]
+        return round(bearing(home[0], home[1], la, lo), 1)
+    return float(int(hashlib.sha1(str(ip).encode()).hexdigest()[:6], 16) % 360)
+
+
+# -- SNMP: the net-snmp tools (snmpbulkwalk), any managed switch
+IF_OIDS = {"descr": "1.3.6.1.2.1.2.2.1.2", "type": "1.3.6.1.2.1.2.2.1.3", "oper": "1.3.6.1.2.1.2.2.1.8",
+           "inerr": "1.3.6.1.2.1.2.2.1.14", "in": "1.3.6.1.2.1.31.1.1.1.6", "out": "1.3.6.1.2.1.31.1.1.1.10",
+           "speed": "1.3.6.1.2.1.31.1.1.1.15", "alias": "1.3.6.1.2.1.31.1.1.1.18"}
+LLDP_REM_NAME = "1.0.8802.1.1.2.1.4.1.1.9"   # lldpRemSysName: timeMark.localPort.index
+CDP_DEVICE_ID = "1.3.6.1.4.1.9.9.23.1.2.1.1.6"   # cdpCacheDeviceId: ifIndex.index (Cisco)
+PORT_TYPES = {"6", "117", "62", "69"}   # ethernet
+
+
+def snmp_parse(out: str, base: str) -> dict:
+    """`snmpbulkwalk -On -Oq -Oe` lines (".OID value") into {index: value} under base."""
+    res, pre = {}, "." + base.strip(".") + "."
+    for line in out.splitlines():
+        oid, _, val = line.strip().partition(" ")
+        if oid.startswith(pre):
+            res[oid[len(pre):]] = val.strip().strip('"')
+    return res
+
+
+def snmp_walk(host: str, base: str, args: str = "-v2c -c public", timeout: int = 3) -> dict:
+    exe = shutil.which("snmpbulkwalk") or shutil.which("snmpwalk")
+    if not exe:
+        raise OSError("install net-snmp (sudo pacman -S net-snmp)")
+    import shlex
+    r = subprocess.run([exe, *shlex.split(args), "-On", "-Oq", "-Oe", "-t", str(timeout), "-r", "1", host, base],
+                       capture_output=True, text=True, timeout=timeout * 8 + 10)
+    if r.returncode and not r.stdout:
+        raise OSError((r.stderr.strip().splitlines() or ["snmp error"])[-1][:80])
+    return snmp_parse(r.stdout, base)
+
+
+def switch_view(name: str, walks: dict, prev: dict | None, now: float, saturate: float = 0.8) -> dict:
+    """A switch as a building: its ports as windows (up, down, errors, how busy), its neighbours (LLDP or CDP)."""
+    ports, nb = [], {}
+    pv = (prev or {}).get("_raw", {})
+    dt = max(1.0, now - (prev or {}).get("_t", now - 60))
+    for idx, typ in sorted(walks.get("type", {}).items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0):
+        if typ not in PORT_TYPES:
+            continue
+        up = walks.get("oper", {}).get(idx) == "1"
+        err = int(walks.get("inerr", {}).get(idx, "0") or 0)
+        ib, ob = int(walks.get("in", {}).get(idx, "0") or 0), int(walks.get("out", {}).get(idx, "0") or 0)
+        speed = int(walks.get("speed", {}).get(idx, "0") or 0) * 1_000_000 / 8   # bytes a second
+        p0 = pv.get(idx)
+        util = 0.0
+        if p0 and speed > 0:
+            util = min(1.0, max(0.0, max(ib - p0[1], ob - p0[2]) / dt / speed))
+        ports.append({"i": idx, "name": walks.get("descr", {}).get(idx, idx)[:24], "up": up,
+                      "err": bool(p0 and err > p0[0]), "util": round(util, 3)})
+    for key, v in walks.get("lldp", {}).items():
+        parts = key.split(".")
+        if len(parts) >= 3 and v:
+            nb[parts[-2]] = v[:32]
+    for key, v in walks.get("cdp", {}).items():
+        parts = key.split(".")
+        if len(parts) >= 2 and v:
+            nb.setdefault(parts[-2], v.split(".")[0][:32])
+    for p in ports:
+        if p["i"] in nb:
+            p["peer"] = nb[p["i"]]
+            p["jam"] = p["util"] >= saturate
+    raw = {idx: (int(walks.get("inerr", {}).get(idx, "0") or 0), int(walks.get("in", {}).get(idx, "0") or 0),
+                 int(walks.get("out", {}).get(idx, "0") or 0)) for idx in walks.get("type", {})}
+    return {"name": name, "up": bool(walks.get("type")), "ports": ports[:96], "peers": sorted(set(nb.values())),
+            "_raw": raw, "_t": now}
+
+
+# -- the firewall
+def fortigate_events(j: dict, home, kind: str = "deny") -> list:
+    """FortiGate log rows (/api/v2/log/memory/traffic/forward, /api/v2/log/memory/ips) as attacks."""
+    out = []
+    for r in (j or {}).get("results", []) or []:
+        if kind == "deny" and str(r.get("action", "")).lower() not in ("deny", "block", "blocked", "dropped"):
+            continue
+        sev = str(r.get("severity") or r.get("level") or "").lower()
+        out.append({"src": "ips" if kind == "ips" else "deny", "country": country_code(r.get("srccountry", "")),
+                    "az": attack_az(r.get("srccountry", ""), r.get("srcip", ""), home),
+                    "level": "crit" if sev in ("critical", "high", "alert", "emergency") else "warn" if kind == "ips" else "info",
+                    "t": float(r.get("eventtime", 0) or 0) / (1e9 if float(r.get("eventtime", 0) or 0) > 1e12 else 1) or time.time()})
+    return out
+
+
+def opnsense_events(rows: list, home) -> list:
+    """OPNsense /api/diagnostics/firewall/log rows: the blocked ones (no country: a steady direction per address)."""
+    out = []
+    for r in rows or []:
+        if str(r.get("action", "")).lower() != "block":
+            continue
+        out.append({"src": "deny", "country": "", "az": attack_az("", r.get("src", ""), home), "level": "info", "t": time.time()})
+    return out
+
+
+def pfsense_events(j: dict, home) -> list:
+    """pfSense with the REST API package (pfrest): /api/v2/status/logs/firewall, the blocked lines."""
+    out = []
+    for r in (j or {}).get("data", []) or []:
+        line = str(r.get("text") or r)
+        if ",block," not in line:
+            continue
+        ips = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", line)
+        out.append({"src": "deny", "country": "", "az": attack_az("", ips[0] if ips else line, home), "level": "info", "t": time.time()})
+    return out
+
+
+def fortigate_vpn(j: dict) -> int:
+    return len((j or {}).get("results", []) or [])
+
+
+# -- syslog and SNMP traps
+SYSLOG_RE = re.compile(r"^<(\d{1,3})>(?:1 )?(?:(\S+ +\d+ \d\d:\d\d:\d\d|\S+T\S+) )?(\S+)? ?(.*)$")
+
+
+def syslog_parse(msg: str, addr: str = "") -> dict | None:
+    """An RFC 3164 or 5424 line: its severity (0 = emergency ... 7 = debug), the host and the text."""
+    m = SYSLOG_RE.match(msg.strip())
+    if not m:
+        return None
+    pri = int(m.group(1))
+    return {"sev": pri % 8, "host": (m.group(3) or addr)[:48], "addr": addr, "text": (m.group(4) or "")[:160], "t": time.time()}
+
+
+def trap_parse(text: str) -> dict:
+    """What snmptrapd's traphandle gives on stdin: the host, its address, then the variables."""
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    host = lines[0] if lines else "?"
+    ip = re.findall(r"\[?(\d{1,3}(?:\.\d{1,3}){3})\]?", lines[1]) if len(lines) > 1 else []
+    body = " ".join(lines[2:])
+    bad = re.search(r"linkDown|1\.3\.6\.1\.6\.3\.1\.1\.5\.3|power|fan|temperature|fail|down", body, re.I)
+    return {"sev": 2 if bad else 5, "host": host[:48], "addr": ip[0] if ip else "", "text": body[:160], "t": time.time()}
+
+
+# -- Wi-Fi
+def unifi_wifi(sta: list, devices: list) -> dict:
+    names = {d.get("mac"): (d.get("name") or d.get("model") or d.get("mac", ""))[:24] for d in devices or [] if d.get("type") == "uap"}
+    clients = [{"id": hashlib.sha1(str(c.get("mac")).encode()).hexdigest()[:8], "ap": names.get(c.get("ap_mac"), c.get("ap_mac", "")),
+                "signal": c.get("signal") or c.get("rssi")} for c in sta or [] if not c.get("is_wired", False)]
+    return {"aps": sorted(set(names.values()) | {c["ap"] for c in clients}), "clients": clients}
+
+
+def mikrotik_wifi(rows: list, router: str = "router") -> dict:
+    clients = []
+    for r in rows or []:
+        sig = r.get("signal") or r.get("signal-strength") or ""
+        m = re.match(r"(-?\d+)", str(sig))
+        clients.append({"id": hashlib.sha1(str(r.get("mac-address")).encode()).hexdigest()[:8],
+                        "ap": f"{router} {r.get('interface', 'wifi')}"[:24], "signal": int(m.group(1)) if m else None})
+    return {"aps": sorted({c["ap"] for c in clients}) or [router], "clients": clients}
+
+
+def openwrt_wifi(per_iface: dict, router: str = "openwrt") -> dict:
+    clients = []
+    for iface, j in (per_iface or {}).items():
+        for mac, c in ((j or {}).get("clients") or {}).items():
+            clients.append({"id": hashlib.sha1(mac.encode()).hexdigest()[:8], "ap": f"{router} {iface}"[:24], "signal": c.get("signal")})
+    return {"aps": sorted({c["ap"] for c in clients}) or [router], "clients": clients}
+
+
+# -- the datacenter
+def proxmox_view(res: list) -> dict:
+    hosts = {}
+    for r in res or []:
+        if r.get("type") == "node":
+            hosts[r.get("node")] = {"name": str(r.get("node"))[:24], "up": r.get("status") == "online",
+                                    "cpu": round(float(r.get("cpu") or 0), 3), "maint": False, "vms": []}
+    for r in res or []:
+        if r.get("type") in ("qemu", "lxc") and r.get("node") in hosts and not r.get("template"):
+            hosts[r["node"]]["vms"].append({"id": str(r.get("vmid")), "name": str(r.get("name") or r.get("vmid"))[:24],
+                                            "up": r.get("status") == "running"})
+    return {"hosts": list(hosts.values())}
+
+
+def vcenter_view(hosts: list, vms_by_host: dict) -> dict:
+    out = []
+    for h in hosts or []:
+        hid = h.get("host")
+        out.append({"name": str(h.get("name") or hid)[:24], "up": h.get("connection_state") == "CONNECTED" and h.get("power_state") == "POWERED_ON",
+                    "maint": h.get("connection_state") == "MAINTENANCE" or h.get("maintenance") is True, "cpu": None,
+                    "vms": [{"id": v.get("vm"), "name": str(v.get("name"))[:24], "up": v.get("power_state") == "POWERED_ON"}
+                            for v in vms_by_host.get(hid, [])]})
+    return {"hosts": out}
+
+
+def dc_moves(prev: dict | None, cur: dict) -> list:
+    """The VMs that moved from one host to another since last time (vMotion, live migration): the lifts."""
+    where = {v["id"]: h["name"] for h in (prev or {}).get("hosts", []) for v in h["vms"]}
+    return [{"vm": v["name"], "from": where[v["id"]], "to": h["name"], "t": time.time()}
+            for h in cur.get("hosts", []) for v in h["vms"] if v["id"] in where and where[v["id"]] != h["name"]]
+
+
+# -- backups
+def backup_state(name: str, kind: str, data, max_age: float, now: float) -> dict:
+    """One backup job: running, ok, failed or late (its last good run older than max_age)."""
+    st, t = "unknown", None
+    if kind == "restic":
+        snaps = data if isinstance(data, list) else []
+        ts = [iso_time(s.get("time", "")) for s in snaps]
+        t = max([x for x in ts if x] or [0]) or None
+        st = "ok" if t else "failed"
+    elif kind == "pbs":
+        snaps = (data or {}).get("data", []) if isinstance(data, dict) else []
+        t = max([float(s.get("backup-time") or 0) for s in snaps] or [0]) or None
+        st = "ok" if t else "failed"
+    elif kind == "veeam":
+        j = data if isinstance(data, dict) else {}
+        st = {"success": "ok", "warning": "ok", "failed": "failed"}.get(str(j.get("lastResult", "")).lower(), "unknown")
+        if str(j.get("status", "")).lower() == "running":
+            st = "running"
+        t = iso_time(j.get("lastRun", ""))
+    elif kind == "command":
+        j = data if isinstance(data, dict) else {}
+        st = str(j.get("state") or "unknown")
+        t = float(j["t"]) if j.get("t") else None
+    if st == "ok" and t and now - t > max_age:
+        st = "late"
+    return {"name": name[:24], "state": st, "t": t}
+
+
+def iso_time(v: str) -> float | None:
+    import calendar
+    m = re.match(r"(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)(?:\.\d+)?(Z|[+-]\d\d:?\d\d)?", str(v or ""))
+    if not m:
+        return None
+    y, mo, d, h, mi, s, tz = m.groups()
+    t = calendar.timegm((int(y), int(mo), int(d), int(h), int(mi), int(s)))
+    if tz and tz != "Z":
+        sign, tz = (1 if tz[0] == "+" else -1), tz[1:].replace(":", "")
+        t -= sign * (int(tz[:2]) * 3600 + int(tz[2:]) * 60)
+    return float(t)
+
+
+# -- intruders
+def crowdsec_alerts(rows: list) -> list:
+    out = []
+    for a in rows or []:
+        src = a.get("source") or {}
+        out.append({"level": "crit" if a.get("decisions") else "warn", "target": str(a.get("machine_id") or "server")[:24],
+                    "what": str(a.get("scenario") or "")[:48], "country": src.get("cn", ""), "t": iso_time(a.get("created_at", "")) or time.time()})
+    return out
+
+
+def wazuh_alerts(j: dict, min_level: int = 10) -> list:
+    out = []
+    for h in ((j or {}).get("hits") or {}).get("hits", []) or []:
+        s = h.get("_source") or {}
+        lv = int((s.get("rule") or {}).get("level") or 0)
+        if lv < min_level:
+            continue
+        out.append({"level": "crit" if lv >= 12 else "warn", "target": str((s.get("agent") or {}).get("name") or "server")[:24],
+                    "what": str((s.get("rule") or {}).get("description") or "")[:48], "lv": lv, "t": iso_time(s.get("timestamp", "")) or time.time()})
+    return out
+
+
+def parse_age(v) -> float:
+    """90s, 15m, 26h, 2d (or seconds) as seconds."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*", str(v))
+    return float(m.group(1)) * {"s": 1, "": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)] if m else 26 * 3600.0
+
+
+# ---------------------------------------------------------------------------- 1.5: what expires (certificates, domains)
+def tls_expiry(host: str, port: int = 443, timeout: float = 8) -> dict:
+    """When the TLS certificate of host:port expires (epoch), and whether it is valid now. No credentials needed."""
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ss:
+                cert = ss.getpeercert()
+        return {"at": ssl.cert_time_to_seconds(cert["notAfter"]), "valid": True}
+    except ssl.SSLCertVerificationError as e:   # expired, self-signed...: still read its date
+        ctx = ssl.create_default_context()
+        ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ss:
+                der = ss.getpeercert(binary_form=True)
+        at = der_not_after(der)
+        return {"at": at, "valid": False, "why": str(getattr(e, "verify_message", "") or e)[:80]}
+
+
+def der_not_after(der: bytes) -> float | None:
+    """The notAfter date of a DER certificate, without any library: the second time in its validity."""
+    import calendar
+    times = re.findall(rb"\x17\x0d(\d{12})Z|\x18\x0f(\d{14})Z", der[:1500])
+    if len(times) < 2:
+        return None
+    utc, gen = times[1]
+    v = (utc or gen).decode()
+    if utc:
+        v = ("19" if int(v[:2]) >= 50 else "20") + v
+    return float(calendar.timegm(time.strptime(v, "%Y%m%d%H%M%S")))
+
+
+def whois_expiry(domain: str) -> float | None:
+    """When a domain expires, from `whois` (any TLD that publishes it)."""
+    import calendar
+    if not shutil.which("whois") or not re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", domain.lower()):
+        return None
+    try:
+        out = subprocess.run(["whois", domain], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return whois_date(out)
+
+
+def whois_date(out: str) -> float | None:
+    import calendar
+    m = re.search(r"(?im)^\s*(?:registry expiry date|registrar registration expiration date|expir\w*(?: date)?|expires(?: on)?|paid-till|renewal date)\s*:\s*(.+)$", out)
+    if not m:
+        return None
+    v = m.group(1).strip()
+    for cand, fmt in ((v[:19], "%Y-%m-%dT%H:%M:%S"), (v[:19], "%Y-%m-%d %H:%M:%S"), (v[:10], "%Y-%m-%d"), (v[:11], "%d-%b-%Y"),
+                      (v[:10], "%Y.%m.%d"), (v[:10], "%d/%m/%Y"), (v[:10], "%Y/%m/%d"), (v[:10], "%d.%m.%Y")):
+        try:
+            return float(calendar.timegm(time.strptime(cand, fmt)))
+        except ValueError:
+            continue
+    return None
+
+
+def expiry_view(items: list, now: float, warn: int = 14, crit: int = 3) -> list:
+    out = []
+    for it in items:
+        if it.get("at") is None:
+            out.append({**it, "days": None, "level": "warn"})
+            continue
+        days = (it["at"] - now) / 86400
+        lv = "crit" if days <= crit or it.get("valid") is False else "warn" if days <= warn else "ok"
+        out.append({**it, "days": round(days, 1), "level": lv})
+    return sorted(out, key=lambda x: (x["days"] is not None, x["days"] if x["days"] is not None else 0))
+
+
+def power_w(v, unit: str = "") -> float | None:
+    """A Home Assistant power state in watts (W or kW)."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x * 1000 if str(unit).lower() == "kw" else x
+
+
+# ---------------------------------------------------------------------------- 1.5: community scenes
+SCENE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+BUILTIN_SCENES = ("sphere", "skyline", "orbit", "calm", "hacker", "noir")
+USER_SCENES = CONF_DIR / "scenes"
+SCENE_MAX = 512 * 1024
+# a scene runs alone: no network, no forms, no popups, no way out of its frame
+SCENE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; "
+             "media-src data: blob:; sandbox allow-scripts")
+
+
+def scene_path(name: str):
+    """A community scene: yours (~/.config/omarchy-pulse/scenes/NAME.js) first, then the ones that come with Pulse."""
+    if not SCENE_NAME.match(str(name or "")) or name in BUILTIN_SCENES:
+        return None
+    for d in (USER_SCENES, WEB / "scenes"):
+        f = d / f"{name}.js"
+        if f.is_file() and f.stat().st_size <= SCENE_MAX:
+            return f
+    return None
+
+
+def scene_list() -> dict:
+    out = {}
+    for where, d in (("pulse", WEB / "scenes"), ("yours", USER_SCENES)):
+        if d.is_dir():
+            for f in sorted(d.glob("*.js")):
+                if SCENE_NAME.match(f.stem) and f.stem not in BUILTIN_SCENES:
+                    out[f.stem] = where
+    return out
+
+
+def scene_ticket(tok: str) -> str:
+    """What the scene frame is loaded with: never the token itself, only a key that opens the scenes."""
+    return hmac.new(tok.encode(), b"omarchy-pulse scene", hashlib.sha256).hexdigest()[:32]
+
+
+def scene_page(name: str) -> bytes | None:
+    f = scene_path(name)
+    if not f:
+        return None
+    safe = lambda x: x.replace("</script", "<\\/script")   # noqa: E731
+    rt = (WEB / "scene-runtime.js").read_text(encoding="utf-8")
+    src = f.read_text(encoding="utf-8", errors="replace")
+    return ('<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:transparent;'
+            'overflow:hidden}canvas{position:fixed;inset:0;width:100%;height:100%;display:block}</style></head><body>'
+            f'<canvas id="c"></canvas><script>{safe(rt)}</script><script>{safe(src)}</script></body></html>').encode()
+
+
+def scene_check(src: str) -> list:
+    """What a scene needs to be shared: the checks of `omarchy-pulse scene check` and of the scene lab."""
+    out = []
+    if "PulseScene.register(" not in src:
+        out.append(("crit", "it never calls PulseScene.register(name, {...})"))
+    if len(src.encode()) > SCENE_MAX:
+        out.append(("crit", f"bigger than {SCENE_MAX // 1024} KB"))
+    for pat, what in ((r"\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource|navigator\.sendBeacon", "network calls (they are blocked)"),
+                      (r"\bimport\s*\(|importScripts", "imports (a scene is one file)"),
+                      (r"localStorage|sessionStorage|indexedDB|document\.cookie", "storage (a scene keeps its state in memory)"),
+                      (r"\beval\s*\(|new\s+Function\s*\(", "eval")):
+        if re.search(pat, src):
+            out.append(("warn", what))
+    if not re.search(r"\.motion\b|reduced", src):
+        out.append(("warn", "it never looks at state.ui.motion: with motion = \"reduced\" it should keep still"))
+    if not out:
+        out.append(("ok", "ready to share"))
+    return out
+
+
+SCENE_TEMPLATE = """// NAME: a scene for Omarchy Pulse (docs/SCENES.md). MIT, your own art and code.
+// Pulse draws the sky behind it and the panels on top: leave the sky transparent, draw your world on the floor.
+PulseScene.register("NAME", {
+  init: function (g, size) {},                 // once, and when the screen changes size
+  draw: function (g, t, state, box) {          // every frame: t in seconds, box.w, box.h, box.horizon
+    var C = PulseScene.rgba, th = state.theme || {}, hex = function (h) { h = (h || "#888888").slice(1); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; };
+    var ac = hex(th.accent), still = state.ui && state.ui.motion === "reduced";
+    var agents = state.agents || [], n = Math.max(1, agents.length), y = box.horizon + box.h * 0.08;
+    agents.forEach(function (a, i) {             // one lantern per AI agent
+      var x = box.w * (i + 1) / (n + 1), bob = still ? 0 : Math.sin(t * 2 + i) * box.h * 0.006;
+      var col = { working: ac, waiting: hex(th.warn), failed: hex(th.crit), done: hex(th.ok) }[a.state] || [150, 150, 150];
+      g.fillStyle = C(col, 0.9); g.beginPath(); g.arc(x, y + bob, box.h * 0.02, 0, Math.PI * 2); g.fill();
+    });
+  },
+  click: function (x, y, state) { return (state.agents || []).length + " agents"; }   // optional: a line of text
+});
+"""
 
 
 def quality_mode(v) -> str:
@@ -3270,6 +4312,16 @@ PHRASES = {
     "shower": {"en": "Tonight, the {name} meteor shower. Look up!", "it": "Stanotte lo sciame delle {name}. Guarda in alto!",
                "es": "Esta noche, la lluvia de estrellas de las {name}. ¡Mira arriba!", "fr": "Cette nuit, la pluie d'étoiles filantes des {name}. Lève les yeux !",
                "de": "Heute Nacht: der Meteorstrom der {name}. Schau nach oben!"},
+    "xmas": {"en": "Merry Christmas!", "it": "Buon Natale!", "es": "¡Feliz Navidad!", "fr": "Joyeux Noël !", "de": "Frohe Weihnachten!"},
+    "new_year": {"en": "Happy {year}!", "it": "Buon {year}!", "es": "¡Feliz {year}!", "fr": "Bonne année {year} !", "de": "Frohes neues Jahr {year}!"},
+    "eclipse_soon": {"en": "In {min} minutes, an eclipse of the {body}: {pct} covered from here.",
+                     "it": "Tra {min} minuti, un'eclissi di {body}: {pct} coperto da qui.",
+                     "es": "En {min} minutos, un eclipse de {body}: {pct} cubierto desde aquí.",
+                     "fr": "Dans {min} minutes, une éclipse de {body} : {pct} couvert d'ici.",
+                     "de": "In {min} Minuten eine {body}finsternis: {pct} bedeckt von hier."},
+    "eclipse_max": {"en": "The eclipse is at its greatest now.", "it": "L'eclissi è al massimo adesso.",
+                    "es": "El eclipse está en su punto máximo.", "fr": "L'éclipse est à son maximum.",
+                    "de": "Die Finsternis ist jetzt am größten."},
     "door": {"en": "Someone is at the door.", "it": "C'è qualcuno alla porta.", "es": "Hay alguien en la puerta.",
              "fr": "Quelqu'un est à la porte.", "de": "Jemand ist an der Tür."},
     "car_low": {"en": "Your {name} is at {b} percent and not plugged in.", "it": "L'auto è al {b} per cento e non è in carica.",
@@ -3464,6 +4516,11 @@ def sun_radec(jd: float) -> tuple:
 
 def moon_ecl(jd: float) -> tuple:
     """The Moon's geocentric ecliptic longitude and latitude (degrees), with its main perturbations."""
+    return moon_geo(jd)[:2]
+
+
+def moon_geo(jd: float) -> tuple:
+    """The Moon's geocentric ecliptic longitude, latitude (degrees) and distance (Earth radii)."""
     import math
     rad, d = math.radians, jd - 2451543.5
     N, i, w = 125.1228 - 0.0529538083 * d, 5.1454, 318.0634 + 0.1643573223 * d
@@ -3488,7 +4545,169 @@ def moon_ecl(jd: float) -> tuple:
             + 0.053 * s(Mm + 2 * D) + 0.046 * s(2 * D - Ms) + 0.041 * s(Mm - Ms) - 0.035 * s(D) - 0.031 * s(Mm + Ms)
             - 0.015 * s(2 * F - 2 * D) + 0.011 * s(Mm - 4 * D))
     lat += (-0.173 * s(F - 2 * D) - 0.055 * s(Mm - F - 2 * D) - 0.046 * s(Mm + F - 2 * D) + 0.033 * s(F + 2 * D) + 0.017 * s(2 * Mm + F))
-    return lon % 360, lat
+    dist = r * 60.2666 - 0.58 * math.cos(Mm - 2 * D) - 0.46 * math.cos(2 * D)
+    return lon % 360, lat, dist
+
+
+# ---------------------------------------------------------------------------- 1.5: eclipses, for where you are
+DELTA_T = 69.0   # seconds, TT - UT around 2026-2028: the Moon moves half an arcsecond a second
+
+
+def sun_dist(jd: float) -> float:
+    """The Sun's distance (AU)."""
+    import math
+    g = math.radians((357.528 + 0.9856003 * (jd - 2451545.0)) % 360)
+    return 1.00014 - 0.01671 * math.cos(g) - 0.00014 * math.cos(2 * g)
+
+
+def eclipse_geometry(t: float, lat: float, lon: float) -> dict:
+    """The Sun and the Moon seen from (lat, lon) at t: their separation and sizes (degrees), heights and directions."""
+    import math
+    jd = julian(t + DELTA_T)
+    eps = 23.439 - 0.0000004 * (jd - 2451545.0)
+    sra, sdec = ecl_to_eq(sun_ecl(jd), 0.0, eps)
+    ml, mb, md = moon_geo(jd)
+    mra, mdec = ecl_to_eq(ml, mb, eps)
+    # from the centre of the Earth to where you are: the Moon moves by up to a degree (parallax)
+    sp = 1.0 / md
+    H = math.radians((gmst_deg(julian(t)) + lon - mra) % 360)
+    phi, d = math.radians(lat), math.radians(mdec)
+    den = math.cos(d) - math.cos(phi) * sp * math.cos(H)
+    dra = math.atan2(-math.cos(phi) * sp * math.sin(H), den)
+    tdec = math.atan2((math.sin(d) - math.sin(phi) * sp) * math.cos(dra), den)
+    tra = (mra + math.degrees(dra)) % 360
+    a1, d1, a2, d2 = math.radians(sra), math.radians(sdec), math.radians(tra), tdec
+    sep = math.degrees(math.acos(max(-1.0, min(1.0, math.sin(d1) * math.sin(d2) + math.cos(d1) * math.cos(d2) * math.cos(a1 - a2)))))
+    s_az, s_alt = altaz(sra, sdec, lat, lon, julian(t))
+    m_az, m_alt = altaz(tra, math.degrees(tdec), lat, lon, julian(t))
+    rs = 959.63 / 3600 / sun_dist(jd)
+    rm = math.degrees(math.asin(0.272481 * sp)) * (1 + math.sin(math.radians(max(0.0, m_alt))) * sp)
+    return {"sep": sep, "rs": rs, "rm": rm, "sun": (s_az, s_alt), "moon": (m_az, m_alt), "md": md,
+            "ml": ml, "mb": mb, "sl": sun_ecl(jd)}
+
+
+def disc_overlap(sep: float, r1: float, r2: float) -> float:
+    """How much of a disc of radius r1 a disc of radius r2 covers at a distance sep (0..1)."""
+    import math
+    if sep >= r1 + r2:
+        return 0.0
+    if sep <= abs(r2 - r1):
+        return 1.0 if r2 >= r1 else (r2 * r2) / (r1 * r1)
+    a = r1 * r1 * math.acos((sep * sep + r1 * r1 - r2 * r2) / (2 * sep * r1))
+    b = r2 * r2 * math.acos((sep * sep + r2 * r2 - r1 * r1) / (2 * sep * r2))
+    c = 0.5 * math.sqrt(max(0.0, (-sep + r1 + r2) * (sep + r1 - r2) * (sep - r1 + r2) * (sep + r1 + r2)))
+    return (a + b - c) / (math.pi * r1 * r1)
+
+
+def solar_local(t: float, lat: float, lon: float) -> dict:
+    g = eclipse_geometry(t, lat, lon)
+    mag = (g["rs"] + g["rm"] - g["sep"]) / (2 * g["rs"])
+    return {"mag": mag, "obsc": disc_overlap(g["sep"], g["rs"], g["rm"]), "g": g}
+
+
+def lunar_shadow(t: float) -> dict:
+    """The Moon against the Earth's shadow (geocentric): the umbral and penumbral magnitudes."""
+    import math
+    jd = julian(t + DELTA_T)
+    ml, mb, md = moon_geo(jd)
+    sl, R = sun_ecl(jd), sun_dist(jd)
+    al, ab = math.radians((sl + 180) % 360), 0.0
+    m1, b1 = math.radians(ml), math.radians(mb)
+    sep = math.degrees(math.acos(max(-1.0, min(1.0, math.sin(b1) * math.sin(ab) + math.cos(b1) * math.cos(ab) * math.cos(m1 - al)))))
+    pm = math.degrees(math.asin(1.0 / md))
+    ps, ss = 8.794 / 3600 / R, 959.63 / 3600 / R
+    rm = math.degrees(math.asin(0.272481 / md))
+    umbra, pen = 1.02 * (0.99834 * pm + ps - ss), 1.02 * (0.99834 * pm + ps + ss)
+    return {"umag": (umbra + rm - sep) / (2 * rm), "pmag": (pen + rm - sep) / (2 * rm), "sep": sep}
+
+
+def syzygies(t0: float, days: float, full: bool) -> list:
+    """The new (or full) moons between t0 and t0 + days, to a minute."""
+    out, step, t = [], 6 * 3600, t0
+    target = 180.0 if full else 0.0
+    def el(x):
+        jd = julian(x + DELTA_T)
+        return ((moon_ecl(jd)[0] - sun_ecl(jd) - target + 180) % 360) - 180
+    prev = el(t)
+    while t < t0 + days * 86400:
+        n = el(t + step)
+        if prev < 0 <= n and n - prev < 90:
+            lo, hi = t, t + step
+            for _ in range(30):
+                mid = (lo + hi) / 2
+                if el(mid) < 0:
+                    lo = mid
+                else:
+                    hi = mid
+            out.append((lo + hi) / 2)
+        prev, t = n, t + step
+    return out
+
+
+def eclipses(lat: float, lon: float, t0: float | None = None, days: float = 800) -> list:
+    """The eclipses you can see from (lat, lon) in the next `days`: the Sun partly or wholly hidden while it is up,
+    the Moon in the Earth's shadow while it is up. Times to a few minutes, sizes to a few percent (a wallpaper, not
+    an almanac): each one with its start, its greatest moment, its end and how much is covered."""
+    import math
+    t0 = t0 if t0 is not None else time.time()
+    out = []
+    for tn in syzygies(t0 - 86400, days + 1, False):
+        jd = julian(tn + DELTA_T)
+        if abs(moon_geo(jd)[1]) > 1.6:
+            continue
+        best, first, last = None, None, None
+        for k in range(-260, 261):   # every minute, four hours and twenty either side of the new moon
+            tt = tn + k * 60
+            sl = solar_local(tt, lat, lon)
+            up = sl["g"]["sun"][1] > -0.8
+            if sl["mag"] > 0 and up:
+                first = first or tt
+                last = tt
+                if not best or sl["mag"] > best[1]["mag"]:
+                    best = (tt, sl)
+        if not best or best[0] < t0 - 6 * 3600:
+            continue
+        tm, sl = best
+        t_min = tm
+        for k in range(-60, 61, 5):   # to five seconds
+            x = solar_local(t_min + k, lat, lon)
+            if x["mag"] > sl["mag"]:
+                tm, sl = t_min + k, x
+        g = sl["g"]
+        kind = "total" if g["rm"] >= g["rs"] and sl["mag"] >= 1 else "annular" if g["sep"] < g["rs"] - g["rm"] else "partial"
+        out.append({"kind": "solar", "type": kind, "start": first, "max": tm, "end": last,
+                    "mag": round(sl["mag"], 3), "obsc": round(sl["obsc"], 3), "alt": round(g["sun"][1], 1),
+                    "az": round(g["sun"][0], 1)})
+    for tf in syzygies(t0 - 86400, days + 1, True):
+        x = lunar_shadow(tf)
+        if x["pmag"] < -0.6:
+            continue
+        best, first, last = None, None, None
+        for k in range(-300, 301, 2):
+            tt = tf + k * 60
+            ls = lunar_shadow(tt)
+            if ls["pmag"] <= 0:
+                continue
+            first = first or tt
+            last = tt
+            if not best or ls["pmag"] > best[1]["pmag"]:
+                best = (tt, ls)
+        if not best or best[0] < t0 - 6 * 3600:
+            continue
+        tm, ls = best
+        kind = "total" if ls["umag"] >= 1 else "partial" if ls["umag"] > 0 else "penumbral"
+        # can you see it: is the Moon above your horizon at some point of it
+        seen, alt_max = False, -90.0
+        for tt in range(int(first), int(last) + 1, 300):
+            alt = eclipse_geometry(tt, lat, lon)["moon"][1]
+            alt_max = max(alt_max, alt)
+            seen = seen or alt > 0
+        if not seen:
+            continue
+        out.append({"kind": "lunar", "type": kind, "start": first, "max": tm, "end": last,
+                    "mag": round(ls["umag"], 3), "pmag": round(ls["pmag"], 3),
+                    "alt": round(eclipse_geometry(tm, lat, lon)["moon"][1], 1), "altMax": round(alt_max, 1)})
+    return sorted(out, key=lambda e: e["max"])
 
 
 def moon_phase(jd: float) -> dict:
@@ -4383,6 +5602,39 @@ def make_handler(hub: Hub, tok: str, port: int):
             u = urllib.parse.urlsplit(self.path)
             q = dict(urllib.parse.parse_qsl(u.query))
             path = u.path
+            if path.startswith("/scene/"):   # 1.5: a community scene, alone in its sandbox (no token inside)
+                name = urllib.parse.unquote(path[7:])
+                if not secrets.compare_digest(str(q.get("ticket", "")), scene_ticket(tok)):
+                    self._send(401, b'{"error":"ticket"}')
+                    return
+                page = scene_page(name)
+                if page is None:
+                    self._send(404, b"{}")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(page)))
+                self.send_header("Content-Security-Policy", SCENE_CSP)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(page)
+                return
+            if path in ("/api/scenes", "/api/scene-src", "/api/scene-state"):   # the scene lab
+                if not self._authed(q):
+                    return
+                if path == "/api/scenes":
+                    body = {"scenes": scene_list(), "ticket": scene_ticket(tok), "builtin": list(BUILTIN_SCENES)}
+                elif path == "/api/scene-src":
+                    f = scene_path(q.get("name", ""))
+                    src = f.read_text(encoding="utf-8", errors="replace") if f else ""
+                    body = {"name": q.get("name", ""), "path": str(f or ""), "src": src,
+                            "mtime": f.stat().st_mtime if f else 0, "checks": scene_check(src) if f else []}
+                else:
+                    with hub.lock:
+                        body = hub.scene_state()
+                self._send(200, json.dumps(body, separators=(",", ":")).encode())
+                return
             if path == "/api/visibility":
                 if self._authed(q):
                     with hub.lock:
@@ -4465,6 +5717,45 @@ def make_handler(hub: Hub, tok: str, port: int):
                 self._send(413, b"{}")
                 return
             body = self.rfile.read(n)
+            if u.path == "/api/trap":   # 1.5 beta: snmptrapd's traphandle (omarchy-pulse trap)
+                hub.bolt(trap_parse(body.decode("utf-8", "replace")[:4000]))
+                self._send(204, b"")
+                return
+            if u.path == "/api/term":   # 1.5 beta: what you type in omarchy-pulse term, shown on the wallpaper
+                try:
+                    tj = json.loads(body or b"{}")
+                except ValueError:
+                    tj = {}
+                lines = tj.get("lines", []) if isinstance(tj, dict) else []
+                with hub.lock:
+                    if isinstance(tj, dict) and tj.get("clear"):
+                        hub.term.clear()
+                    for ln in lines[:20]:
+                        hub.term.append({"t": time.time(), "text": str(ln)[:100]})
+                self._send(204, b"")
+                return
+            if u.path == "/api/noc":   # 1.5 beta: on, off, ack (the incident is over)
+                do = q.get("do", "")
+                with hub.lock:
+                    if do in ("on", "off"):
+                        hub.noc_override = do == "on"
+                    if do in ("ack", "off"):
+                        hub.incident = None
+                self._send(200, json.dumps({"on": hub.noc_on(), "incident": bool(hub.incident)}).encode())
+                return
+            if u.path.startswith("/api/ack/"):   # 1.5: acknowledge a problem on its own system (a source with ack = "...")
+                self._send(200, json.dumps(hub.ack(urllib.parse.unquote(u.path[9:]))).encode())
+                return
+            if u.path == "/api/scene-error":   # a community scene broke: once a minute in the log
+                try:
+                    e = json.loads(body or b"{}")
+                except ValueError:
+                    e = {}
+                if time.time() - hub.scene_err_t > 60:
+                    hub.scene_err_t = time.time()
+                    log(f"scene {str(e.get('scene', ''))[:32]}: {str(e.get('where', ''))[:12]}: {str(e.get('error', ''))[:240]}")
+                self._send(204, b"")
+                return
             if u.path.startswith("/api/push/"):
                 q["_ctype"] = self.headers.get("Content-Type", "")
                 hub.push(urllib.parse.unquote(u.path[10:]), body, q)
@@ -4782,6 +6073,20 @@ def from_demo(hub: Hub) -> None:
                {"name": "dotfiles", "week": 6, "last": time.time() - 2 * 86400, "dirty": 3, "ci": "", "branch": "main"},
                {"name": "website", "week": 3, "last": time.time() - 3 * 86400, "dirty": 0, "ci": "fail", "branch": "main"}]
     now0 = time.time()
+    hub.expiry = expiry_view([{"name": "example.com", "kind": "certificate", "at": now0 + 61 * 86400, "valid": True},
+                              {"name": "demo.dev", "kind": "domain", "at": now0 + 9 * 86400},
+                              {"name": "vpn-cert", "kind": "certificate", "at": now0 + 2.4 * 86400, "valid": True},
+                              {"name": "licence", "kind": "date", "at": now0 + 190 * 86400}], now0)
+    if os.environ.get("PULSE_DEMO_NET"):
+        threading.Thread(target=demo_net, args=(hub,), daemon=True).start()
+    hub.energy = {"solar": 2400.0, "grid": -500.0, "load": 1900.0, "battery": None, "t": now0 + 10 ** 9, "peak": 6000.0}
+    if os.environ.get("PULSE_DEMO_EXTRAS"):   # the demo video: candles and the river only while their flag file exists
+        def extras(ex=hub.expiry, en=hub.energy, fl=os.environ["PULSE_DEMO_EXTRAS"]):
+            while True:
+                on = os.path.exists(fl)
+                hub.expiry, hub.energy = (ex, en) if on else ([], None)
+                time.sleep(0.3)
+        threading.Thread(target=extras, daemon=True).start()
     t_train = float(os.environ.get("PULSE_DEMO_TRAIN_AT") or now0 + float(os.environ.get("PULSE_DEMO_TRAIN", "2400")))
     hub.calendar = [{"title": "standup", "start": t_train, "end": t_train + 900},
                     {"title": "design review", "start": t_train + 4200, "end": t_train + 6000}]
@@ -4882,6 +6187,7 @@ def from_demo(hub: Hub) -> None:
             time.sleep(0.2)
     threading.Thread(target=demo_flags, daemon=True).start()
     threading.Thread(target=hub.loop_night, daemon=True).start()   # the real sky over the demo city
+    threading.Thread(target=hub.loop_season, daemon=True).start()   # 1.5: the holidays and the eclipses
     if os.environ.get("PULSE_DEMO_LAN"):   # a file path: while it exists, a new device has joined
         def lan():
             flag, on = os.environ["PULSE_DEMO_LAN"], False
@@ -4939,6 +6245,180 @@ def client(method: str, path: str, body: bytes = b"", ctype: str = "text/plain")
                                  method=method, headers={"X-Pulse-Token": token(), "Content-Type": ctype})
     with urllib.request.urlopen(req, timeout=5) as r:
         return json.loads(r.read() or b"{}")
+
+
+def demo_net(hub) -> None:
+    """The demo's network (made up): three switches, a firewall under attack, Wi-Fi, a small cluster, backups, an
+    intruder, and now and then a syslog bolt and a live migration."""
+    import random
+    rnd = random.Random(7)
+    def sw(name, n, peers):
+        ports = [{"i": str(i), "name": f"ge-{i}", "up": rnd.random() < 0.8, "err": False, "util": round(rnd.random() * 0.5, 2)} for i in range(1, n + 1)]
+        for k, (port, peer, jam) in enumerate(peers):
+            ports[port].update(up=True, peer=peer, jam=jam, util=0.92 if jam else 0.4)
+        return {"name": name, "up": True, "ports": ports, "peers": [p[1] for p in peers], "host": f"10.0.0.{len(name)}", "_raw": {}, "_t": 0}
+    hosts = [{"name": f"pve-{i}", "up": True, "maint": i == 3, "cpu": 0.3,
+              "vms": [{"id": f"{i}{k}", "name": f"vm-{i}{k}", "up": rnd.random() < 0.85} for k in range(4 + i * 3)]} for i in (1, 2, 3)]
+    clients = [{"id": f"{rnd.getrandbits(32):08x}", "ap": rnd.choice(["ap-hall", "ap-office", "ap-garden"]), "signal": rnd.randint(-82, -38)} for _ in range(18)]
+    t_move = 0.0
+    flag = os.environ.get("PULSE_DEMO_NET", "")
+    while True:
+        now = time.time()
+        if flag not in ("1", "") and not os.path.exists(flag):   # the demo video: only while its flag file exists
+            with hub.lock:
+                hub.net = None
+            time.sleep(0.5)
+            continue
+        sws = [sw("core", 48, [(47, "access-1", False), (46, "access-2", True)]), sw("access-1", 24, [(23, "core", False)]),
+               sw("access-2", 24, [(23, "core", True)])]
+        if int(now) % 20 < 3:
+            sws[1]["ports"][5]["err"] = True
+        fw = (hub.net or {}).get("fw") or {"events": [], "vpn": 3}
+        ev = [e for e in fw["events"] if now - e["t"] < 60]
+        for _ in range(rnd.randint(0, 3)):
+            cc = rnd.choice(["CN", "RU", "US", "NL", "BR", "VN", "IN", "DE"])
+            ev.append({"src": "deny", "country": cc, "az": attack_az(cc, "", hub.location), "level": "info", "t": now + rnd.random()})
+        if rnd.random() < 0.05:
+            ev.append({"src": "ips", "country": "RU", "az": attack_az("RU", "", hub.location), "level": "crit", "t": now})
+        if rnd.random() < 0.1:
+            c = rnd.choice(clients)
+            c["ap"] = rnd.choice(["ap-hall", "ap-office", "ap-garden"])
+        moves = [m for m in ((hub.net or {}).get("dc") or {}).get("moves", []) if now - m["t"] < 30]
+        if now - t_move > 25:
+            t_move = now
+            moves.append({"vm": "vm-12", "from": "pve-1", "to": "pve-2", "t": now})
+        if rnd.random() < 0.04:
+            hub.bolt({"sev": 2, "host": "access-1", "addr": "", "text": "link down ge-6", "t": now})
+        with hub.lock:
+            hub.net = {"switches": sws, "fw": {"events": ev[-60:], "vpn": 3},
+                       "wifi": {"aps": ["ap-hall", "ap-office", "ap-garden"], "clients": clients},
+                       "dc": {"hosts": hosts, "moves": moves},
+                       "backups": [{"name": "nas-nightly", "state": "running", "t": now - 600},
+                                   {"name": "pve-vms", "state": "ok", "t": now - 3600},
+                                   {"name": "photos", "state": "failed", "t": now - 90000}],
+                       "intruders": [{"level": "crit", "target": "pve-2", "what": "ssh brute force", "t": now - 20}]}
+        time.sleep(1)
+
+
+def cmd_term() -> int:
+    """A small terminal on the city (beta): what you type and what it answers also appear on the wallpaper.
+    It only reads: scan, ping, status. Actions (reboot, block...) come later, with confirmations."""
+    def show(lines: list) -> None:
+        for ln in lines:
+            print(ln)
+        quiet_client("/api/term", json.dumps({"lines": lines}).encode())
+
+    def known() -> dict:
+        try:
+            st = client("GET", "/api/state")
+        except Exception:   # noqa: BLE001
+            return {}
+        d = {x.get("name"): x.get("ip") for x in st.get("lan") or [] if x.get("name") and x.get("ip")}
+        cfg = load_config().get("net") or {}
+        for sw in cfg.get("switch") or []:
+            if sw.get("name") and sw.get("host"):
+                d[sw["name"]] = sw["host"]
+        return d
+
+    print("Pulse terminal (beta, read-only). help · scan · ping NAME · status · clear · exit")
+    while True:
+        try:
+            line = input("pulse> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not line:
+            continue
+        cmd0, *rest = line.split()
+        quiet_client("/api/term", json.dumps({"lines": ["> " + line]}).encode())
+        if cmd0 in ("exit", "quit"):
+            return 0
+        if cmd0 == "help":
+            show(["scan          the devices Pulse knows and your neighbour table", "ping NAME|IP  three pings",
+                  "status        switches, firewall, Wi-Fi, servers, backups", "clear         clear the wallpaper terminal"])
+        elif cmd0 == "clear":
+            quiet_client("/api/term", json.dumps({"clear": True}).encode())
+        elif cmd0 == "scan":
+            out = [f"{n:<20} {ip}" for n, ip in sorted(known().items())]
+            if shutil.which("ip"):
+                r = subprocess.run(["ip", "neigh"], capture_output=True, text=True, timeout=5)
+                out += [" ".join(x.split()[:5]) for x in r.stdout.splitlines() if "REACHABLE" in x or "STALE" in x][:20]
+            show(out or ["nothing found"])
+        elif cmd0 == "ping" and rest:
+            host = known().get(rest[0], rest[0])
+            if not re.match(r"^[\w.:-]+$", host):
+                show(["?"])
+                continue
+            r = subprocess.run(["ping", "-c", "3", "-W", "1", host], capture_output=True, text=True, timeout=10)
+            last = [x for x in r.stdout.splitlines() if "packet loss" in x or "rtt" in x or "round-trip" in x]
+            show([f"{rest[0]} ({host})"] + (last or [r.stderr.strip()[:80] or "no answer"]))
+        elif cmd0 == "status":
+            try:
+                n = client("GET", "/api/state").get("net") or {}
+            except Exception:   # noqa: BLE001
+                n = {}
+            sw = n.get("switches") or []
+            show([f"switches  {sum(1 for x in sw if x['up'])}/{len(sw)} up, {sum(1 for x in sw for p in x['ports'] if p.get('err'))} ports with errors",
+                  f"firewall  {len((n.get('fw') or {}).get('events', []))} blocked in the last minute, vpn {(n.get('fw') or {}).get('vpn')}",
+                  f"wi-fi     {len((n.get('wifi') or {}).get('clients', []))} clients on {len((n.get('wifi') or {}).get('aps', []))} access points",
+                  f"servers   {len((n.get('dc') or {}).get('hosts', []))} hosts",
+                  "backups   " + (", ".join(f"{b['name']} {b['state']}" for b in n.get("backups") or []) or "none")])
+        elif cmd0 in ("reboot", "shutdown", "block", "kill", "restart", "poweroff", "disable"):
+            show(["this terminal only reads: actions come in a later version, with a confirmation"])
+        else:
+            show([f"{cmd0}: unknown (help)"])
+
+
+def cmd_scene(args: list) -> int:
+    """omarchy-pulse scene list | new NAME | check NAME | lab [NAME]"""
+    sub = args[0] if args else "list"
+    if sub == "list":
+        cur = str((load_config().get("pulse") or {}).get("scene") or "skyline")
+        for n in BUILTIN_SCENES:
+            print(f"  {'*' if n == cur else ' '} {n:16} built in")
+        for n, where in scene_list().items():
+            print(f"  {'*' if n == cur else ' '} {n:16} {'yours: ' + str(USER_SCENES / (n + '.js')) if where == 'yours' else 'comes with Pulse'}")
+        print('\n  use one: [pulse] scene = "NAME" in pulse.toml')
+        return 0
+    name = args[1] if len(args) > 1 else ""
+    if sub == "new":
+        if not SCENE_NAME.match(name) or name in BUILTIN_SCENES:
+            print("usage: omarchy-pulse scene new NAME   (a-z, 0-9 and -, up to 32; not a built-in scene)")
+            return 2
+        f = USER_SCENES / f"{name}.js"
+        if f.exists():
+            print(f"{f} already exists")
+            return 1
+        USER_SCENES.mkdir(parents=True, exist_ok=True)
+        f.write_text(SCENE_TEMPLATE.replace("NAME", name), encoding="utf-8")
+        print(f"created {f}\ntry it: omarchy-pulse scene lab {name}")
+        return 0
+    if sub == "check":
+        f = scene_path(name)
+        if not f:
+            print(f"no scene called {name!r} (omarchy-pulse scene list)")
+            return 1
+        res = scene_check(f.read_text(encoding="utf-8", errors="replace"))
+        if shutil.which("node"):
+            r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
+            if r.returncode:
+                res.insert(0, ("crit", "syntax: " + (r.stderr.strip().splitlines() or ["error"])[-1]))
+        for lv, msg in res:
+            print({"ok": "  ✓", "warn": "  !", "crit": "  ✗"}[lv], msg)
+        return 1 if any(lv == "crit" for lv, _ in res) else 0
+    if sub == "lab":
+        url = f"http://127.0.0.1:{port_of()}/lab.html?token={urllib.parse.quote(token())}&scene={urllib.parse.quote(name)}"
+        try:
+            client("GET", "/api/scenes")
+        except Exception:   # noqa: BLE001
+            print("Pulse is not running: start it first (or omarchy-pulse serve --demo)")
+            return 1
+        print(f"the scene lab: {url}")
+        if shutil.which("xdg-open"):
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return 0
+    print("usage: omarchy-pulse scene list | new NAME | check NAME | lab [NAME]")
+    return 2
 
 
 def quiet_client(path: str, body: bytes = b"") -> int:
@@ -5036,6 +6516,19 @@ def main(argv: list[str]) -> int:
             return 2
         q = urllib.parse.urlencode({"state": argv[3], "text": " ".join(argv[4:])})
         return quiet_client(f"/api/agent/{urllib.parse.quote(argv[2])}?{q}")
+    if cmd == "scene":
+        return cmd_scene(argv[2:])
+    if cmd == "trap":
+        return quiet_client("/api/trap", sys.stdin.read(4000).encode())
+    if cmd == "noc":
+        do = argv[2] if len(argv) > 2 else "on"
+        if do not in ("on", "off", "ack"):
+            print("usage: omarchy-pulse noc on|off|ack")
+            return 2
+        print(json.dumps(client("POST", "/api/noc?do=" + do)))
+        return 0
+    if cmd == "term":
+        return cmd_term()
     if cmd == "banner":
         text = " ".join(argv[2:]) or str((load_config().get("pulse") or {}).get("banner") or "OMARCHY · WE CAN FIX EVERYTHING")
         return quiet_client("/api/fx?" + urllib.parse.urlencode({"kind": "banner", "text": text[:48]}))
@@ -5208,6 +6701,13 @@ def main(argv: list[str]) -> int:
                 print(f"Meteor shower: {n['shower']['name']} ({round(n['shower']['strength'] * 100)}% of its peak)")
         print(("Next Starlink train: " + time.strftime("%H:%M", time.localtime(sl["start"])) + f", {sl['max_el']}° up, {compass(sl['az'])}, {sl['n']} satellites")
               if sl else "No Starlink train over you in the next 24 hours.")
+        for e in r.get("eclipses") or []:
+            when = time.strftime("%a %d %b %Y %H:%M", time.localtime(e["max"]))
+            size = f"{round(e['obsc'] * 100)}% of the Sun covered" if e["kind"] == "solar" else \
+                {"total": "the Moon all in the Earth's shadow", "partial": f"{round(e['mag'] * 100)}% of the Moon in the shadow",
+                 "penumbral": "a faint dimming of the Moon"}[e["type"]]
+            print(f"Eclipse of the {'Sun' if e['kind'] == 'solar' else 'Moon'} ({e['type']}): {when}, {size}, "
+                  f"from {time.strftime('%H:%M', time.localtime(e['start']))} to {time.strftime('%H:%M', time.localtime(e['end']))}")
         a = r.get("air")
         if a and a.get("aqi") is not None:
             print(f"Air: {a['level']} (AQI {a['aqi']})" + (f", {a['pollen']} pollen {a['pollenLevel']}" if a.get("pollen") else ""))

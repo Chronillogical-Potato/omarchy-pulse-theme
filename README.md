@@ -1,11 +1,15 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-**Version 1.4** · [what's new](#new-in-14) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+**Version 1.5** · [what's new](#new-in-15) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
 
-![Omarchy Pulse 1.4: the real night sky over Berlin, the Moon's crescent, Saturn, a Starlink train, the banner plane, robots on the floor](preview.png)
+![Omarchy Pulse 1.5: the noir scene, a futuristic megacity at night with the agent's face on the big screen, candles for what expires, the energy river, robots on the floor (demo data)](preview.png)
 
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
+- **new in 1.5: scenes anyone can make** (with a scene lab), a futuristic **noir** megacity, **the holidays and the
+  eclipses** on your own clock and sky, **a construction site for your code**, candles for what **expires**, the
+  **weather of your infrastructure**, your home's **energy** as a river, and in beta **your network as part of the
+  city**: switches, the firewall walls, Wi-Fi, servers, backups, intruders, a NOC mode ([what's new](#new-in-15))
 - **new in 1.4: the real night sky** (stars, constellations, the Moon's phase, the planets, meteor showers),
   **Starlink trains**, **every kind of weather**, the air, sound, your room's lights, Alexa, your phone, **robots**
   (your containers and AI bots), **a banner plane that thanks Omarchy**, **Pulse Wrapped** ([what's new](#new-in-14))
@@ -33,6 +37,47 @@ or anything you push from a script. Camera feeds, AI briefs, Home Assistant, ser
 
 Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author of
 [OmarchyTV](https://github.com/piermark/omarchytv) (the Live screen of OmarchyTV, now on your desktop).
+
+## New in 1.5
+
+**Scenes anyone can make.** A whole new world for the wallpaper in one JavaScript file, drawn from your real data,
+without touching the engine: Pulse keeps the sky, the weather and the panels. `omarchy-pulse scene new` starts one,
+the **scene lab** shows it live with demo data you control, checks it and exports a PNG or a video. Scenes run in a
+sandbox (no network, no token), so you can install them from anyone. The example: **pond**, where every AI agent is a
+fish and every repo a water lily. ([the creators' guide](docs/SCENES.md), [section 47](docs/GUIDE.md#47-community-scenes-15))
+
+**Noir.** `scene = "noir"`: a futuristic megacity at night, towers with thousands of windows, searchlights, neon signs,
+cars in the air and rain that never stops; a big screen on the central tower shows everything the sphere shows,
+your agent's face too. All original. ([section 55](docs/GUIDE.md#55-the-noir-scene-15))
+
+**The holidays and the eclipses.** Christmas lights and a tree, snow when it is really cold, the New Year's countdown
+on the sphere and fireworks at midnight on your clock. The eclipses of the Sun and the Moon you can see from your city,
+at their real time: the Moon's disc on the Sun where it really is, the stars at totality, the Moon turning red.
+([48](docs/GUIDE.md#48-the-holidays-15), [49](docs/GUIDE.md#49-eclipses-15))
+
+**A construction site for your code.** Every commit lowers a new floor onto its tower, a crane works where an AI agent
+works, scaffolding while there are changes not committed, fire and a fire engine while the CI is red.
+([section 50](docs/GUIDE.md#50-the-code-construction-site-15))
+
+**What expires, and the weather of your infrastructure.** Certificates, domains and licences as candles that burn
+down (amber at 14 days, red and aloud at 3). A panel in trouble brings a cloud over the city, a storm when it is
+critical; with Zabbix, a double click on the storm acknowledges it (if you turn it on). Home Assistant sensors with
+the age of their last report, so a stale "all clear" never looks healthy; your home's energy as a river, golden from
+the sun. ([51-54](docs/GUIDE.md#51-what-expires-15))
+
+**Pulse Net (beta, read-only, off by default).** Your network becomes part of the city: a building for each switch and
+a window for each port (SNMP, LLDP), the firewall as the city walls with attacks arriving from their real country
+(FortiGate, OPNsense, pfSense), syslog and SNMP traps as bolts on the device, Wi-Fi clients walking around their
+antennas (UniFi, MikroTik, OpenWrt), hosts and VMs as towers and floors with migrations as lifts (Proxmox, vCenter),
+backups as night trucks (restic, Proxmox Backup Server, Veeam), intruders as red-eyed robots (CrowdSec, Wazuh). A
+**hacker** scene with a radar on your network and a read-only terminal (`omarchy-pulse term`), and a **NOC mode** with
+incidents until someone acknowledges them. ([56-58](docs/GUIDE.md#57-pulse-net-15-beta-read-only))
+
+**Reduced motion.** `motion = "reduced"`: everything keeps still and still shows your data, community scenes too.
+([section 59](docs/GUIDE.md#59-reduced-motion-15))
+
+Everything of 1.4 is still there and works as before; what is new and visible without any setting (the holiday lights
+in December, an eclipse when there is one, a cloud over a panel in trouble) turns off with one line in `pulse.toml`.
 
 ## New in 1.4
 

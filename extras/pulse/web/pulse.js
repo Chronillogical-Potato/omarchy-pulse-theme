@@ -146,7 +146,7 @@
     var el = panels[id];
     if (!el) {
       el = document.createElement("div");
-      el.className = "panel";
+      el.className = "panel"; el.dataset.id = id;
       el.innerHTML = '<div class="legend"></div><div class="corner"></div><div class="body"></div><div class="err"></div><div class="cover">PRIVATE</div>';
       panels[id] = el;
     }
@@ -505,6 +505,22 @@
     el.textContent = txt; el.className = "on";
     clearTimeout(el._t); el._t = setTimeout(function () { el.className = ""; }, 3800);
   }
+  // 1.5 beta: NOC mode. Personal panels go away; a critical event opens an incident until someone acknowledges it
+  function nocView(n, ui) {
+    var hide = (ui.nocHide || ["media", "notifications"]);
+    Object.keys(panels).forEach(function (id) { panels[id].classList.toggle("noc-hide", !!(n && n.on) && hide.indexOf(id) >= 0); });
+    var el = $("#incident");
+    if (!n || !n.on || !n.incident) { if (el) el.hidden = true; return; }
+    if (!el) {
+      el = document.createElement("div"); el.id = "incident"; document.body.appendChild(el);
+      el.addEventListener("click", function () { fetch("/api/noc?do=ack&token=" + encodeURIComponent(TOKEN), { method: "POST" }); el.hidden = true; });
+    }
+    el.hidden = false;
+    var mins = Math.floor((Date.now() / 1000 - n.incident.start) / 60);
+    setHTML(el, '<div class="tag">▲ INCIDENT · ' + mins + " min · click to acknowledge</div>" + (n.incident.events || []).slice(-6).map(function (e) {
+      var d = new Date(e.t * 1000); return '<div class="ev ' + esc(e.level) + '"><b>' + ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) + "</b> " + esc(e.text || "an event") + "</div>";
+    }).join(""));
+  }
   var Scene = (function () {
     var cv = $("#scene"), g = cv.getContext("2d");
     var W = 0, H = 0, SC = +Q.get("q") || 0.5, last = 0, t0 = performance.now();
@@ -519,7 +535,7 @@
     }
     var stars = [], drops = [], spikes = [], far = [], heights = [], rings = [], ridge = [];
     var beatAt = 0, beatEnv = 0, flash = 0, alertEnv = 0, alertCol = null;
-    var fps = 30, paused = false, kind = "skyline", wx = "clear", day = 0;
+    var fps = 30, paused = false, kind = "skyline", wx = "clear", day = 0, reduced = false, season = {}, nyFx = 0, flakes = [], expiry = [], energy = null, infra = [], infraOn = true, infraBolt = {}, infraPos = {}, ackAsk = null;
     var cpu = 10, cores = [], ram = 40, net = 0, band = [0, 0];
     var audio = [], audioT = 0, bass = 0, mid = 0, music = false;          // cava bars, when something plays
     var agents = [], drones = {}, face = "agents", typing = false;        // AI agents: drones and the face
@@ -549,6 +565,50 @@
       shareMode = false;
       if (city !== keepCity) { city = keepCity; paintStatic(); }
     }             // sleep; cars = your network
+    // 1.5: a community scene (docs/SCENES.md). It runs alone in a sandboxed frame between the sky and the panels: no
+    // network, no token, no access to Pulse; it gets a read-only copy of the state and draws its own world.
+    var BUILTIN = { sphere: 1, skyline: 1, orbit: 1, calm: 1, hacker: 1, noir: 1 };
+    var plug = { on: false, name: "", frame: null, city: false, perf: null, err: "" };
+    function pluginSync(k, st) {
+      if (BUILTIN[k] || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(k) || !st.sceneTicket) {
+        if (plug.frame) { plug.frame.remove(); plug = { on: false, name: "", frame: null, city: false, perf: null, err: "" }; document.body.classList.remove("plugin"); paintStatic(); }
+        return;
+      }
+      if (plug.name !== k) {
+        if (plug.frame) plug.frame.remove();
+        var f = document.createElement("iframe");
+        f.id = "pscene"; f.setAttribute("sandbox", "allow-scripts"); f.setAttribute("aria-hidden", "true"); f.tabIndex = -1;
+        f.src = "/scene/" + encodeURIComponent(k) + "?ticket=" + encodeURIComponent(st.sceneTicket);
+        cv.parentNode.insertBefore(f, cv.nextSibling);
+        plug = { on: false, name: k, frame: f, city: false, perf: null, err: "" };
+      }
+      var want = Math.min(Math.max(fps, 1), cap);
+      if (plug.frame.contentWindow) plug.frame.contentWindow.postMessage({ pulse: "state", state: Object.assign({}, st.scene || {}, { layout: { horizon: 0.745 } }), fps: want, scale: SC }, "*");
+    }
+    addEventListener("message", function (ev) {
+      if (!plug.frame || ev.source !== plug.frame.contentWindow) return;
+      var m = ev.data || {};
+      if (m.pulseScene === "ready") { plug.on = true; plug.city = !!m.city; document.body.classList.add("plugin"); paintStatic(); }
+      else if (m.pulseScene === "error") {
+        plug.err = String(m.error || "").slice(0, 300);
+        try { fetch("/api/scene-error?token=" + encodeURIComponent(TOKEN), { method: "POST", body: JSON.stringify({ scene: plug.name, where: m.where, error: plug.err }) }).catch(function () {}); } catch (e) {}
+      }
+      else if (m.pulseScene === "show") fxText(m.text);
+      else if (m.pulseScene === "perf") plug.perf = m;
+    });
+    cv.addEventListener("click", function (e) {   // a click on the scene: the scene may answer with a line of text
+      var ex = e.clientX * W / innerWidth, ey = e.clientY * H / innerHeight;
+      for (var id in infraPos) {   // 1.5: a double click on a storm acknowledges its problems on their system (if its source has ack)
+        var ip = infraPos[id]; if (Math.hypot(ex - ip[0], ey - ip[1]) > ip[2]) continue;
+        if (ackAsk && ackAsk.id === id && performance.now() - ackAsk.t < 5000) {
+          ackAsk = null;
+          fetch("/api/ack/" + encodeURIComponent(id) + "?token=" + encodeURIComponent(TOKEN), { method: "POST" })
+            .then(function (r) { return r.json(); }).then(function (j) { if (!j.ok) fxText(j.why || "not acknowledged"); }).catch(function () {});
+        } else { ackAsk = { id: id, t: performance.now() }; fxText("click again to acknowledge · " + ip[3]); }
+        return;
+      }
+      if (plug.on && plug.frame.contentWindow) plug.frame.contentWindow.postMessage({ pulse: "click", x: e.clientX / innerWidth, y: e.clientY / innerHeight }, "*");
+    });
     var tex = document.createElement("canvas"), tg = tex.getContext("2d", { willReadFrequently: true }), TW = 192, TH = 96, texData = null;
     var TX = 2;   // the texture is painted in 192x96 units on a 384x192 canvas: sharper letters on the sphere
     tex.width = TW * TX; tex.height = TH * TX;
@@ -884,6 +944,8 @@
       var fl = b.createLinearGradient(0, hz, 0, H);
       fl.addColorStop(0, rgba(mix(bg, a2, 0.2), 1)); fl.addColorStop(1, rgba(mix(bg, [0, 0, 0], 0.5), 1));
       b.fillStyle = fl; b.fillRect(0, hz, W, H - hz);
+      if (kind === "noir") { paintMegacity(b, hz); return; }   // 1.5: the neo-noir megacity
+      if (plug.on && !plug.city) return;   // a community scene draws its own world
       b.beginPath(); b.moveTo(0, hz);
       for (i = 0; i < ridge.length; i++) b.lineTo(i / (ridge.length - 1) * W, hz - H * (0.025 + 0.085 * ridge[i]) * (0.55 + 0.45 * Math.abs(i / (ridge.length - 1) - 0.5) * 2));
       b.lineTo(W, hz); b.closePath();
@@ -1426,7 +1488,66 @@
           g.fillStyle = rgba(COL.fg, 0.55 + fl * 0.45); g.fillText(r.name + (r.week ? " · " + r.week : ""), x, hz - hh - H * 0.03);
         }
         gitPos[r.name] = [x, hz - hh];
+        buildSite(r, i, x, hz, hh, bw, t, fl);
       }
+    }
+    // 1.5: the code construction site. A new floor comes down with every commit, scaffolding while there are changes
+    // not committed, a crane for every AI agent working on that repo, fire and the fire engine while its CI is red.
+    var failAt = {};
+    function buildSite(r, i, x, hz, hh, bw, t, fl) {
+      var top = hz - hh, key = r.name || "#" + i, yel = mix(COL.warn, [255, 210, 60], 0.5);
+      if (fl > 0 && fl < 1) {   // the new floor, lowered onto the roof
+        var drop = Math.pow(fl, 2) * H * 0.07;
+        g.fillStyle = rgba(mix(COL.bg, COL.accent, 0.4), 0.95); g.fillRect(x - bw / 2, top - H * 0.012 - drop, bw, H * 0.012);
+        g.strokeStyle = rgba(yel, 0.8); g.lineWidth = 1; g.beginPath(); g.moveTo(x, top - H * 0.012 - drop); g.lineTo(x, top - H * 0.09); g.stroke();
+      }
+      if (r.dirty) {   // scaffolding on the top floors
+        g.strokeStyle = rgba(yel, 0.5); g.lineWidth = Math.max(1, H / 1100);
+        var sh = Math.min(hh, H * 0.06), x0 = x - bw / 2 - bw * 0.12, x1 = x + bw / 2 + bw * 0.12;
+        g.strokeRect(x0, top, x1 - x0, sh);
+        g.beginPath();
+        for (var k = 0; k < 3; k++) { var yy = top + sh * k / 3; g.moveTo(x0, yy); g.lineTo(x1, yy + sh / 3); g.moveTo(x1, yy); g.lineTo(x0, yy + sh / 3); }
+        g.stroke();
+      }
+      var work = agents.filter(function (a) {
+        if (a.state !== "working") return false;
+        var hay = ((a.name || "") + " " + (a.text || "")).toLowerCase();
+        return r.name ? hay.indexOf(r.name.toLowerCase()) >= 0 : false;
+      });
+      if (!work.length && i === 0) work = agents.filter(function (a) { return a.state === "working" && !gitRepos.some(function (g2) { return g2.name && ((a.name || "") + " " + (a.text || "")).toLowerCase().indexOf(g2.name.toLowerCase()) >= 0; }); });
+      work.slice(0, 2).forEach(function (a, j) {   // a tower crane: the mast beside the building, the jib over it
+        var side = j ? -1 : 1, mx = x + side * (bw / 2 + bw * 0.35), mtop = top - H * 0.07, jib = bw * 1.3;
+        g.strokeStyle = rgba(yel, 0.9); g.lineWidth = Math.max(1.5, H / 650);
+        g.beginPath(); g.moveTo(mx, hz); g.lineTo(mx, mtop); g.moveTo(mx + side * bw * 0.3, mtop); g.lineTo(mx - side * jib, mtop); g.stroke();
+        g.lineWidth = Math.max(1, H / 1400); g.beginPath();
+        for (var y = hz; y > mtop; y -= H * 0.014) { g.moveTo(mx - H * 0.004, y); g.lineTo(mx + H * 0.004, y - H * 0.007); }
+        g.stroke();
+        var sw = reduced ? 0 : Math.sin(t * 1.3 + j) * bw * 0.25, hx = mx - side * jib * 0.7 + sw, hy = mtop + H * 0.03 + (reduced ? 0 : Math.sin(t * 0.7 + j) * H * 0.01);
+        g.beginPath(); g.moveTo(mx - side * jib * 0.7 + sw * 0.2, mtop); g.lineTo(hx, hy); g.stroke();
+        g.fillStyle = rgba(yel, 0.95); g.fillRect(hx - H * 0.004, hy, H * 0.008, H * 0.006);
+        g.fillStyle = rgba(COL.bg, 0.9); g.fillRect(mx - H * 0.006, mtop + H * 0.002, H * 0.012, H * 0.01);   // the cab
+        g.font = "bold " + Math.round(H * 0.008) + "px monospace"; g.textAlign = "center"; g.fillStyle = rgba(yel, 1);
+        g.fillText(shareMode ? "" : String(a.name || "?").charAt(0).toUpperCase(), mx, mtop + H * 0.0095); g.textAlign = "start";
+      });
+      if (r.ci === "fail") {   // fire on the roof, and the fire engine on its way
+        if (!failAt[key]) failAt[key] = t;
+        for (var f = 0; f < 6; f++) {
+          var fh = H * 0.03 * (reduced ? 0.8 : 0.6 + 0.4 * Math.abs(Math.sin(t * 7 + f * 1.7))), fx = x - bw / 2 + bw * (f + 0.5) / 6;
+          var fg2 = g.createLinearGradient(0, top - fh, 0, top);
+          fg2.addColorStop(0, rgba(COL.warn, 0)); fg2.addColorStop(1, rgba(COL.crit, 0.85));
+          g.fillStyle = fg2; g.beginPath(); g.moveTo(fx - bw / 12, top); g.quadraticCurveTo(fx, top - fh * 1.2, fx + bw / 12, top); g.fill();
+        }
+        var go = Math.min(1, (t - failAt[key]) / 6), side2 = x > W / 2 ? 1 : -1;
+        var tx = x + side2 * (W * 0.35 * (1 - go) + bw * 0.9), ty = hz + H * 0.03, tw = H * 0.05;
+        g.fillStyle = rgba(COL.crit, 0.95); g.fillRect(tx - tw / 2, ty - H * 0.016, tw, H * 0.016);
+        g.fillStyle = rgba(mix(COL.crit, COL.fg, 0.4), 1); g.fillRect(tx - side2 * tw * 0.35 - H * 0.006, ty - H * 0.024, H * 0.012, H * 0.008);
+        g.fillStyle = rgba(COL.bg, 1); [-0.3, 0.3].forEach(function (u) { g.beginPath(); g.arc(tx + u * tw, ty, H * 0.005, 0, Math.PI * 2); g.fill(); });
+        var bl2 = reduced || (t * 3 % 1) < 0.5; g.fillStyle = rgba(bl2 ? [80, 140, 255] : COL.crit, 1); g.fillRect(tx - H * 0.003, ty - H * 0.02, H * 0.006, H * 0.004);
+        if (go >= 1) {   // the water
+          g.strokeStyle = rgba([150, 200, 255], 0.55); g.lineWidth = Math.max(1.5, H / 700); g.beginPath();
+          g.moveTo(tx - side2 * tw * 0.4, ty - H * 0.02); g.quadraticCurveTo((tx + x) / 2, top - H * 0.08, x + side2 * bw * 0.2, top - H * 0.005); g.stroke();
+        }
+      } else delete failAt[key];
     }
     // ---------------- the ISS, when it really passes over you (its place in your sky, from its orbit)
     function drawISS(t, hz) {
@@ -1845,9 +1966,424 @@
       return [x, hz * 0.93 - Math.sqrt(Math.max(0, el) / 90) * hz * 0.85];
     }
     // how dark your sky is: 0 by day, 1 in the night (the Sun more than 12° under the horizon), less with clouds
+    // 1.5: the holidays. Christmas lights from 8 December to 6 January, a tree, snow when it is really cold;
+    // the New Year's countdown on your clock and fireworks at midnight
+    // ---------------- 1.5 beta: Pulse Net, your network as part of the city (read-only)
+    var pnet = null, netBolts = [], term = [], noc = null, netPos = {}, wifiPos = {}, truckX = {};
+    function azX(az) { return W / 2 + Math.max(-1.08, Math.min(1.08, ((az - 180 + 540) % 360 - 180) / 90)) * W * 0.44; }
+    function drawNet(now, t, hz) {
+      if (!pnet || plug.on) return;
+      var floor = H - hz, nowS = Date.now() / 1000;
+      netPos = {};
+      // the firewall: a wall along the horizon; blocked attacks are arrows from where they come from, IPS events meteors
+      var fw = pnet.fw || {};
+      if (fw.events && (fw.events.length || fw.vpn != null)) {
+        var wh = H * 0.012;
+        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.22), 0.9); g.fillRect(0, hz - wh, W, wh);
+        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.3), 0.9);
+        for (var x = 0; x < W; x += H * 0.02) g.fillRect(x, hz - wh - H * 0.006, H * 0.01, H * 0.006);
+        if (fw.vpn) {   // the gate: VPN users coming in
+          var gx = W * 0.5, gw = H * 0.03;
+          g.fillStyle = rgba(COL.ok, 0.25 + 0.15 * Math.sin(t * 2)); g.fillRect(gx - gw / 2, hz - wh - H * 0.02, gw, wh + H * 0.02);
+          g.font = Math.round(H * 0.011) + "px monospace"; g.textAlign = "center"; g.fillStyle = rgba(COL.ok, 0.9);
+          g.fillText("vpn " + fw.vpn, gx, hz - wh - H * 0.026); g.textAlign = "start";
+        }
+        fw.events.forEach(function (e) {
+          var age = nowS - e.t, dur = e.src === "ips" ? 2.5 : 1.6; if (age < 0 || age > dur + 0.6) return;
+          var k = Math.min(1, age / dur), tx = azX(e.az), sx = tx + (e.az < 180 ? -1 : 1) * W * 0.05, sy = hz - H * (e.src === "ips" ? 0.6 : 0.3);
+          var px = sx + (tx - sx) * k, py = sy + (hz - wh - sy) * k;
+          if (k < 1) {
+            var col = e.src === "ips" ? COL.crit : e.level === "warn" ? COL.warn : COL.fg;
+            g.strokeStyle = rgba(col, e.src === "ips" ? 0.9 : 0.6); g.lineWidth = Math.max(1, H / (e.src === "ips" ? 400 : 900));
+            g.beginPath(); g.moveTo(px - (tx - sx) * 0.08, py - (hz - sy) * 0.08); g.lineTo(px, py); g.stroke();
+            if (e.src === "ips") { var mg = g.createRadialGradient(px, py, 0, px, py, H * 0.02); mg.addColorStop(0, rgba(COL.warn, 0.9)); mg.addColorStop(1, rgba(COL.crit, 0)); g.fillStyle = mg; g.fillRect(px - H * 0.02, py - H * 0.02, H * 0.04, H * 0.04); }
+          } else {   // it breaks on the wall
+            var sp = (age - dur) / 0.6; g.fillStyle = rgba(COL.fg, 0.6 * (1 - sp));
+            for (var j = 0; j < 4; j++) g.fillRect(tx + Math.cos(j * 1.6) * sp * H * 0.015, hz - wh - Math.abs(Math.sin(j * 1.6)) * sp * H * 0.015, 2, 2);
+          }
+        });
+      }
+      // the network district: a building for each switch, a window for each port
+      var sws = pnet.switches || [], rowY = hz + floor * 0.2;
+      if (sws.length) {
+        var dz = window.PULSE_NETZOOM || 1;   // the demo video looks closer (1 = the wallpaper)
+        var span = W * 0.25 * dz, bwid = Math.min(W * 0.085 * dz, span / sws.length * 0.82), x0 = dz > 1 ? W / 2 - span / 2 : W * 0.26;
+        sws.forEach(function (s, i) {
+          var x = x0 + (i + 0.5) * span / sws.length, cols = 12, rows = Math.max(1, Math.ceil(s.ports.length / cols)), cw = bwid / cols;
+          var bh = rows * cw * 2 + H * 0.016, top = rowY - bh;
+          g.fillStyle = rgba(mix(COL.bg, COL.accent, 0.14), 0.95); g.fillRect(x - bwid / 2, top, bwid, bh);
+          g.strokeStyle = rgba(s.up ? COL.accent : COL.crit, s.up ? 0.6 : (t * 2 % 1 < 0.5 ? 1 : 0.3)); g.lineWidth = Math.max(1, H / 800); g.strokeRect(x - bwid / 2, top, bwid, bh);
+          s.ports.forEach(function (p, k) {
+            var px = x - bwid / 2 + (k % cols) * cw + cw * 0.2, py = top + H * 0.008 + Math.floor(k / cols) * cw * 2;
+            g.fillStyle = p.err ? rgba(COL.crit, reduced || t * 3 % 1 < 0.6 ? 1 : 0.3) : p.up ? rgba(p.jam ? COL.warn : COL.accent, 0.35 + 0.65 * (p.util || 0)) : rgba(COL.bg, 0.9);
+            g.fillRect(px, py, cw * 0.6, cw * 1.3);
+          });
+          if (s.name && !shareMode) { g.font = Math.round(H * 0.011 * dz) + "px monospace"; g.textAlign = "center"; g.fillStyle = rgba(COL.fg, 0.7); g.fillText(s.name, x, top - H * 0.006); g.textAlign = "start"; }
+          netPos[s.name || "#" + i] = [x, top, bwid, rowY];
+        });
+        sws.forEach(function (s, i) {   // the roads between neighbours (LLDP/CDP); a busy uplink is a traffic jam
+          var a = netPos[s.name || "#" + i]; if (!a) return;
+          s.ports.forEach(function (p) {
+            var b = p.peer && netPos[p.peer]; if (!b || b === a) return;
+            var y = rowY + H * 0.012, jam = p.jam;
+            g.strokeStyle = rgba(jam ? COL.warn : COL.accent, 0.35); g.lineWidth = Math.max(1, H / 600);
+            g.beginPath(); g.moveTo(a[0], y); g.lineTo(b[0], y); g.stroke();
+            var n = jam ? 10 : 3, sp = jam ? 0.05 : 0.4 + (p.util || 0);
+            for (var k = 0; k < n; k++) { var u = reduced ? k / n : ((t * sp + k / n) % 1); g.fillStyle = rgba(jam ? COL.warn : COL.fg, 0.85); g.fillRect(a[0] + (b[0] - a[0]) * u, y - 1.5, 3, 3); }
+          });
+        });
+      }
+      // the datacenter: a tower for each host, a floor for each VM; a migration is a lift; maintenance has scaffolding
+      var hosts = (pnet.dc && pnet.dc.hosts) || [];
+      if (hosts.length) {
+        var dspan = W * 0.2, tw = Math.min(W * 0.03, dspan / hosts.length * 0.6), fh = H * 0.007;
+        hosts.forEach(function (h, i) {
+          var x = W * 0.54 + (i + 0.5) * dspan / hosts.length, n = Math.min(24, h.vms.length), top = rowY - n * fh - H * 0.01;
+          g.fillStyle = rgba(mix(COL.bg, COL.accent2, 0.15), 0.95); g.fillRect(x - tw / 2, top, tw, rowY - top);
+          h.vms.slice(0, n).forEach(function (v, k) { g.fillStyle = rgba(v.up ? COL.accent2 : mix(COL.bg, COL.fg, 0.15), v.up ? 0.75 : 0.6); g.fillRect(x - tw * 0.4, rowY - (k + 1) * fh - H * 0.004, tw * 0.8, fh * 0.7); });
+          g.strokeStyle = rgba(h.up ? COL.accent2 : COL.crit, 0.7); g.lineWidth = Math.max(1, H / 900); g.strokeRect(x - tw / 2, top, tw, rowY - top);
+          if (h.maint) { g.strokeStyle = rgba(COL.warn, 0.6); g.beginPath(); for (var k2 = 0; k2 < 4; k2++) { var yy = top + (rowY - top) * k2 / 4; g.moveTo(x - tw * 0.7, yy); g.lineTo(x + tw * 0.7, yy + (rowY - top) / 4); } g.stroke(); }
+          if (h.name && !shareMode) { g.font = Math.round(H * 0.01) + "px monospace"; g.textAlign = "center"; g.fillStyle = rgba(COL.fg, 0.65); g.fillText(h.name, x, top - H * 0.005); g.textAlign = "start"; }
+          netPos[h.name || "h" + i] = [x, top, tw, rowY];
+        });
+        (pnet.dc.moves || []).forEach(function (m) {   // the lift: a lit floor travelling from one tower to the other
+          var a = netPos[m.from], b = netPos[m.to], age = nowS - m.t; if (!a || !b || age > 6) return;
+          var u = Math.min(1, age / 4), x = a[0] + (b[0] - a[0]) * u, y = Math.min(a[1], b[1]) - H * 0.03 * Math.sin(u * Math.PI);
+          g.fillStyle = rgba(COL.warn, 0.95); g.fillRect(x - tw * 0.4, y, tw * 0.8, fh);
+        });
+      }
+      // Wi-Fi: an antenna for each access point, a person for each client, nearer with a stronger signal
+      var wifi = pnet.wifi || {}, aps = wifi.aps || [];
+      if (aps.length) {
+        var wy = hz + floor * 0.52, apX = {};
+        aps.forEach(function (a, i) {
+          var x = W * 0.32 + (i + 0.5) * W * 0.36 / aps.length; apX[a] = x;
+          g.strokeStyle = rgba(COL.accent, 0.8); g.lineWidth = Math.max(1.5, H / 700); g.beginPath(); g.moveTo(x, wy); g.lineTo(x, wy - H * 0.035); g.stroke();
+          for (var r = 0; r < 3; r++) { var rr = ((reduced ? r / 3 : (t * 0.5 + r / 3) % 1)) * H * 0.05; g.strokeStyle = rgba(COL.accent, 0.4 * (1 - rr / (H * 0.05))); g.beginPath(); g.arc(x, wy - H * 0.035, rr, Math.PI * 1.15, Math.PI * 1.85); g.stroke(); }
+          if (a && !shareMode) { g.font = Math.round(H * 0.01) + "px monospace"; g.textAlign = "center"; g.fillStyle = rgba(COL.fg, 0.6); g.fillText(a, x, wy + H * 0.016); g.textAlign = "start"; }
+        });
+        (wifi.clients || []).forEach(function (c) {
+          var ax = apX[c.ap]; if (ax == null) return;
+          var hsh = parseInt(c.id.slice(0, 6), 16) || 0, ang = (hsh % 360) * Math.PI / 180, sig = c.signal == null ? -60 : c.signal;
+          var d = W * (0.012 + 0.05 * Math.max(0, Math.min(1, (-sig - 35) / 55)));
+          var tx = ax + Math.cos(ang) * d, ty = wy - H * 0.005 + Math.sin(ang) * d * 0.25, p = wifiPos[c.id] || (wifiPos[c.id] = [tx, ty]);
+          p[0] += (tx - p[0]) * (reduced ? 1 : 0.03); p[1] += (ty - p[1]) * (reduced ? 1 : 0.03);   // roaming: it walks to its new antenna
+          g.fillStyle = rgba(COL.fg, 0.75); g.fillRect(p[0] - 1, p[1] - H * 0.012, 2, H * 0.01); g.beginPath(); g.arc(p[0], p[1] - H * 0.015, H * 0.003, 0, Math.PI * 2); g.fill();
+        });
+      }
+      // backups: a truck for each job on the night road; arrived = ok, stopped halfway with hazard lights = failed
+      var bks = pnet.backups || [], by = hz + floor * 0.86;
+      bks.forEach(function (b, i) {
+        var lane = by + i * H * 0.012, w2 = H * 0.03, x;
+        if (b.state === "running") { truckX[b.name] = ((truckX[b.name] || W * 0.25) + (reduced ? 0 : W * 0.0008)); if (truckX[b.name] > W * 0.75) truckX[b.name] = W * 0.25; x = truckX[b.name]; }
+        else x = b.state === "ok" ? W * 0.75 : b.state === "unknown" ? W * 0.25 : W * 0.5;
+        var col = b.state === "failed" || b.state === "late" ? COL.crit : b.state === "ok" ? COL.ok : COL.accent;
+        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.35), 0.95); g.fillRect(x - w2 / 2, lane - H * 0.012, w2 * 0.7, H * 0.012);
+        g.fillStyle = rgba(col, 0.95); g.fillRect(x + w2 * 0.22, lane - H * 0.009, w2 * 0.28, H * 0.009);
+        if (b.state === "failed" || b.state === "late") { var on = reduced || t * 2 % 1 < 0.5; g.fillStyle = rgba(COL.warn, on ? 1 : 0.15); g.fillRect(x - w2 / 2 - 2, lane - H * 0.004, 3, 3); g.fillRect(x + w2 / 2 - 1, lane - H * 0.004, 3, 3); }
+        if (b.name && !shareMode) { g.font = Math.round(H * 0.009) + "px monospace"; g.fillStyle = rgba(col, 0.8); g.fillText(b.name + " · " + b.state, x + w2 * 0.6, lane - H * 0.002); }
+      });
+      // intruders: robots with red eyes walking to the server they hit, bigger when more serious
+      (pnet.intruders || []).forEach(function (a, i) {
+        var tgt = netPos[a.target] || [W * 0.5, 0, 0, hz + floor * 0.2], age = Math.max(0, nowS - a.t), u = Math.min(1, age / 40);
+        var sx = i % 2 ? W * 0.24 : W * 0.76, x = sx + (tgt[0] - sx) * (reduced ? 1 : u), y = tgt[3] + H * 0.02, s2 = H * (a.level === "crit" ? 0.03 : 0.02);
+        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.4), 0.95); g.fillRect(x - s2 * 0.3, y - s2, s2 * 0.6, s2 * 0.7); g.fillRect(x - s2 * 0.22, y - s2 * 1.35, s2 * 0.44, s2 * 0.33);
+        g.fillStyle = rgba(COL.crit, 1); g.fillRect(x - s2 * 0.15, y - s2 * 1.25, s2 * 0.1, s2 * 0.08); g.fillRect(x + s2 * 0.05, y - s2 * 1.25, s2 * 0.1, s2 * 0.08);
+        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.4), 0.95); var st = reduced ? 0 : Math.sin(t * 8 + i) * s2 * 0.1; g.fillRect(x - s2 * 0.2 + st, y - s2 * 0.3, s2 * 0.12, s2 * 0.3); g.fillRect(x + s2 * 0.08 - st, y - s2 * 0.3, s2 * 0.12, s2 * 0.3);
+      });
+    }
+    function drawBoltsNet(t, hz) {   // syslog and SNMP traps: a bolt on the building of that device, right now
+      var nowS = Date.now() / 1000;
+      netBolts.forEach(function (b) {
+        var age = nowS - b.t; if (age > 1.2 || age < 0) return;
+        var p = netPos[b.target] || [W * (0.3 + 0.4 * ((b.t * 7) % 1)), hz, 0, hz];
+        g.strokeStyle = rgba(b.sev <= 2 ? COL.crit : COL.fg, 1 - age / 1.2); g.lineWidth = Math.max(2, H / 400); g.beginPath();
+        var x = p[0], y = 0; g.moveTo(x, y);
+        for (var k = 1; k <= 8; k++) { y = p[1] * k / 8; x = p[0] + (k < 8 ? Math.sin(b.t * 13 + k * 7) * H * 0.02 : 0); g.lineTo(x, y); }
+        g.stroke(); if (age < 0.15) { g.fillStyle = rgba(COL.fg, 0.08); g.fillRect(0, 0, W, H); }
+      });
+    }
+    function drawTerm(hz) {   // what you type in omarchy-pulse term
+      if (!term.length || shareMode) return;
+      var lines = term.slice(-8), lh = H * 0.016, bw = W * 0.34, bh = lines.length * lh + H * 0.016, x = W / 2 - bw / 2, y = H * 0.94 - bh;
+      g.fillStyle = rgba([0, 10, 4], 0.78); g.fillRect(x, y, bw, bh); g.strokeStyle = rgba([60, 255, 140], 0.5); g.lineWidth = 1; g.strokeRect(x, y, bw, bh);
+      g.font = Math.round(H * 0.012) + "px monospace"; g.fillStyle = rgba([90, 255, 150], 0.95);
+      lines.forEach(function (l, i) { g.fillText(String(l.text).slice(0, 70), x + H * 0.01, y + H * 0.01 + (i + 0.8) * lh); });
+    }
+    // the hacker scene: the city in phosphor green, a radar sweeping your network, every device a blip
+    var hackerStyle = "phosphor", flyers = [];
+    // 1.5: scene = "noir", a futuristic megacity at night: towers in layers with thousands of windows, searchlights in
+    // the clouds, a hologram billboard, neon signs, cars in the air, rain that never stops, a wet street. Original art.
+    var noirTops = [], noirBoard = null, noirSigns = [];
+    function paintMegacity(b, hz) {
+      var r = rnd(4242), sky = b.createLinearGradient(0, 0, 0, hz);
+      sky.addColorStop(0, "rgb(6,9,18)"); sky.addColorStop(0.55, "rgb(22,30,48)"); sky.addColorStop(1, "rgb(92,64,48)");
+      b.fillStyle = sky; b.fillRect(0, 0, W, hz + 1);
+      var fl = b.createLinearGradient(0, hz, 0, H); fl.addColorStop(0, "rgb(24,22,30)"); fl.addColorStop(1, "rgb(6,6,10)");
+      b.fillStyle = fl; b.fillRect(0, hz, W, H - hz);
+      noirTops = []; noirSigns = [];
+      [[70, 0.008, 0.026, 0.12, 0.42, [44, 52, 70], 0.06], [40, 0.018, 0.05, 0.2, 0.58, [26, 30, 44], 0.2], [15, 0.035, 0.085, 0.32, 0.74, [12, 13, 20], 0.12]].forEach(function (L, li) {
+        for (var i = 0; i < L[0]; i++) {
+          var w = W * (L[1] + r() * (L[2] - L[1])), x = r() * (W + w) - w, h = H * (L[3] + r() * (L[4] - L[3])) * (0.75 + 0.25 * Math.sin(x / W * Math.PI)), top = hz - h;
+          b.fillStyle = "rgb(" + L[5].join(",") + ")"; b.fillRect(x, top, w, h);
+          if (li && r() < 0.5) { b.fillRect(x + w * 0.2, top - h * 0.08, w * 0.6, h * 0.08); top -= h * 0.08; }   // a setback
+          if (r() < 0.4) { b.fillRect(x + w / 2 - 1, top - H * 0.03, 2, H * 0.03); noirTops.push([x + w / 2, top - H * 0.03]); }   // an antenna
+          var cw = Math.max(2, w / 9), ch = Math.max(2, H / 260);
+          for (var yy = top + ch * 3; yy < hz - ch; yy += ch * 2.6) for (var xx = x + cw; xx < x + w - cw; xx += cw * 1.8) {
+            if (r() < L[6]) { b.fillStyle = r() < 0.7 ? "rgba(255,190,110," + (0.35 + r() * 0.5) + ")" : "rgba(120,220,255," + (0.3 + r() * 0.5) + ")"; b.fillRect(xx, yy, cw * 0.8, ch); }
+          }
+          if (li === 2 && r() < 0.6) { b.fillStyle = "rgba(255,70,140,0.35)"; b.fillRect(x + w * 0.1, top + h * 0.1, 2, h * 0.8); }   // a light strip
+          if (li === 1 && noirSigns.length < 5 && x > W * 0.24 && x < W * 0.74 && Math.abs(x + w * 0.5 - W / 2) > H * 0.24 && r() < 0.35) noirSigns.push([x + w * 0.5, Math.max(top + h * 0.15, hz - H * 0.3)]);
+        }
+      });
+      // the central tower that carries the big screen: where the sphere is in the other scenes
+      noirBoard = { x: W / 2, y: hz - H * 0.27, w: H * 0.31, h: H * 0.22 };   // under the centre panels
+      b.fillStyle = "rgb(10,11,17)"; b.fillRect(W / 2 - H * 0.12, hz - H * 0.58, H * 0.24, H * 0.58);
+      b.fillRect(W / 2 - H * 0.03, hz - H * 0.66, H * 0.06, H * 0.08); noirTops.push([W / 2, hz - H * 0.66]);
+    }
+    function drawNoirCity(t, hz) {
+      // searchlights sweeping the clouds
+      g.globalCompositeOperation = "lighter";
+      [0.3, 0.55, 0.78].forEach(function (u, i) {
+        var a = -Math.PI / 2 + (reduced ? (i - 1) * 0.3 : Math.sin(t * (0.13 + i * 0.05) + i * 2) * 0.55), x = W * u, len = H * 0.9;
+        var gb = g.createLinearGradient(x, hz, x + Math.cos(a) * len, hz + Math.sin(a) * len);
+        gb.addColorStop(0, "rgba(200,220,255,0.10)"); gb.addColorStop(1, "rgba(200,220,255,0)");
+        g.fillStyle = gb; g.beginPath(); g.moveTo(x, hz);
+        g.lineTo(x + Math.cos(a - 0.04) * len, hz + Math.sin(a - 0.04) * len); g.lineTo(x + Math.cos(a + 0.04) * len, hz + Math.sin(a + 0.04) * len); g.closePath(); g.fill();
+      });
+      g.globalCompositeOperation = "source-over";
+      noirTops.forEach(function (p, i) { if (reduced || ((t + i * 0.37) % 2) < 0.25) { g.fillStyle = "rgba(255,40,40,0.95)"; g.fillRect(p[0] - 1.5, p[1] - 1.5, 3, 3); } });
+      // the big screen on the central tower: it shows what the sphere shows in the other scenes (the clock, the
+      // weather, the agent's face when it works, listens or talks, the door camera, alerts, countdowns), as a hologram
+      var bd = noirBoard, fl2 = reduced ? 0.9 : 0.8 + 0.2 * Math.abs(Math.sin(t * 7)) * (((t * 0.5) % 3) < 2.9 ? 1 : 0.3);
+      if (bd) {
+        var prog = sphereProgram(t);
+        paintTex(prog, t, TW / 2);
+        g.globalAlpha = 0.88 * fl2;
+        try { g.drawImage(tex, (TW / 2 - TW * 0.3) * TX, 0, TW * 0.6 * TX, TH * TX, bd.x - bd.w / 2, bd.y, bd.w, bd.h * 0.86); } catch (e) {}
+        g.globalAlpha = 1;
+        g.strokeStyle = "rgba(120,230,255," + 0.6 * fl2 + ")"; g.lineWidth = Math.max(1, H / 700); g.strokeRect(bd.x - bd.w / 2, bd.y, bd.w, bd.h * 0.86);
+        var lg = tintedLogo([255, 120, 200]); if (lg) { var ls = bd.h * 0.1; g.drawImage(lg, bd.x - bd.w / 2 + ls * 0.3, bd.y + bd.h * 0.885, ls, ls); }
+        g.font = "bold " + Math.round(bd.h * 0.08) + "px monospace"; g.textAlign = "center"; g.fillStyle = "rgba(255,120,200," + 0.9 * fl2 + ")";
+        g.fillText("OMARCHY", bd.x, bd.y + bd.h * 0.97); g.textAlign = "start";
+        g.fillStyle = "rgba(0,0,0,0.18)"; for (var sy = bd.y; sy < bd.y + bd.h; sy += 3) g.fillRect(bd.x - bd.w / 2, sy, bd.w, 1);
+        var rf = g.createLinearGradient(0, hz, 0, hz + H * 0.2); rf.addColorStop(0, "rgba(120,200,255," + 0.12 * fl2 + ")"); rf.addColorStop(1, "rgba(120,200,255,0)");
+        g.fillStyle = rf; g.fillRect(bd.x - bd.w / 2, hz, bd.w, H * 0.2);   // its reflection on the wet street
+      }
+      drawNoir(t, hz, true);
+      // the wet street: the city's lights stretched on the asphalt
+      for (var k = 0; k < 26; k++) {
+        var x = (k * 211.7) % W, c = k % 3 ? "255,170,90" : k % 2 ? "120,220,255" : "255,80,160";
+        var sg = g.createLinearGradient(0, hz, 0, hz + H * 0.16); sg.addColorStop(0, "rgba(" + c + ",0.14)"); sg.addColorStop(1, "rgba(" + c + ",0)");
+        g.fillStyle = sg; g.fillRect(x, hz, 2 + (k % 4), H * 0.16);
+      }
+    }
+    function drawNoir(t, hz, scene) {   // the neo-noir variant: neon rain, an amber haze, signs on the towers, cars in the air
+      if (!scene) { g.globalCompositeOperation = "multiply"; g.fillStyle = "rgb(120,130,175)"; g.fillRect(0, 0, W, H); g.globalCompositeOperation = "source-over"; }
+      var hz2 = g.createLinearGradient(0, hz - H * 0.25, 0, hz + H * 0.05);
+      hz2.addColorStop(0, "rgba(255,150,60,0)"); hz2.addColorStop(0.7, "rgba(255,150,60,0.16)"); hz2.addColorStop(1, "rgba(255,150,60,0)");
+      g.fillStyle = hz2; g.fillRect(0, hz - H * 0.25, W, H * 0.3);
+      var signs = [["OMARCHY", COL.accent2], ["PULSE", [80, 230, 255]], ["ARCH", [255, 90, 160]], ["NIGHT SHIFT", [255, 190, 80]]];
+      signs.forEach(function (sg, i) {   // vertical neon signs, our own words
+        var x = scene && noirSigns[i] ? noirSigns[i][0] : W * (0.29 + i * 0.14), y = scene && noirSigns[i] ? noirSigns[i][1] : hz - H * (0.33 - (i % 2) * 0.06), on = reduced || ((t * 1.3 + i * 0.7) % 4) > 0.15;
+        g.font = "bold " + Math.round(H * 0.017) + "px monospace"; g.textAlign = "center";
+        g.shadowColor = rgba(sg[1], 0.9); g.shadowBlur = on ? H * 0.015 : 0; g.fillStyle = rgba(sg[1], on ? 0.9 : 0.25);
+        sg[0].split("").forEach(function (ch, k) { g.fillText(ch, x, y + k * H * 0.02); });
+        g.shadowBlur = 0; g.textAlign = "start";
+      });
+      if (!flyers.length) for (var f = 0; f < 4; f++) flyers.push({ x: Math.random() * W, y: hz - H * (0.2 + Math.random() * 0.25), v: (Math.random() < 0.5 ? -1 : 1) * W * (0.0006 + Math.random() * 0.0008) });
+      flyers.forEach(function (fl) {
+        if (!reduced) { fl.x += fl.v; if (fl.x < -W * 0.05) fl.x = W * 1.05; if (fl.x > W * 1.05) fl.x = -W * 0.05; }
+        var d = fl.v > 0 ? 1 : -1, s2 = H * 0.012;
+        g.fillStyle = "rgba(20,22,30,0.95)"; g.beginPath(); g.ellipse(fl.x, fl.y, s2 * 1.6, s2 * 0.45, 0, 0, Math.PI * 2); g.fill();
+        var lb = g.createLinearGradient(fl.x + d * s2 * 1.5, 0, fl.x + d * s2 * 9, 0);
+        lb.addColorStop(0, "rgba(255,240,200,0.5)"); lb.addColorStop(1, "rgba(255,240,200,0)");
+        g.fillStyle = lb; g.beginPath(); g.moveTo(fl.x + d * s2 * 1.5, fl.y); g.lineTo(fl.x + d * s2 * 9, fl.y - s2); g.lineTo(fl.x + d * s2 * 9, fl.y + s2 * 1.2); g.closePath(); g.fill();
+        g.fillStyle = rgba(COL.crit, 0.9); g.fillRect(fl.x - d * s2 * 1.5, fl.y - 1, 2, 2);
+      });
+      g.strokeStyle = "rgba(170,210,255,0.22)"; g.lineWidth = 1; g.beginPath();   // the rain that never stops
+      for (var k = 0; k < 220; k++) { var rx = (k * 97.3 + (reduced ? 0 : t * W * 0.02 * (1 + (k % 3)))) % W, ry = (k * 53.7 + (reduced ? 0 : t * H * 0.9 * (1 + (k % 4) * 0.2))) % H; g.moveTo(rx, ry); g.lineTo(rx - H * 0.003, ry + H * 0.025); }
+      g.stroke();
+    }
+    function drawHacker(t, hz, cx) {
+      var noir = hackerStyle === "noir";
+      if (noir) drawNoir(t, hz);
+      else { g.globalCompositeOperation = "color"; g.fillStyle = "rgb(40,255,140)"; g.fillRect(0, 0, W, H); g.globalCompositeOperation = "source-over";
+        g.fillStyle = "rgba(0,20,8,0.35)"; g.fillRect(0, 0, W, H); }
+      var R = H * 0.23, cy = hz - R * 0.95, sw = reduced ? 0.8 : t * 0.9, green = noir ? [90, 220, 255] : [60, 255, 140];
+      if (noir) g.globalAlpha = 0.75;   // the radar as a hologram over the city
+      g.strokeStyle = rgba(green, 0.35); g.lineWidth = 1;
+      for (var k = 1; k <= 4; k++) { g.beginPath(); g.arc(cx, cy, R * k / 4, 0, Math.PI * 2); g.stroke(); }
+      g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+      for (k = 0; k < 24; k++) { var a = sw - k * 0.03; g.strokeStyle = rgba(green, 0.5 * (1 - k / 24)); g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); g.stroke(); }
+      var dev = [];
+      lan.forEach(function (d) { dev.push({ n: d.name || "", r: 0.5 + 0.4 * ((d.name || d.ip || "").length % 7) / 7 }); });
+      if (pnet) { (pnet.switches || []).forEach(function (s) { dev.push({ n: s.name, r: 0.3, sw: 1, bad: !s.up }); }); ((pnet.wifi || {}).aps || []).forEach(function (a) { dev.push({ n: a, r: 0.45 }); }); ((pnet.dc || {}).hosts || []).forEach(function (h) { dev.push({ n: h.name, r: 0.38, bad: !h.up }); }); }
+      g.font = Math.round(H * 0.01) + "px monospace";
+      dev.forEach(function (d, i) {
+        var hs = 0; for (var c = 0; c < d.n.length; c++) hs = (hs * 31 + d.n.charCodeAt(c)) >>> 0;
+        var ang = ((hs || i * 977) % 628) / 100, x = cx + Math.cos(ang) * R * d.r, y = cy + Math.sin(ang) * R * d.r;
+        var since = ((sw - ang) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2), lum = reduced ? 0.8 : Math.max(0.15, 1 - since / 4);
+        var col = d.bad ? COL.crit : green;
+        g.fillStyle = rgba(col, lum); g.beginPath(); g.arc(x, y, d.sw ? 4 : 2.5, 0, Math.PI * 2); g.fill();
+        if (d.n && !shareMode && lum > 0.5) { g.fillStyle = rgba(col, lum * 0.8); g.fillText(d.n.slice(0, 16), x + 6, y + 3); }
+      });
+      g.globalAlpha = 1;
+    }
+    // 1.5: the weather of your infrastructure: a panel in trouble brings a cloud over the city, a storm when critical
+    function drawInfraWeather(now, t, hz) {
+      infra.forEach(function (w, i) {
+        var hsh = 0; for (var k = 0; k < w.id.length; k++) hsh = (hsh * 31 + w.id.charCodeAt(k)) >>> 0;
+        var x = W * (0.3 + 0.4 * ((hsh % 1000) / 1000)), y = hz - H * (0.2 + 0.035 * (i % 2)), crit = w.level === "crit";   // under the centre panels, over the city
+        var cc = crit ? mix(COL.bg, [0, 0, 0], 0.55) : mix(COL.bg, COL.fg, 0.18), a = crit ? 0.92 : 0.75, s2 = H * (crit ? 0.06 : 0.045);
+        infraPos[w.id] = [x, y, s2 * 1.6, w.title || w.id];
+        g.fillStyle = rgba(cc, a);
+        [[-1.1, 0.25, 0.75], [0, 0, 1], [1.1, 0.2, 0.8], [0.5, 0.45, 0.7], [-0.5, 0.45, 0.7]].forEach(function (c) {
+          g.beginPath(); g.ellipse(x + c[0] * s2, y + c[1] * s2, s2 * c[2] * 1.2, s2 * c[2] * 0.7, 0, 0, Math.PI * 2); g.fill();
+        });
+        if (crit) {   // rain under it, and now and then a bolt down to the city
+          g.strokeStyle = rgba(COL.fg, 0.25); g.lineWidth = 1; g.beginPath();
+          for (k = 0; k < 14; k++) { var rx = x + (k / 13 - 0.5) * s2 * 2.4, ry = y + s2 * 0.6 + ((t * 0.9 + k * 0.37) % 1) * H * 0.12; g.moveTo(rx, ry); g.lineTo(rx - H * 0.004, ry + H * 0.014); }
+          g.stroke();
+          var b = infraBolt[w.id] || (infraBolt[w.id] = { at: now + 2000 + Math.random() * 4000, path: null });
+          if (now > b.at && !reduced) {
+            b.path = [[x + (Math.random() - 0.5) * s2, y + s2 * 0.5]];
+            for (k = 0; k < 7; k++) { var lp = b.path[b.path.length - 1]; b.path.push([lp[0] + (Math.random() - 0.5) * H * 0.04, lp[1] + (hz - y) / 7]); }
+            b.shown = now; b.at = now + 3000 + Math.random() * 6000;
+          }
+          if (b.path && now - b.shown < 220) {
+            g.strokeStyle = rgba(COL.fg, 0.95); g.lineWidth = Math.max(1.5, H / 500); g.beginPath();
+            b.path.forEach(function (pt, j) { if (j) g.lineTo(pt[0], pt[1]); else g.moveTo(pt[0], pt[1]); }); g.stroke();
+            g.fillStyle = rgba(COL.fg, 0.05); g.fillRect(0, 0, W, hz);
+          }
+        }
+        if (!shareMode) {
+          g.font = Math.round(H * 0.012) + "px monospace"; g.textAlign = "center"; g.fillStyle = rgba(crit ? COL.crit : COL.warn, 0.9);
+          g.fillText(String(w.title || w.id).slice(0, 24), x, y + s2 * 1.05); g.textAlign = "start";
+        }
+      });
+    }
+    // 1.5: what expires: a candle for each certificate, domain or date, shorter as the day comes, red at the end
+    function drawCandles(t, hz) {
+      if (!expiry.length || plug.on) return;
+      var n = Math.min(6, expiry.length), base = hz + (H - hz) * 0.66, step = W * 0.04, x0 = W * 0.64;
+      g.font = Math.round(H * 0.0105) + "px monospace"; g.textAlign = "center";
+      for (var i = 0; i < n; i++) {
+        var e = expiry[i], x = x0 + i * step, d = e.days == null ? 0 : Math.max(0, e.days);
+        var hh = H * (0.01 + 0.05 * Math.min(1, d / 90)), w = H * 0.011;
+        var wax = e.level === "crit" ? COL.crit : e.level === "warn" ? COL.warn : mix(COL.fg, COL.bg, 0.25);
+        g.fillStyle = rgba(wax, 0.92); g.fillRect(x - w / 2, base - hh, w, hh);
+        var fk = reduced ? 1 : 0.8 + 0.2 * Math.sin(t * (e.level === "crit" ? 23 : 9) + i * 3), fy = base - hh - H * 0.008;
+        var gl = g.createRadialGradient(x, fy, 0, x, fy, H * 0.03);
+        gl.addColorStop(0, rgba(COL.warn, 0.4 * fk)); gl.addColorStop(1, rgba(COL.warn, 0));
+        g.fillStyle = gl; g.fillRect(x - H * 0.03, fy - H * 0.03, H * 0.06, H * 0.06);
+        g.fillStyle = rgba(mix(COL.warn, [255, 255, 220], 0.4), fk);
+        g.beginPath(); g.ellipse(x, fy, w * 0.3, H * 0.008 * fk, 0, 0, Math.PI * 2); g.fill();
+        if (!shareMode && e.name) {
+          g.fillStyle = rgba(e.level === "ok" ? COL.fg : wax, 0.75);
+          g.fillText(String(e.name).slice(0, 14), x, base + H * 0.016);
+          g.fillText(e.days == null ? "?" : (e.days < 0 ? "expired" : Math.floor(e.days) + "d"), x, base + H * 0.03);
+        }
+      }
+      g.textAlign = "start";
+    }
+    // 1.5: the energy of your home as a river across the floor: golden from the sun, blue from the grid, wider with more load
+    var riverT = 0;
+    function drawRiver(t, hz) {
+      if (!energy || plug.on || energy.load == null) return;
+      var load = Math.max(0, energy.load), solar = Math.max(0, energy.solar || 0), grid = energy.grid || 0;
+      var f = load > 0 ? Math.min(1, solar / load) : solar > 0 ? 1 : 0, col = mix([80, 160, 255], [255, 200, 80], f);
+      var wide = H * (0.008 + 0.03 * Math.min(1, load / (energy.peak || 6000))), yc = hz + (H - hz) * 0.42;
+      var ys = function (x, k) { return yc + Math.sin(x / W * 6 + 1) * H * 0.012 + k * wide; };
+      g.fillStyle = rgba(col, 0.28); g.beginPath();
+      for (var x = 0; x <= W; x += 16) { if (x) g.lineTo(x, ys(x, -0.5)); else g.moveTo(x, ys(x, -0.5)); }
+      for (x = W; x >= 0; x -= 16) g.lineTo(x, ys(x, 0.5));
+      g.closePath(); g.fill();
+      if (!reduced) riverT += (0.0004 + 0.002 * Math.min(1, load / (energy.peak || 6000))) * (grid < 0 ? -1 : 1);
+      g.fillStyle = rgba(mix(col, COL.fg, 0.4), 0.8);
+      for (var k = 0; k < 40; k++) {
+        var u = ((k / 40 + riverT) % 1 + 1) % 1, px = u * W, off = (((k * 0.618) % 1) - 0.5) * 0.8;
+        g.fillRect(px, ys(px, off), Math.max(2, H / 300), Math.max(1, H / 700));
+      }
+      if (!shareMode) {
+        var kw = function (w) { return (w / 1000).toFixed(1) + " kW"; };
+        g.font = Math.round(H * 0.011) + "px monospace"; g.fillStyle = rgba(col, 0.9);
+        g.fillText("☀ " + kw(solar) + " · home " + kw(load) + " · grid " + (grid < 0 ? "−" : "") + kw(Math.abs(grid)), W * 0.4, ys(W * 0.4, -0.5) - H * 0.008);
+      }
+    }
+    function drawGarland(t, hz) {
+      var cols = [COL.crit, COL.ok, COL.warn, COL.accent, COL.accent2], spans = 4, y0 = hz - H * 0.19;
+      for (var sp = 0; sp < spans; sp++) {
+        var x0 = W * sp / spans, x1 = W * (sp + 1) / spans, n = 14;
+        g.strokeStyle = rgba(mix(COL.bg, COL.fg, 0.25), 0.5); g.lineWidth = Math.max(1, H / 1000); g.beginPath();
+        for (var i = 0; i <= n; i++) {
+          var u = i / n, x = x0 + (x1 - x0) * u, y = y0 + H * 0.035 * (1 - Math.pow(2 * u - 1, 2));
+          if (i) g.lineTo(x, y); else g.moveTo(x, y);
+        }
+        g.stroke();
+        for (i = 1; i < n; i++) {
+          u = i / n; x = x0 + (x1 - x0) * u; y = y0 + H * 0.035 * (1 - Math.pow(2 * u - 1, 2));
+          var on = reduced ? 1 : 0.35 + 0.65 * (((Math.floor(t * 1.2) + i + sp) % 2) ? 1 : 0.4), c = cols[(i + sp) % cols.length];
+          var gl = g.createRadialGradient(x, y + H * 0.006, 0, x, y + H * 0.006, H * 0.016);
+          gl.addColorStop(0, rgba(c, 0.55 * on)); gl.addColorStop(1, rgba(c, 0));
+          g.fillStyle = gl; g.fillRect(x - H * 0.016, y - H * 0.01, H * 0.032, H * 0.032);
+          g.fillStyle = rgba(c, 0.95 * on); g.beginPath(); g.arc(x, y + H * 0.006, Math.max(1.5, H / 330), 0, Math.PI * 2); g.fill();
+        }
+      }
+    }
+    function drawSeason(now, t, hz, cx, cy) {
+      var xm = season.xmas, ny = season.newYear;
+      if (xm && !plug.on) {   // the tree, on the floor to the left of the core
+        var tx = W * 0.3, ty = hz + H * 0.1, th = H * 0.17, green = mix(COL.bg, COL.ok, 0.45);
+        for (var k = 0; k < 3; k++) {
+          var w = th * (0.5 - k * 0.12), top = ty - th * (0.42 + k * 0.27), bot = ty - th * (k * 0.27);
+          g.fillStyle = rgba(mix(green, [0, 0, 0], k * 0.08), 1);
+          g.beginPath(); g.moveTo(tx, top); g.lineTo(tx + w, bot); g.lineTo(tx - w, bot); g.closePath(); g.fill();
+        }
+        g.fillStyle = rgba(mix(COL.bg, [90, 50, 30], 0.7), 1); g.fillRect(tx - th * 0.04, ty, th * 0.08, th * 0.08);
+        var bc = [COL.crit, COL.warn, COL.accent, COL.accent2];
+        for (k = 0; k < 14; k++) {
+          var by = ty - th * (0.08 + (k * 0.61) % 0.85), half = th * 0.5 * (1 - (ty - by) / (th * 1.05)) * 0.8;
+          var bx = tx + (((k * 0.37) % 1) * 2 - 1) * half, on2 = reduced ? 1 : 0.4 + 0.6 * Math.abs(Math.sin(t * 1.5 + k));
+          g.fillStyle = rgba(bc[k % 4], on2); g.beginPath(); g.arc(bx, by, Math.max(1.5, H / 380), 0, Math.PI * 2); g.fill();
+        }
+        var sy = ty - th * 0.97, st2 = g.createRadialGradient(tx, sy, 0, tx, sy, H * 0.03);
+        st2.addColorStop(0, rgba(COL.warn, 0.9)); st2.addColorStop(1, rgba(COL.warn, 0));
+        g.fillStyle = st2; g.fillRect(tx - H * 0.03, sy - H * 0.03, H * 0.06, H * 0.06);
+      }
+      if (xm && xm.snow && wx !== "rain" && wx !== "storm" && wx !== "snow") {   // it is really cold: a few flakes
+        if (!flakes.length) for (var f = 0; f < 70; f++) flakes.push([Math.random() * W, Math.random() * H, 0.4 + Math.random()]);
+        g.fillStyle = rgba(COL.fg, 0.55);
+        flakes.forEach(function (fl, i) {
+          if (!reduced) { fl[1] += H * 0.0009 * fl[2]; fl[0] += Math.sin(t + i) * 0.25; if (fl[1] > H) { fl[1] = -4; fl[0] = Math.random() * W; } }
+          g.fillRect(fl[0], fl[1], 2, 2);
+        });
+      }
+      if (!ny) return;
+      var font = getComputedStyle(document.body).fontFamily || "monospace";
+      g.textAlign = "center"; g.textBaseline = "middle";
+      if (ny.party) {   // midnight: fireworks for a quarter of an hour, fewer with reduced motion
+        if (fxOn && now - nyFx > (reduced ? 4000 : 700)) { nyFx = now; fireworks(Math.random() < 0.5, "burst"); }
+        g.font = "bold " + Math.round(H * 0.07) + "px " + font; g.fillStyle = rgba(COL.fg, 0.9);
+        g.shadowColor = rgba(COL.accent2, 0.9); g.shadowBlur = H * 0.03;
+        g.fillText("HAPPY " + ny.year, cx, cy); g.shadowBlur = 0;
+      } else if (ny.left <= 60) {   // the last minute, big, second by second
+        var sec = Math.ceil(ny.left), fr = ny.left - Math.floor(ny.left), sc = reduced ? 1 : 1 + 0.25 * fr;
+        g.font = "bold " + Math.round(H * 0.16 * sc) + "px " + font; g.fillStyle = rgba(COL.fg, 0.5 + 0.5 * fr);
+        g.shadowColor = rgba(COL.accent, 0.9); g.shadowBlur = H * 0.04;
+        g.fillText(String(sec), cx, cy); g.shadowBlur = 0;   // on the sphere
+      } else if (ny.left <= 3600) {   // the last hour, quietly
+        var mm = Math.floor(ny.left / 60), ss = Math.floor(ny.left % 60);
+        g.font = Math.round(H * 0.024) + "px " + font; g.fillStyle = rgba(COL.fg, 0.75);
+        g.fillText(ny.year + " in " + mm + ":" + (ss < 10 ? "0" : "") + ss, cx, hz + H * 0.03);
+      }
+      g.textAlign = "start"; g.textBaseline = "alphabetic";
+    }
     function darkness() {
       var se = night && night.sun ? night.sun.el : (phase === "night" ? -20 : phase === "day" ? 20 : -3);
       var d = se > 0 ? 0 : se > -6 ? 0.25 * (-se / 6) : se > -12 ? 0.25 + 0.75 * ((-se - 6) / 6) : 1;
+      var ec = season.eclipse;   // 1.5: under a total eclipse the day turns to night and the stars come out
+      if (ec && ec.kind === "solar" && se > -1) d = Math.max(d, Math.pow(Math.max(0, ec.obsc), 8));
       var cl = weatherNow && weatherNow.cloud != null && !Q.get("wx") ? weatherNow.cloud / 100 : (wx === "clear" ? 0 : wx === "part" ? 0.4 : wx === "fog" ? 0.7 : 0.85);
       return { d: d, sky: d * (1 - 0.85 * cl), cloud: cl };
     }
@@ -1861,6 +2397,19 @@
       gl.addColorStop(0, rgba(col, 0.45 * a)); gl.addColorStop(1, rgba(col, 0));
       g.fillStyle = gl; g.fillRect(p[0] - r * 6, p[1] - r * 6, r * 12, r * 12);
       g.fillStyle = rgba(mix(COL.fg, col, 0.4), 0.95 * a); g.beginPath(); g.arc(p[0], p[1], r, 0, Math.PI * 2); g.fill();
+      var ec = season.eclipse;
+      if (ec && ec.kind === "solar" && ec.obsc > 0) {   // 1.5: the Moon's disc where it really is on the Sun
+        if (ec.obsc > 0.995) {   // totality: the corona
+          var co = g.createRadialGradient(p[0], p[1], r, p[0], p[1], r * 4.5);
+          co.addColorStop(0, rgba([235, 240, 255], 0.75 * a)); co.addColorStop(0.3, rgba([200, 215, 255], 0.22 * a)); co.addColorStop(1, rgba([200, 215, 255], 0));
+          g.fillStyle = co; g.beginPath(); g.arc(p[0], p[1], r * 4.5, 0, Math.PI * 2); g.fill();
+        }
+        g.fillStyle = rgba(mix(COL.bg, [0, 0, 0], 0.6), 1);
+        g.beginPath(); g.arc(p[0] + ec.off[0] * r, p[1] - ec.off[1] * r, r * (ec.rm || 1.02), 0, Math.PI * 2); g.fill();
+        g.font = Math.round(H / 62) + "px " + (getComputedStyle(document.body).fontFamily || "monospace");
+        g.textAlign = "center"; g.fillStyle = rgba(COL.fg, 0.8);
+        g.fillText("eclipse · " + Math.round(ec.obsc * 100) + "%", p[0], p[1] + r * 2.6); g.textAlign = "start";
+      }
     }
     function drawMoon(t, hz, dk) {
       var m = night && night.moon; if (!m || m.el < -1) return;
@@ -1870,6 +2419,12 @@
       var ang = sp ? Math.atan2(sp[1] - p[1], sp[0] - p[0]) : (m.waxing ? 0 : Math.PI);
       if (night.sun && night.sun.el < 0) ang = Math.atan2(r * 0.3, (m.waxing ? 1 : -1) * r);   // under the horizon: its side
       var k = m.lit, lit = mix(COL.fg, [255, 244, 214], 0.5);
+      var lec = season.eclipse;
+      if (lec && lec.kind === "lunar" && lec.pmag > 0) {   // 1.5: a lunar eclipse: dimmer in the penumbra, copper red in the umbra
+        lit = mix(lit, [178, 64, 36], Math.max(0, Math.min(1, lec.umag * 1.2 + 0.1)));
+        a *= lec.umag > 0 ? 1 - 0.25 * Math.min(1, lec.umag) : 1 - 0.3 * Math.min(1, lec.pmag);
+        k = Math.max(k, 0.97);
+      }
       g.save(); g.translate(p[0], p[1]); g.rotate(ang);
       var halo = g.createRadialGradient(0, 0, r, 0, 0, r * 4);
       halo.addColorStop(0, rgba(lit, 0.18 * a * k)); halo.addColorStop(1, rgba(lit, 0));
@@ -2108,7 +2663,7 @@
       bass = music ? bass * 0.6 + avg(audio, 0, 4) * 0.4 : bass * 0.9;
       mid = music ? avg(audio, 6, 16) : 0;
       if (music && bass > 0.55) beatEnv = Math.max(beatEnv, bass);
-      var shk = quakes.length ? quakeShake(now) : null;
+      var shk = quakes.length && !reduced ? quakeShake(now) : null;
       if (shk) g.setTransform(1, 0, 0, 1, shk[0], shk[1]);   // an earthquake shakes the city (only then)
       g.drawImage(bgc, 0, 0);
       // the eyes: towards the pointer while it moves, then slowly back to the middle
@@ -2120,7 +2675,7 @@
       }
       gaze.x += (gx - gaze.x) * 0.18; gaze.y += (gy - gaze.y) * 0.18;
       // the red lights on top of your city's landmarks
-      if ((t % 1.7) < 0.22) { g.fillStyle = rgba(COL.crit, 0.95); for (var ci = 0; ci < cityTops.length; ci++) g.fillRect(cityTops[ci][0] - H / 700, cityTops[ci][1] - H / 300, H / 350, H / 350); }
+      if (!plug.on && (t % 1.7) < 0.22) { g.fillStyle = rgba(COL.crit, 0.95); for (var ci = 0; ci < cityTops.length; ci++) g.fillRect(cityTops[ci][0] - H / 700, cityTops[ci][1] - H / 300, H / 350, H / 350); }
       // stars (fewer when it is cloudy, none by day)
       var dk = darkness();
       var starA = night ? dk.sky * 0.35 : phase === "day" ? 0.1 : phase !== "night" ? 0.45 : wx === "clear" || wx === "part" ? 1 : 0.35;   // with the real sky, the random ones are only a faint background
@@ -2138,6 +2693,8 @@
       drawClouds(t, hz, dk);
       stormTick(now, hz);
       drawBolts(now, hz);
+      if (season.xmas) drawGarland(t, hz);
+      if (infraOn && infra.length) drawInfraWeather(now, t, hz);
       // aurora = network traffic
       var kp = space && space.kp || 0, kpA = kp >= 4 ? Math.min(1, (kp - 3) / 5) : 0;   // a geomagnetic storm: a real aurora
       var na = Math.max(Math.min(1, Math.log10(1 + net) / 7.5), mid * 0.9, kpA);
@@ -2166,7 +2723,8 @@
       // the core: a wireframe sphere rising on the horizon, beating with the load (or the LED sphere)
       var R = H * (kind === "orbit" ? 0.15 : kind === "sphere" ? 0.165 : 0.135) * (1 + (kind === "sphere" ? 0.012 : 0.035) * beatEnv);
       var cy = kind === "orbit" ? hz - R * 1.02 : kind === "sphere" ? hz - R * 0.97 : hz;
-      if (kind !== "sphere") {
+      if (!plug.on) {   // 1.5: with a community scene, Pulse keeps the sky, the weather and the effects; the scene draws the world
+      if (kind !== "sphere" && kind !== "noir") {
       var glow = g.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 2.4);
       glow.addColorStop(0, rgba(alertEnv > 0.05 && alertCol ? alertCol : a2, 0.30 + 0.25 * beatEnv));
       glow.addColorStop(1, rgba(a2, 0));
@@ -2213,7 +2771,7 @@
       } else {
         drawGit(t, hz, cx, R);
         // far city (still), then the skyline: one tower per CPU core, its lit windows follow the RAM
-        var nc = Math.min(Math.max(cores.length, 8), 32), side = Math.ceil(nc / 2);
+        var nc = kind === "noir" ? 0 : Math.min(Math.max(cores.length, 8), 32), side = Math.max(1, Math.ceil(nc / 2));
         var inner = R * (kind === "sphere" ? 1.08 : 1.18), outer = Math.min(cx - band[0], band[1] - cx);
         var slot = Math.max(4, (outer - inner) / side), bw = slot * 0.74;
         for (i = 0; i < nc; i++) {
@@ -2244,22 +2802,25 @@
       if (kind === "sphere") drawSphere(cx, cy, R, t);
       drawDrones(t, hz);
       // floor: the grid runs toward you as fast as the CPU works (and with the bass)
-      var speed = paused || kind === "calm" ? 0 : 0.08 + cpu / 160 + bass * 0.9;
+      var speed = paused || kind === "calm" || reduced ? 0 : 0.08 + cpu / 160 + bass * 0.9;
       var off = (t * speed) % 1;
       g.lineWidth = Math.max(1, H / 1080);
-      for (k = 0; k < 18; k++) {
+      for (k = 0; k < (kind === "noir" ? 0 : 18); k++) {
         var p = (k + off) / 18, yh = hz + (H - hz) * Math.pow(p, 2.2);
         g.strokeStyle = rgba(ac, 0.05 + 0.45 * p); g.beginPath(); g.moveTo(0, yh); g.lineTo(W, yh); g.stroke();
       }
-      for (k = -24; k <= 24; k++) {
+      for (k = kind === "noir" ? 25 : -24; k <= 24; k++) {
         g.strokeStyle = rgba(ac, 0.18 - Math.abs(k) * 0.005);
         g.beginPath(); g.moveTo(cx + k * W * 0.012, hz); g.lineTo(cx + k * W * 0.11, H); g.stroke();
       }
+      drawRiver(t, hz);
+      drawNet(now, t, hz);
       drawCars(t, hz);
       drawGrowth(t, hz);    // 1.3: in front, on the floor: your district, the train line, the quake waves
       drawTrains(t, hz);
       drawCar(t, hz);
       drawRobots(t, hz);
+      drawCandles(t, hz);
       drawPlanes(t, hz);   // in front of the sphere, so a plane is never hidden behind it
       drawBanners(now, hz);
       drawQuakeWaves(now, hz);
@@ -2291,6 +2852,7 @@
         for (var j = 0; j < path.length; j++) { if (j) g.lineTo(j * 3, path[j]); else g.moveTo(0, path[j]); }
         g.lineWidth = pass[0] * H / 1080 * 1.6; g.strokeStyle = rgba(lc, pass[1]); g.stroke();
       });
+      } else { spikes = []; drawPlanes(t, hz); drawBanners(now, hz); }
 
       // weather from the real sky
       drawAir(t, hz);
@@ -2323,6 +2885,12 @@
       if (flash > 0.02) { g.fillStyle = rgba(COL.fg, flash * 0.16); g.fillRect(0, 0, W, H); flash *= 0.8; }
       drawFireworks();
       drawLiftoffs(t, hz);
+      if (kind === "noir" && noirBoard) drawSeason(now, t, hz, noirBoard.x, noirBoard.y + noirBoard.h * 0.43); else drawSeason(now, t, hz, cx, cy);
+      drawBoltsNet(t, hz);
+      if (kind === "noir") drawNoirCity(t, hz);
+      if (kind === "hacker") drawHacker(t, hz, cx);
+      if (noc && noc.incident && !shareMode) { g.fillStyle = rgba(COL.crit, 0.07 + (reduced ? 0 : 0.05 * Math.sin(now / 400))); g.fillRect(0, 0, W, H); }
+      drawTerm(hz);
       // an alert: a shockwave from the core
       if (alertEnv > 0.02 && alertCol) {
         var ar = R * (1 + (1 - alertEnv) * 6);
@@ -2347,7 +2915,7 @@
       var body = { mon: MONKEY, scene: kind, fps: +(pf.n / ((now - pf.t) / 1000)).toFixed(1), want: want, cap: cap,
         draw: +avgCost.toFixed(1), gap: +avgGap.toFixed(0), maxGap: +pf.max.toFixed(0), bound: pbound, probe: probe && pf.t > probeAt + 1500,
         w: Math.round(innerWidth * (window.devicePixelRatio || 1)), h: Math.round(innerHeight * (window.devicePixelRatio || 1)),
-        canvas: W + "x" + H };
+        canvas: W + "x" + H, scenePlugin: plug.on ? { name: plug.name, draw: plug.perf && plug.perf.draw, worst: plug.perf && plug.perf.worst, error: plug.err } : null };
       pf = { n: 0, cost: 0, gap: 0, max: 0, t: now, prev: 0 };
       try { fetch("/api/perf?token=" + encodeURIComponent(TOKEN), { method: "POST", body: JSON.stringify(body) }).catch(function () {}); } catch (e) {}
     }
@@ -2418,12 +2986,15 @@
         if (covered === value) return;
         covered = value;
         document.body.classList.toggle("suspended", covered);
+        if (plug.frame && plug.frame.contentWindow) plug.frame.contentWindow.postMessage({ pulse: "pause", on: covered }, "*");
         if (covered && frameId !== null) { cancelAnimationFrame(frameId); frameId = null; }
         else if (!covered && frameId === null) { last = 0; gap = 0; frameId = requestAnimationFrame(frame); }
       },
       mode: function (m, st) {
         var ui = st.ui || {};
         kind = window.PULSE_SCENE || Q.get("scene") || ui.scene || "skyline";
+        pluginSync(kind, st);
+        reduced = ui.motion === "reduced";
         var sys = st.sys || {};
         cpu = sys.cpu || 0; cores = sys.cores || []; ram = sys.ram || 0; net = (sys.rx || 0) + (sys.tx || 0);
         var w = st.weather;
@@ -2448,6 +3019,13 @@
                      health: a.state === "failed" ? "bad" : a.state === "waiting" ? "restart" : "ok" };
           }).concat(robots).slice(0, 12);
         }
+        hackerStyle = ui.hackerStyle === "noir" ? "noir" : "phosphor";
+        pnet = st.net || null; netBolts = st.bolts || []; term = st.term || []; noc = st.noc || null;
+        document.body.classList.toggle("noc", !!(noc && noc.on));
+        nocView(noc, ui);
+        season = st.season || {}; expiry = st.expiry || []; energy = st.energy || null;
+        infra = (st.widgets || []).filter(function (w) { return (w.level === "crit" || w.level === "warn") && w.id !== "weather"; }).slice(0, 4);
+        infraOn = ui.infraWeather !== false;
         night = st.night || null; starlink = st.starlink || { sats: [] }; storms = st.storms || null; air = st.air || null;
         soundCfg = ui.sound || null; sound.update(soundCfg, !!(m && m.fullscreen) || away);
         var door = (st.widgets || []).filter(function (x) { return x.id === "doorbell" && x.data && x.data.frame; })[0];
