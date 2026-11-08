@@ -235,13 +235,22 @@ Actions, MQTT and more, privacy, tuning, troubleshooting): [docs/GUIDE.md](docs/
 
 ## Scenes and wallpapers
 
-Four live scenes: **sphere** (the LED sphere in the city, the default from 1.1), **skyline** (the city of your CPU
-cores around a wireframe core), **orbit** (the cores become moons around a larger core) and **calm** (a still grid,
-lighter on the PC). Pick one with `scene` in `~/.config/omarchy-pulse/pulse.toml`, or in one line:
+Six live scenes: **sphere** (the LED sphere in the city, the default from 1.1), **skyline** (the city of your CPU
+cores around a wireframe core), **orbit** (the cores become moons around a larger core), **calm** (a still grid,
+lighter on the PC), **noir** (a futuristic megacity at night, a big screen instead of the sphere; 1.5) and **hacker**
+(phosphor green or neon noir, a radar on your network; 1.5). Pick one with `scene` in
+`~/.config/omarchy-pulse/pulse.toml`, or in one line:
 
 ```
-sed -i 's/^scene = .*/scene = "sphere"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm
+sed -i 's/^scene = .*/scene = "noir"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm | noir | hacker
 ```
+
+Or a **community scene**, a whole world someone made in one file: `pond` comes with Pulse, `omarchy-pulse scene list`
+shows the ones you have, and [docs/SCENES.md](docs/SCENES.md) shows how to make your own.
+
+Or **your own picture** under the widgets (1.5.1): `wallpaper = "~/Pictures/city.jpg"`, or `"omarchy"` for your theme's
+background; `wallpaper_mode = "live"` keeps the real weather, planes and fireworks on top, `"panels"` shows the panels
+only, and `wallpaper_colors = "picture"` gives the widgets the picture's colours ([section 60](docs/GUIDE.md#60-your-own-wallpaper-151)).
 
 The wallpaper switches within about 3 seconds (`omarchy-pulse reload` to do it now).
 
