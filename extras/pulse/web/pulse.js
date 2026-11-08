@@ -24,7 +24,43 @@
     return isNaN(n) ? null : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
   function lum(c) { return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255; }
+  // 1.5.1: wallpaper_colors = "picture": the panels and the effects take their colours from your own wallpaper
+  // (background, text, the two accents); green, amber and red keep the theme's, so their meaning never changes
+  var pictureColors = null;
+  function pictureTheme(t) {
+    if (!pictureColors) return t;
+    return { name: (t && t.name) || "", colors: Object.assign({}, (t && t.colors) || {}, pictureColors) };
+  }
+  function paletteOf(img) {
+    var c = document.createElement("canvas"); c.width = 64; c.height = 36;
+    var x = c.getContext("2d", { willReadFrequently: true }); x.drawImage(img, 0, 0, 64, 36);
+    var d = x.getImageData(0, 0, 64, 36).data, px = [], bins = [];
+    for (var i = 0; i < 24; i++) bins.push({ w: 0, r: 0, g: 0, b: 0 });
+    for (i = 0; i < d.length; i += 4) {
+      var r = d[i], g = d[i + 1], b = d[i + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b), v = mx / 255, sat = mx ? (mx - mn) / mx : 0;
+      px.push([r, g, b, (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255]);
+      if (sat > 0.3 && v > 0.3) {
+        var h = mx === mn ? 0 : mx === r ? ((g - b) / (mx - mn) + 6) % 6 : mx === g ? (b - r) / (mx - mn) + 2 : (r - g) / (mx - mn) + 4;
+        var bn = bins[Math.floor(h / 6 * 24) % 24], w = sat * v; bn.w += w; bn.r += r * w; bn.g += g * w; bn.b += b * w;
+      }
+    }
+    px.sort(function (a, b) { return a[3] - b[3]; });
+    var dark = [0, 0, 0], n = Math.max(1, Math.floor(px.length * 0.2));
+    for (i = 0; i < n; i++) { dark[0] += px[i][0]; dark[1] += px[i][1]; dark[2] += px[i][2]; }
+    dark = dark.map(function (v2) { return v2 / n; });
+    var order = bins.map(function (bn, k) { return [bn.w, k]; }).sort(function (a, b) { return b[0] - a[0]; });
+    var avgBin = function (k) { var bn = bins[k]; return bn.w ? [bn.r / bn.w, bn.g / bn.w, bn.b / bn.w] : null; };
+    var bright = function (c2) { var m = Math.max(c2[0], c2[1], c2[2]) || 1, k2 = Math.max(1, 210 / m); return c2.map(function (v2) { return Math.min(255, v2 * k2); }); };
+    var a1 = order[0][0] ? avgBin(order[0][1]) : null, a2 = null;
+    for (i = 1; i < order.length && !a2; i++) if (order[i][0] > order[0][0] * 0.08 && Math.min(Math.abs(order[i][1] - order[0][1]), 24 - Math.abs(order[i][1] - order[0][1])) >= 4) a2 = avgBin(order[i][1]);
+    if (!a1) return null;   // a picture without colour (black and white): keep the theme
+    a1 = bright(a1); a2 = a2 ? bright(a2) : [a1[2], a1[0], a1[1]];
+    var hex = function (c2) { return "#" + c2.map(function (v2) { return ("0" + Math.round(v2).toString(16)).slice(-2); }).join(""); };
+    var bg = mix(dark, [0, 0, 0], 0.45), fg = mix([238, 238, 242], a1, 0.12);
+    return { background: hex(bg), foreground: hex(fg), accent: hex(a1), color6: hex(a1), color5: hex(a2), color13: hex(a2) };
+  }
   function applyTheme(t) {
+    t = pictureTheme(t);
     var c = (t && t.colors) || {};
     var key = JSON.stringify(c);
     if (key === themeKey) return;
@@ -567,6 +603,36 @@
     }             // sleep; cars = your network
     // 1.5: a community scene (docs/SCENES.md). It runs alone in a sandboxed frame between the sky and the panels: no
     // network, no token, no access to Pulse; it gets a read-only copy of the state and draws its own world.
+    // 1.5.1: your own wallpaper ([pulse] wallpaper): "panels" = the picture and the panels only, "live" = the picture
+    // with Pulse's live things on top (real rain and snow, planes, fireworks, rockets, the banner, the holidays)
+    var wpOn = false, wpImg = null, wpKey = "", wpMode = "live", wpDim = 0.25;
+    function wallpaperSync(w) {
+      if (w && w.v) {
+        wpMode = w.mode === "panels" ? "panels" : "live"; wpDim = Math.max(0, Math.min(0.9, +w.dim || 0));
+        if (w.v !== wpKey) {
+          wpKey = w.v;
+          var im = new Image();
+          im.onload = function () {
+            if (wpKey !== w.v) return;
+            wpImg = im; wpOn = true; document.body.classList.add("ownwall");
+            var pc = null;
+            if (w.colors === "picture") { try { pc = paletteOf(im); } catch (e) { pc = null; } }
+            if (JSON.stringify(pc) !== JSON.stringify(pictureColors)) { pictureColors = pc; themeKey = ""; render(); }
+            paintStatic();
+          };
+          im.src = "/api/wallpaper?token=" + encodeURIComponent(TOKEN) + "&v=" + encodeURIComponent(w.v);
+        } else if (wpImg) {
+          var want = w.colors === "picture";
+          if (want !== !!pictureColors) { try { pictureColors = want ? paletteOf(wpImg) : null; } catch (e) { pictureColors = null; } themeKey = ""; setTimeout(render, 0); }
+          paintStatic();
+        }
+      } else if (wpOn || wpKey) {
+        wpOn = false; wpImg = null; wpKey = ""; document.body.classList.remove("ownwall");
+        if (pictureColors) { pictureColors = null; themeKey = ""; setTimeout(render, 0); }
+        paintStatic();
+      }
+    }
+    function worldOff() { return plug.on || wpOn; }
     var BUILTIN = { sphere: 1, skyline: 1, orbit: 1, calm: 1, hacker: 1, noir: 1 };
     var plug = { on: false, name: "", frame: null, city: false, perf: null, err: "" };
     function pluginSync(k, st) {
@@ -932,6 +998,13 @@
       if (!COL.bg) return;
       bgc.width = W; bgc.height = H;
       var b = bgc.getContext("2d"), hz = H * 0.745, cx = W / 2, bg = COL.bg, a2 = COL.accent2, i;
+      if (wpOn && wpImg) {   // 1.5.1: your own wallpaper under the panels, filling the screen like a wallpaper does
+        var sc = Math.max(W / wpImg.naturalWidth, H / wpImg.naturalHeight), iw = wpImg.naturalWidth * sc, ih = wpImg.naturalHeight * sc;
+        b.fillStyle = rgba(bg, 1); b.fillRect(0, 0, W, H);
+        b.drawImage(wpImg, (W - iw) / 2, (H - ih) / 2, iw, ih);
+        if (wpDim > 0) { b.fillStyle = "rgba(0,0,0," + wpDim + ")"; b.fillRect(0, 0, W, H); }
+        return;
+      }
       var sky = b.createLinearGradient(0, 0, 0, hz);
       // the sky follows the real sun: night, a warm dawn and dusk, a (still dark enough to read) day
       var top = mix(bg, [0, 0, 0], 0.35), midc = mix(bg, a2, 0.10), low = mix(bg, a2, 0.28);
@@ -944,7 +1017,7 @@
       var fl = b.createLinearGradient(0, hz, 0, H);
       fl.addColorStop(0, rgba(mix(bg, a2, 0.2), 1)); fl.addColorStop(1, rgba(mix(bg, [0, 0, 0], 0.5), 1));
       b.fillStyle = fl; b.fillRect(0, hz, W, H - hz);
-      if (kind === "noir") { paintMegacity(b, hz); return; }   // 1.5: the neo-noir megacity
+      if (kind === "noir") { paintMegacity(b, hz); return; }   // (your own wallpaper, above, comes first)   // 1.5: the neo-noir megacity
       if (plug.on && !plug.city) return;   // a community scene draws its own world
       b.beginPath(); b.moveTo(0, hz);
       for (i = 0; i < ridge.length; i++) b.lineTo(i / (ridge.length - 1) * W, hz - H * (0.025 + 0.085 * ridge[i]) * (0.55 + 0.45 * Math.abs(i / (ridge.length - 1) - 0.5) * 2));
@@ -1972,7 +2045,7 @@
     var pnet = null, netBolts = [], term = [], noc = null, netPos = {}, wifiPos = {}, truckX = {};
     function azX(az) { return W / 2 + Math.max(-1.08, Math.min(1.08, ((az - 180 + 540) % 360 - 180) / 90)) * W * 0.44; }
     function drawNet(now, t, hz) {
-      if (!pnet || plug.on) return;
+      if (!pnet || worldOff()) return;
       var floor = H - hz, nowS = Date.now() / 1000;
       netPos = {};
       // the firewall: a wall along the horizon; blocked attacks are arrows from where they come from, IPS events meteors
@@ -2265,7 +2338,7 @@
     }
     // 1.5: what expires: a candle for each certificate, domain or date, shorter as the day comes, red at the end
     function drawCandles(t, hz) {
-      if (!expiry.length || plug.on) return;
+      if (!expiry.length || worldOff()) return;
       var n = Math.min(6, expiry.length), base = hz + (H - hz) * 0.66, step = W * 0.04, x0 = W * 0.64;
       g.font = Math.round(H * 0.0105) + "px monospace"; g.textAlign = "center";
       for (var i = 0; i < n; i++) {
@@ -2290,7 +2363,7 @@
     // 1.5: the energy of your home as a river across the floor: golden from the sun, blue from the grid, wider with more load
     var riverT = 0;
     function drawRiver(t, hz) {
-      if (!energy || plug.on || energy.load == null) return;
+      if (!energy || worldOff() || energy.load == null) return;
       var load = Math.max(0, energy.load), solar = Math.max(0, energy.solar || 0), grid = energy.grid || 0;
       var f = load > 0 ? Math.min(1, solar / load) : solar > 0 ? 1 : 0, col = mix([80, 160, 255], [255, 200, 80], f);
       var wide = H * (0.008 + 0.03 * Math.min(1, load / (energy.peak || 6000))), yc = hz + (H - hz) * 0.42;
@@ -2333,7 +2406,7 @@
     }
     function drawSeason(now, t, hz, cx, cy) {
       var xm = season.xmas, ny = season.newYear;
-      if (xm && !plug.on) {   // the tree, on the floor to the left of the core
+      if (xm && !worldOff()) {   // the tree, on the floor to the left of the core
         var tx = W * 0.3, ty = hz + H * 0.1, th = H * 0.17, green = mix(COL.bg, COL.ok, 0.45);
         for (var k = 0; k < 3; k++) {
           var w = th * (0.5 - k * 0.12), top = ty - th * (0.42 + k * 0.27), bot = ty - th * (k * 0.27);
@@ -2666,6 +2739,7 @@
       var shk = quakes.length && !reduced ? quakeShake(now) : null;
       if (shk) g.setTransform(1, 0, 0, 1, shk[0], shk[1]);   // an earthquake shakes the city (only then)
       g.drawImage(bgc, 0, 0);
+      if (wpOn && wpMode === "panels") { if (shk) g.setTransform(1, 0, 0, 1, 0, 0); return; }
       // the eyes: towards the pointer while it moves, then slowly back to the middle
       var gx = 0, gy = 0;
       if (eyesOn && cursorXY && now - cursorAt < 15000) {
@@ -2675,22 +2749,24 @@
       }
       gaze.x += (gx - gaze.x) * 0.18; gaze.y += (gy - gaze.y) * 0.18;
       // the red lights on top of your city's landmarks
-      if (!plug.on && (t % 1.7) < 0.22) { g.fillStyle = rgba(COL.crit, 0.95); for (var ci = 0; ci < cityTops.length; ci++) g.fillRect(cityTops[ci][0] - H / 700, cityTops[ci][1] - H / 300, H / 350, H / 350); }
+      if (!worldOff() && (t % 1.7) < 0.22) { g.fillStyle = rgba(COL.crit, 0.95); for (var ci = 0; ci < cityTops.length; ci++) g.fillRect(cityTops[ci][0] - H / 700, cityTops[ci][1] - H / 300, H / 350, H / 350); }
       // stars (fewer when it is cloudy, none by day)
       var dk = darkness();
       var starA = night ? dk.sky * 0.35 : phase === "day" ? 0.1 : phase !== "night" ? 0.45 : wx === "clear" || wx === "part" ? 1 : 0.35;   // with the real sky, the random ones are only a faint background
-      for (var i = 0; i < stars.length; i++) {
+      for (var i = 0; i < (wpOn ? 0 : stars.length); i++) {
         var st = stars[i], tw = 0.5 + 0.5 * Math.sin(t * st[3] * 2 + st[2] * 40);
         g.fillStyle = rgba(COL.fg, (0.15 + 0.6 * tw * st[2]) * starA);
         var ss = Math.max(1, H / 1080 * (st[2] > 0.9 ? 2.4 : 1.3));
         g.fillRect(st[0], st[1], ss, ss);
       }
+      if (!wpOn) {   // over your own wallpaper Pulse does not draw a sky of its own
       drawSun(t, hz, dk);       // 1.4: the real Sun, Moon, planets, stars, constellations, meteors, Starlink, clouds
       drawRealStars(t, hz, dk);
       drawMoon(t, hz, dk);
       drawStarlink(t, hz, dk);
       meteors(now, hz, dk);
       drawClouds(t, hz, dk);
+      }
       stormTick(now, hz);
       drawBolts(now, hz);
       if (season.xmas) drawGarland(t, hz);
@@ -2699,7 +2775,7 @@
       var kp = space && space.kp || 0, kpA = kp >= 4 ? Math.min(1, (kp - 3) / 5) : 0;   // a geomagnetic storm: a real aurora
       var na = Math.max(Math.min(1, Math.log10(1 + net) / 7.5), mid * 0.9, kpA);
       g.globalCompositeOperation = "lighter";
-      for (var k = 0; k < (kpA ? 3 : 2); k++) {
+      for (var k = 0; k < (wpOn ? 0 : kpA ? 3 : 2); k++) {
         var col = k === 2 ? COL.ok : k ? a2 : ac, base = H * (0.16 + k * 0.09) - (k === 2 ? H * 0.12 : 0);
         g.beginPath();
         for (var x = 0; x <= W; x += 14) {
@@ -2717,13 +2793,12 @@
       }
       g.globalCompositeOperation = "source-over";
 
-      drawShooting();
-      drawISS(t, hz);
+      if (!wpOn) { drawShooting(); drawISS(t, hz); }
       if (now - flareAt < 2500) { g.fillStyle = rgba(COL.warn, 0.18 * (1 - (now - flareAt) / 2500)); g.fillRect(0, 0, W, hz); }   // a solar flare
       // the core: a wireframe sphere rising on the horizon, beating with the load (or the LED sphere)
       var R = H * (kind === "orbit" ? 0.15 : kind === "sphere" ? 0.165 : 0.135) * (1 + (kind === "sphere" ? 0.012 : 0.035) * beatEnv);
       var cy = kind === "orbit" ? hz - R * 1.02 : kind === "sphere" ? hz - R * 0.97 : hz;
-      if (!plug.on) {   // 1.5: with a community scene, Pulse keeps the sky, the weather and the effects; the scene draws the world
+      if (!worldOff()) {   // 1.5: with a community scene (or your own wallpaper), Pulse keeps the sky, the weather and the effects; the scene draws the world
       if (kind !== "sphere" && kind !== "noir") {
       var glow = g.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 2.4);
       glow.addColorStop(0, rgba(alertEnv > 0.05 && alertCol ? alertCol : a2, 0.30 + 0.25 * beatEnv));
@@ -2885,10 +2960,10 @@
       if (flash > 0.02) { g.fillStyle = rgba(COL.fg, flash * 0.16); g.fillRect(0, 0, W, H); flash *= 0.8; }
       drawFireworks();
       drawLiftoffs(t, hz);
-      if (kind === "noir" && noirBoard) drawSeason(now, t, hz, noirBoard.x, noirBoard.y + noirBoard.h * 0.43); else drawSeason(now, t, hz, cx, cy);
+      if (kind === "noir" && noirBoard && !wpOn) drawSeason(now, t, hz, noirBoard.x, noirBoard.y + noirBoard.h * 0.43); else drawSeason(now, t, hz, cx, cy);
       drawBoltsNet(t, hz);
-      if (kind === "noir") drawNoirCity(t, hz);
-      if (kind === "hacker") drawHacker(t, hz, cx);
+      if (kind === "noir" && !wpOn) drawNoirCity(t, hz);
+      if (kind === "hacker" && !wpOn) drawHacker(t, hz, cx);
       if (noc && noc.incident && !shareMode) { g.fillStyle = rgba(COL.crit, 0.07 + (reduced ? 0 : 0.05 * Math.sin(now / 400))); g.fillRect(0, 0, W, H); }
       drawTerm(hz);
       // an alert: a shockwave from the core
@@ -2994,6 +3069,7 @@
         var ui = st.ui || {};
         kind = window.PULSE_SCENE || Q.get("scene") || ui.scene || "skyline";
         pluginSync(kind, st);
+        wallpaperSync(ui.wallpaper);
         reduced = ui.motion === "reduced";
         var sys = st.sys || {};
         cpu = sys.cpu || 0; cores = sys.cores || []; ram = sys.ram || 0; net = (sys.rx || 0) + (sys.tx || 0);
@@ -3053,6 +3129,7 @@
         fps = full ? 1 : busy ? 8 : Math.min(+Q.get("fps") || +ui.fps || 20, bat ? 12 : 60);
         if (kind === "calm") fps = Math.min(fps, 10);
         if (away) fps = Math.min(fps, 8);   // nobody is looking: save power
+        if (wpOn && wpMode === "panels") fps = Math.min(fps, 2);   // a still picture: almost no work
         paused = full;
         document.body.classList.toggle("busy", busy);
         document.body.classList.toggle("calm", kind === "calm");

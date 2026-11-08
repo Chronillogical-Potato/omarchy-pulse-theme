@@ -31,6 +31,13 @@ celebrate = true                 # fireworks when an agent finishes, a focus end
 sun = true                       # the sky follows the real sun (dawn, day, dusk, night)
 infra_weather = true             # 1.5: a panel in trouble brings a cloud over the city, a storm when it is critical
 hacker_style = "phosphor"        # 1.5, scene = "hacker": "phosphor" (green terminal) | "noir" (neon rain, signs, cars in the air)
+wallpaper = ""                   # 1.5.1: your own picture under the panels ("~/Pictures/city.jpg"), or "omarchy" for
+                                 # the current Omarchy background (it follows the theme); "" = Pulse's own scene
+wallpaper_mode = "live"          # "live": real rain and snow, planes, fireworks, rockets, the banner, the holidays on top
+                                 # "panels": the picture and the panels only, almost no work for the PC
+wallpaper_dim = 0.25             # darkens the picture a little so the panels stay easy to read (0 to 0.9)
+wallpaper_colors = "theme"       # "picture": the panels and the effects take their colours from your picture
+                                 # (green, amber and red stay the theme's, so an alert always looks like one)
 noc = false                      # 1.5 beta: NOC mode (omarchy-pulse noc on|off|ack): personal panels hidden, a red
 noc_hide = ["media", "notifications"]   # incident on screen from a critical event until someone acknowledges it
 # title = "MISSION CONTROL"      # a word under the clock
