@@ -65,8 +65,10 @@
     var key = JSON.stringify(c);
     if (key === themeKey) return;
     themeKey = key;
-    var map = { bg: c.background, fg: c.foreground, accent: c.accent || c.color6, accent2: c.color5 || c.color13,
-      ok: c.color2, warn: c.color3, crit: c.color1, dim: c.color8 };
+    var acc = c.accent || c.color6 || c.cyan || c.color4 || c.blue;
+    var map = { bg: c.background, fg: c.foreground, accent: acc,
+      accent2: c.accent2 || c.color5 || c.color13 || c.magenta || c.bright_magenta || acc,   // 1.5.2: never the default pink
+      ok: c.color2 || c.green, warn: c.color3 || c.yellow, crit: c.color1 || c.red, dim: c.color8 || c.muted || c.bright_black };
     var root = document.documentElement.style;
     Object.keys(map).forEach(function (k) {
       var rgb = hexRgb(map[k]);

@@ -88,7 +88,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -4281,20 +4281,35 @@ def wallpaper_path(v) -> Path | None:
 
 
 _theme_cache: dict = {}
+SYSTEM_THEMES = Path("/usr/share/omarchy/themes")
+# 1.5.2: themes that name their palette (magenta, cyan...) instead of numbering it (color5, color6...)
+NAMED_COLORS = {"red": "color1", "green": "color2", "yellow": "color3", "blue": "color4", "magenta": "color5",
+                "cyan": "color6", "white": "color7", "muted": "color8", "bright_black": "color8",
+                "bright_red": "color9", "bright_green": "color10", "bright_yellow": "color11", "bright_blue": "color12",
+                "bright_magenta": "color13", "bright_cyan": "color14", "bright_white": "color15"}
+
+
+def theme_colors(c: dict) -> dict:
+    """The theme's colours, with the numbered names Pulse uses filled in from the named ones when missing."""
+    out = {k: v for k, v in c.items() if isinstance(v, str) and v.startswith("#")}
+    for named, num in NAMED_COLORS.items():
+        if named in out and num not in out:
+            out[num] = out[named]
+    return out
 
 
 def read_theme() -> dict:
     name = theme_name()
-    for d in (HOME / ".config/omarchy/current/theme", HOME / ".config/omarchy/themes" / name,
-              HOME / ".local/share/omarchy/themes" / name):
+    for d in (HOME / ".local/state/omarchy/current/theme", HOME / ".config/omarchy/current/theme",
+              HOME / ".config/omarchy/themes" / name, HOME / ".local/share/omarchy/themes" / name, SYSTEM_THEMES / name):
         f = d / "colors.toml"
-        if name and f.is_file():
+        if (name or d.name == "theme") and f.is_file():
             m = f.stat().st_mtime
             if _theme_cache.get("key") == (str(f), m):
                 return _theme_cache["val"]
             with open(f, "rb") as fh:
                 c = tomllib.load(fh)
-            val = {"name": name, "colors": {k: v for k, v in c.items() if isinstance(v, str) and v.startswith("#")}}
+            val = {"name": name, "colors": theme_colors(c)}
             _theme_cache.update(key=(str(f), m), val=val)
             return val
     return {"name": name, "colors": {}}
@@ -5640,6 +5655,22 @@ def nvidia() -> bool:
     return Path("/proc/driver/nvidia/version").exists()
 
 
+def gpu_offload_env(prefer: str, on_nvidia: bool) -> dict:
+    """1.5.2: laptops with two GPUs. [pulse] gpu_prefer = "discrete" draws the wallpaper on the discrete GPU (NVIDIA
+    through PRIME offload, or AMD with DRI_PRIME): much faster when the integrated one struggles, more power used.
+    "auto" (the default) leaves the choice to the system."""
+    p = str(prefer or "auto").lower()
+    if p not in ("discrete", "nvidia", "dgpu"):
+        return {}
+    if on_nvidia:
+        env = {"__NV_PRIME_RENDER_OFFLOAD": "1", "__GLX_VENDOR_LIBRARY_NAME": "nvidia", "__VK_LAYER_NV_optimus": "NVIDIA_only"}
+        egl = Path("/usr/share/glvnd/egl_vendor.d/10_nvidia.json")
+        if egl.exists():
+            env["__EGL_VENDOR_LIBRARY_FILENAMES"] = str(egl)
+        return env
+    return {"DRI_PRIME": "1"}
+
+
 def dmabuf_disabled(setting: str, on_nvidia: bool) -> bool:
     """WebKit's DMA-BUF renderer: "auto" turns it off on NVIDIA (some drivers draw nothing with it), "on" keeps it
     (much faster on recent NVIDIA drivers: no frame copy through the CPU), "off" always turns it off."""
@@ -6007,7 +6038,11 @@ def dmabuf_guard(want_on: bool, state: Path) -> bool:
     return True
 
 
-def run_wall(url: str, gpu: str = "auto", dmabuf: str = "auto") -> int:
+def run_wall(url: str, gpu: str = "auto", dmabuf: str = "auto", prefer: str = "auto") -> int:
+    off = gpu_offload_env(prefer, nvidia())
+    if off:   # before WebKit starts: its web processes inherit it
+        os.environ.update(off)
+        log("drawing on the discrete GPU (gpu_prefer = \"discrete\"): " + " ".join(f"{k}={v}" for k, v in off.items()))
     use = dmabuf_guard(not dmabuf_disabled(dmabuf, nvidia()), STATE_DIR)
     trial = STATE_DIR / "dmabuf-trial"
     if not use:   # set before WebKit starts: its web processes inherit it
@@ -6603,7 +6638,8 @@ def main(argv: list[str]) -> int:
                     time.sleep(3600)
             except KeyboardInterrupt:
                 return 0
-        return run_wall(url, str(hub.conf("pulse", "gpu", default="auto")), str(hub.conf("pulse", "dmabuf", default="auto")))
+        return run_wall(url, str(hub.conf("pulse", "gpu", default="auto")), str(hub.conf("pulse", "dmabuf", default="auto")),
+                        str(hub.conf("pulse", "gpu_prefer", default="auto")))
     if cmd == "push":
         if len(argv) < 4:
             print("usage: omarchy-pulse push NAME VALUE|- [--title T] [--type T] [--level L] [--slot S]")

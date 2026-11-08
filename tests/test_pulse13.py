@@ -289,7 +289,8 @@ class VoiceLanguageTests(unittest.TestCase):
         with mock.patch.object(hub, 'say') as say:
             hub.quake_event(6.8, 'off the coast of Japan', 9600, 40, tsunami=True)
         self.assertEqual(say.call_args[0][0], "Terremoto di magnitudo 6.8, off the coast of Japan. È stato emesso un avviso di tsunami.")
-        self.assertEqual(pulse.day_totals([{'start': time.time() - 7200, 'end': time.time() - 3600}], time.time())[0], 1)
+        noon = time.mktime(time.localtime()[:3] + (12, 0, 0, 0, 0, -1))   # not around midnight, whatever the hour
+        self.assertEqual(pulse.day_totals([{'start': noon - 7200, 'end': noon - 3600}], noon)[0], 1)
 
     def test_a_voice_of_your_language_first(self):
         with tempfile.TemporaryDirectory() as d:
