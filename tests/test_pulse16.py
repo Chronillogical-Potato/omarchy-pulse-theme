@@ -269,6 +269,28 @@ console.log(JSON.stringify(out));
         self.assertEqual((done, later, still), (1, 1, 1), "open after six hours; reduced motion: open at once")
 
     @unittest.skipUnless(shutil.which('node'), 'node')
+    def test_starlink_only_high_satellites_and_a_label_clear_of_the_sphere(self):
+        # Satellites a few degrees up were drawn low behind the city and looked parked; the label went behind the sphere.
+        src = (WEB / "pulse.js").read_text()
+        self.assertIn("var STARLINK_MIN_EL = 10;", src)
+        self.assertIn("if (!(ss[i].el >= STARLINK_MIN_EL)) continue;", src)
+        a = src.index("    function starlinkLabelAt(")
+        js = "var H = 1080;\n" + src[a:src.index("\n    }\n", a) + 6] + r'''
+var sphere = [776, 438, 367, 367];
+console.log(JSON.stringify([
+  starlinkLabelAt([[800, 600]], 120, 15, [sphere]),               // only spot is on the sphere: no label
+  starlinkLabelAt([[800, 600], [300, 300]], 120, 15, [sphere]),   // the next satellite's spot is clear
+  starlinkLabelAt([[300, 300]], 120, 15, [])
+]));
+'''
+        r = subprocess.run(['node', '-e', js], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        none, second, free = json.loads(r.stdout)
+        self.assertIsNone(none)
+        self.assertEqual([round(v, 1) for v in second], [310.8, 287.0])
+        self.assertEqual([round(v, 1) for v in free], [310.8, 287.0])
+
+    @unittest.skipUnless(shutil.which('node'), 'node')
     def test_page_scripts_parse(self):
         for f in ("pulse.js", "scene-design.js"):
             r = subprocess.run(['node', '--check', str(WEB / f)], capture_output=True, text=True)
