@@ -9,7 +9,8 @@
   var MONKEY = (Q.get("mx") || "0") + "," + (Q.get("my") || "0");
   var MX = +Q.get("mx") || 0, MY = +Q.get("my") || 0;
   var PRIMARY = Q.get("primary") !== "0";
-  var S = null;               // last state
+  var S = null, stateAt = 0;  // last state, and when it came
+  function hubNowG() { return S && S.t ? S.t + (performance.now() - stateAt) / 1000 : Date.now() / 1000; }   // 1.6: the hub's clock
   var covered = false;        // this monitor is almost entirely covered by windows
   var seenAlert = -1;         // alerts already shown
   var themeKey = "";
@@ -26,10 +27,26 @@
   function lum(c) { return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255; }
   // 1.5.1: wallpaper_colors = "picture": the panels and the effects take their colours from your own wallpaper
   // (background, text, the two accents); green, amber and red keep the theme's, so their meaning never changes
-  var pictureColors = null;
+  var pictureColors = null, musicColors = null, coverKey = "";
   function pictureTheme(t) {
-    if (!pictureColors) return t;
-    return { name: (t && t.name) || "", colors: Object.assign({}, (t && t.colors) || {}, pictureColors) };
+    if (!pictureColors && !musicColors) return t;
+    return { name: (t && t.name) || "", colors: Object.assign({}, (t && t.colors) || {}, pictureColors || {}, musicColors || {}) };
+  }
+  // 1.6: [music] colors = true: while a song plays, the accents come from its cover (Spotify, YouTube Music, any
+  // player); background and text stay, so everything stays easy to read; when the music stops, the theme comes back
+  function musicSync(c) {
+    var key = c && c.v ? c.v : "";
+    if (key === coverKey) return;
+    coverKey = key;
+    if (!key) { if (musicColors) { musicColors = null; themeKey = ""; setTimeout(render, 0); } return; }
+    var im = new Image();
+    im.onload = function () {
+      if (coverKey !== key) return;
+      var p = null; try { p = paletteOf(im); } catch (e) { p = null; }
+      musicColors = p ? { accent: p.accent, color6: p.color6, color5: p.color5, color13: p.color13 } : null;
+      themeKey = ""; render();
+    };
+    im.src = "/api/cover?token=" + encodeURIComponent(TOKEN) + "&v=" + encodeURIComponent(key);
   }
   function paletteOf(img) {
     var c = document.createElement("canvas"); c.width = 64; c.height = 36;
@@ -52,9 +69,9 @@
     var avgBin = function (k) { var bn = bins[k]; return bn.w ? [bn.r / bn.w, bn.g / bn.w, bn.b / bn.w] : null; };
     var bright = function (c2) { var m = Math.max(c2[0], c2[1], c2[2]) || 1, k2 = Math.max(1, 210 / m); return c2.map(function (v2) { return Math.min(255, v2 * k2); }); };
     var a1 = order[0][0] ? avgBin(order[0][1]) : null, a2 = null;
-    for (i = 1; i < order.length && !a2; i++) if (order[i][0] > order[0][0] * 0.08 && Math.min(Math.abs(order[i][1] - order[0][1]), 24 - Math.abs(order[i][1] - order[0][1])) >= 4) a2 = avgBin(order[i][1]);
+    for (i = 1; i < order.length && !a2; i++) if (order[i][0] > order[0][0] * 0.05 && Math.min(Math.abs(order[i][1] - order[0][1]), 24 - Math.abs(order[i][1] - order[0][1])) >= 4) a2 = avgBin(order[i][1]);
     if (!a1) return null;   // a picture without colour (black and white): keep the theme
-    a1 = bright(a1); a2 = a2 ? bright(a2) : [a1[2], a1[0], a1[1]];
+    a1 = bright(a1); a2 = a2 ? bright(a2) : mix(a1, [255, 255, 255], 0.45);   // one colour only: a lighter tint of it, never a colour the picture does not have
     var hex = function (c2) { return "#" + c2.map(function (v2) { return ("0" + Math.round(v2).toString(16)).slice(-2); }).join(""); };
     var bg = mix(dark, [0, 0, 0], 0.45), fg = mix([238, 238, 242], a1, 0.12);
     return { background: hex(bg), foreground: hex(fg), accent: hex(a1), color6: hex(a1), color5: hex(a2), color13: hex(a2) };
@@ -314,6 +331,7 @@
     if (w.click && !el._click) {   // a panel with click = "..." in pulse.toml runs that command
       el._click = true; el.classList.add("clickable");
       el.addEventListener("click", function () {
+        if (S && S.layoutEdit) return;
         fetch("/api/click/" + encodeURIComponent(w.id) + "?token=" + encodeURIComponent(TOKEN), { method: "POST" });
         el.classList.add("pressed"); setTimeout(function () { el.classList.remove("pressed"); }, 300);
       });
@@ -322,6 +340,7 @@
       el._iclick = true; el.classList.add("itemclick");
       el.addEventListener("click", function (ev) {
         var tile = ev.target.closest && ev.target.closest("[data-i]"); if (!tile) return;
+        if (S && S.layoutEdit) return;
         fetch("/api/click/" + encodeURIComponent(w.id) + "?item=" + tile.getAttribute("data-i") + "&token=" + encodeURIComponent(TOKEN), { method: "POST" });
         tile.classList.add("pressed"); setTimeout(function () { tile.classList.remove("pressed"); }, 300);
       });
@@ -364,6 +383,87 @@
       if (hid || e.getBoundingClientRect().bottom > bottom + 1) { e.style.visibility = "hidden"; hid = true; }
     });
   }
+  // ------------------------------------------------------------------ 1.6: move and hide the panels with the mouse
+  // omarchy-pulse layout edit: every panel can be dragged to another column or place, or hidden (×); Save writes
+  // ~/.config/omarchy-pulse/layout.json. The wallpaper has no keyboard, so Save and Cancel are buttons on screen.
+  var layoutDraft = null, layoutDrag = null;
+  function arrange(cols) {
+    var L = (S.layoutEdit ? layoutDraft : S.layout) || {}, all = [], out = { left: [], center: [], right: [] };
+    ["left", "center", "right"].forEach(function (c) {
+      cols[c].forEach(function (el, i) { if (el) all.push({ el: el, slot: c, order: i * 10 + (c === "center" ? 0 : 0) }); });
+    });
+    all.forEach(function (it) {
+      var o = L[it.el.dataset.id];
+      it.hidden = !!(o && o.hidden);
+      if (o && (o.slot === "left" || o.slot === "right" || o.slot === "center")) it.slot = o.slot;
+      if (o && typeof o.order === "number") it.order = o.order;
+      it.el.classList.toggle("lhidden", it.hidden && !!S.layoutEdit);
+      it.el.classList.toggle("ledit", !!S.layoutEdit);
+      if (S.layoutEdit && !it.el.querySelector(".lx")) {
+        var x = document.createElement("button"); x.className = "lx"; x.textContent = "×"; x.title = "hide / show";
+        x.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+        x.addEventListener("click", function (e) {
+          e.stopPropagation(); var id = it.el.dataset.id, o2 = layoutDraft[id] || (layoutDraft[id] = {});
+          o2.hidden = !o2.hidden; render();
+        });
+        it.el.appendChild(x);
+      }
+    });
+    all.sort(function (a, b) { return a.order - b.order; });
+    all.forEach(function (it) { if (!it.hidden || S.layoutEdit) out[it.slot].push(it.el); });
+    return out;
+  }
+  function layoutBar() {
+    var bar = $("#layoutbar");
+    if (!S.layoutEdit) { if (bar) bar.hidden = true; layoutDraft = null; document.body.classList.remove("layoutedit"); return; }
+    if (!layoutDraft) layoutDraft = JSON.parse(JSON.stringify(S.layout || {}));
+    document.body.classList.add("layoutedit");
+    if (!bar) {
+      bar = document.createElement("div"); bar.id = "layoutbar";
+      bar.innerHTML = '<span>Drag the panels where you want them · × hides one</span><button data-do="save">Save</button>' +
+        '<button data-do="cancel">Cancel</button><button data-do="reset">Reset</button>';
+      bar.addEventListener("click", function (e) {
+        var d = e.target.getAttribute && e.target.getAttribute("data-do"); if (!d) return;
+        fetch("/api/layout?do=" + d + "&token=" + encodeURIComponent(TOKEN), { method: "POST", body: d === "save" ? JSON.stringify(layoutDraft || {}) : "" })
+          .then(function () { S.layoutEdit = false; if (d === "save") S.layout = layoutDraft; if (d === "reset") S.layout = {}; layoutDraft = null; render(); }).catch(function () {});
+      });
+      document.body.appendChild(bar);
+    }
+    bar.hidden = false;
+  }
+  document.addEventListener("pointerdown", function (e) {
+    if (!S || !S.layoutEdit) return;
+    var el = e.target.closest && e.target.closest(".panel"); if (!el || !el.dataset.id) return;
+    e.preventDefault();
+    var r = el.getBoundingClientRect();
+    layoutDrag = { el: el, dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY };
+    el.classList.add("ldrag");
+    el.setPointerCapture && el.setPointerCapture(e.pointerId);
+  });
+  document.addEventListener("pointermove", function (e) {
+    if (!layoutDrag) return;
+    layoutDrag.el.style.transform = "translate(" + (e.clientX - layoutDrag.x0) + "px," + (e.clientY - layoutDrag.y0) + "px)";
+  });
+  document.addEventListener("pointerup", function (e) {
+    if (!layoutDrag) return;
+    var el = layoutDrag.el, id = el.dataset.id; layoutDrag = null;
+    el.classList.remove("ldrag"); el.style.transform = "";
+    // which column is under the pointer, and which panel it goes before
+    var slot = null, colEl = null;
+    [["left", "#left"], ["center", "#center-w"], ["right", "#right"]].forEach(function (c) {
+      var cr = (c[0] === "center" ? $("#center") : $(c[1])).getBoundingClientRect();
+      if (e.clientX >= cr.left && e.clientX <= cr.right) { slot = c[0]; colEl = $(c[1]); }
+    });
+    if (!slot) { render(); return; }
+    var sibs = Array.prototype.filter.call(colEl.children, function (x) { return x !== el && x.dataset.id; });
+    var at = sibs.length;
+    for (var i = 0; i < sibs.length; i++) { var sr = sibs[i].getBoundingClientRect(); if (e.clientY < sr.top + sr.height / 2) { at = i; break; } }
+    sibs.splice(at, 0, el);
+    sibs.forEach(function (x, k) { var o = layoutDraft[x.dataset.id] || (layoutDraft[x.dataset.id] = {}); o.slot = slot; o.order = k * 10; });
+    layoutDraft[id].slot = slot;
+    render();
+  });
+
   var lastNote = null;
   function render() {
     if (!S) return;
@@ -389,8 +489,12 @@
       var el = generic(w);
       if (slot === "left") { left.push(el); nl++; } else if (slot === "center") center.push(el); else { right.push(el); nr++; }
     });
-    place($("#left"), left); place($("#right"), right); place($("#center-w"), center);
-    fit($("#left")); fit($("#right")); fit($("#center-w"));
+    var cols = arrange({ left: left, center: center, right: right });
+    if (!layoutDrag) {
+      place($("#left"), cols.left); place($("#right"), cols.right); place($("#center-w"), cols.center);
+      fit($("#left")); fit($("#right")); fit($("#center-w"));
+    }
+    layoutBar();
     clock();
     document.body.classList.toggle("blink");
     Array.prototype.forEach.call(document.querySelectorAll(".media .eq i"), function (i) { i.style.height = (15 + Math.random() * 85).toFixed(0) + "%"; });
@@ -420,7 +524,7 @@
     $("#clock .secbar i").style.width = (d.getSeconds() / 59 * 100).toFixed(1) + "%";
     setHTML($("#clock .date"), DAYS[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear() + " · W" + week(d));
     if (S && S.focus) {
-      var left = Math.max(0, S.focus.until - Date.now() / 1000), mm = Math.floor(left / 60), ss2 = Math.floor(left % 60);
+      var left = Math.max(0, S.focus.until - hubNowG()), mm = Math.floor(left / 60), ss2 = Math.floor(left % 60);
       setHTML($("#clock .who"), "<b>FOCUS</b> · " + esc(S.focus.label || "") + " · " + mm + ":" + (ss2 < 10 ? "0" : "") + ss2 + " left");
       $("#clock .secbar i").style.width = (100 * (1 - left / Math.max(1, S.focus.until - S.focus.start))).toFixed(1) + "%";
     } else if (S && S.sys) {
@@ -578,7 +682,7 @@
     var audio = [], audioT = 0, bass = 0, mid = 0, music = false;          // cava bars, when something plays
     var agents = [], drones = {}, face = "agents", typing = false;        // AI agents: drones and the face
     var parts = [], rockets = [], fxOn = true, flashFx = 0;                            // fireworks
-    var focus = null, sunOn = true, phase = "night", phaseKey = "";       // focus mode, the sun
+    var focus = null, sunOn = true, phase = "night", phaseKey = "", focusK = 0, simpleMon = false;       // focus mode, the sun
     var shooting = [], camImg = null, newsText = "", weatherNow = null, clockStr = "", ledStyle = false;
     var gaze = { x: 0, y: 0 }, cursorXY = null, cursorAt = -1e9, eyesOn = true, deskEmpty = true;   // the eyes follow you
     var away = false, wakeAt = -1e9, lan = [], carsOn = true, privacyOn = false, newAt = {};
@@ -1279,7 +1383,7 @@
           txt2((lm < 10 ? "0" : "") + lm + ":" + (ls < 10 ? "0" : "") + ls, x, TH * 0.5, 26, fg);
           txt2(String(L.rocket || "").toUpperCase().slice(0, 12), x, TH * 0.76, 9, fg, 700); });
       } else if (prog === "focus") {
-        var left = Math.max(0, focus.until - Date.now() / 1000), tot = Math.max(1, focus.until - focus.start);
+        var left = Math.max(0, focus.until - hubNowG()), tot = Math.max(1, focus.until - focus.start);
         var mm = Math.floor(left / 60), ss = Math.floor(left % 60);
         c.fillStyle = rgba(ac, 0.85); c.fillRect(0, TH * 0.86, TW * (1 - left / tot), TH * 0.06);
         at(function (x) { txt2((mm < 10 ? "0" : "") + mm + ":" + (ss < 10 ? "0" : "") + ss, x, TH * 0.44, 32, fg);
@@ -1426,8 +1530,9 @@
     // ---------------- drones: one per agent, flying over the city, landing when done
     var dronesEl = null;
     function drawDrones(t, hz) {
+      if (simpleMon) { if (dronesEl) dronesEl.innerHTML = "", drones = {}; return; }   // 1.6: [pulse] secondary = "simple"
       if (!dronesEl) { dronesEl = document.createElement("div"); dronesEl.id = "drones"; document.body.appendChild(dronesEl); }
-      var seen = {}, sx = innerWidth / W, half = (band[1] - band[0]) / 2, mx = (band[0] + band[1]) / 2;
+      var seen = {}, sx = innerWidth / W, half = (band[1] - band[0]) / 2, mx = (band[0] + band[1]) / 2, groups = {};
       (agentsAs === "robots" ? [] : agents).forEach(function (a, idx) {   // agents_as = "robots": they walk instead
         var d = drones[a.name];
         if (!d) {
@@ -1435,16 +1540,19 @@
           d.el.className = "drone"; dronesEl.appendChild(d.el);
         }
         seen[a.name] = 1;
-        var down = a.state === "done" || a.state === "failed";
+        var down = a.state === "done" || a.state === "failed" || (focusK > 0.5 && a.state !== "waiting");   // 1.6: in a focus they rest on the ground
         d.land = Math.min(1, Math.max(0, d.land + (down ? 0.012 : -0.03)));
         var x = mx + half * 0.82 * Math.sin(t * 0.11 * d.sp + d.ph);
         var y0 = H * (0.5 + 0.035 * Math.sin(t * 0.23 * d.sp + d.ph * 1.7)) + (idx % 3) * H * 0.045;
         var y = y0 + (hz - H * 0.04 - y0) * (d.land * d.land);
-        var tilt = Math.cos(t * 0.11 * d.sp + d.ph) * 0.18, s = H * 0.042;
+        // 1.6: its health (how often its last runs ended well): a healthy agent is bigger, a sick one flickers
+        var hk = a.runs >= 3 ? a.health : 1, sick = a.runs >= 3 && a.health < 0.6;
+        var tilt = Math.cos(t * 0.11 * d.sp + d.ph) * 0.18, s = H * 0.042 * (0.78 + 0.3 * hk);
         var col = { working: COL.accent, waiting: COL.warn, done: COL.ok, failed: COL.crit, idle: COL.dim }[a.state] || COL.accent;
-        var blinkOn = a.state !== "waiting" || (t * 2.5 % 1) < 0.55;
+        var blinkOn = (a.state !== "waiting" || (t * 2.5 % 1) < 0.55) && !(sick && !reduced && ((t * 7.3 + d.ph) % 1.9) < 0.35);
+        if (a.group && (a.state === "working" || a.state === "waiting") && d.land < 0.5) (groups[a.group] = groups[a.group] || []).push([x, y, col]);
         // beam: a working drone scans the city
-        if (a.state === "working" || a.state === "waiting") {
+        if ((a.state === "working" || a.state === "waiting") && d.land < 0.5) {
           var sw = Math.sin(t * 1.6 + d.ph) * s * 1.4;
           var bmg = g.createLinearGradient(0, y, 0, hz);
           bmg.addColorStop(0, rgba(col, a.state === "waiting" && !blinkOn ? 0.08 : 0.32)); bmg.addColorStop(1, rgba(col, 0));
@@ -1479,17 +1587,36 @@
         g.restore();
         if (d.land > 0.95 && !d.boom) { d.boom = 1; burst(x, y, col, COL.fg, 40, H * 0.004); }
         if (!down) d.boom = 0;
-        var mins = Math.max(0, Math.floor((Date.now() / 1000 - (a.since || a.t)) / 60));
+        var mins = Math.max(0, Math.floor((hubNow() - (a.since || a.t)) / 60));   // 1.6: on the hub's clock
         var html = '<i style="background:' + rgba(col, 1) + '"></i>' + (a.crew ? "<u>crew</u> " : "") + esc(a.name) + (a.text && !a.crew ? ' <span>' + esc(a.text) + "</span>" : "") +
-          (a.state === "working" && mins ? ' <b>' + mins + "m</b>" : "") + (a.state === "waiting" ? " <b>!</b>" : "");
+          (a.state === "working" && mins ? ' <b>' + mins + "m</b>" : "") + (a.state === "waiting" ? " <b>!</b>" : "") +
+          (a.runs >= 3 ? ' <em class="' + (sick ? "sick" : "") + '">ok ' + Math.round(a.health * 100) + "%</em>" : "");
         if (d.el._h !== html) { d.el.innerHTML = html; d.el._h = html; }
         d.el.style.transform = "translate(" + (x * sx | 0) + "px," + ((y + s * 0.9) * sx | 0) + "px) translateX(-50%)";
         d.el.className = "drone " + a.state;
       });
       Object.keys(drones).forEach(function (n) { if (!seen[n]) { drones[n].el.remove(); delete drones[n]; } });
+      // 1.6: agents working in the same repo talk: a line of light between them, a packet running along it
+      Object.keys(groups).forEach(function (k) {
+        var m = groups[k]; if (m.length < 2) return;
+        for (var j = 1; j < m.length; j++) {
+          var a0 = m[j - 1], a1 = m[j], cxm = (a0[0] + a1[0]) / 2, cym = Math.min(a0[1], a1[1]) - H * 0.04;
+          g.globalCompositeOperation = "lighter";
+          g.strokeStyle = rgba(mix(a0[2], a1[2], 0.5), 0.35); g.lineWidth = Math.max(1, H / 700); g.setLineDash([H * 0.008, H * 0.006]);
+          g.beginPath(); g.moveTo(a0[0], a0[1]); g.quadraticCurveTo(cxm, cym, a1[0], a1[1]); g.stroke(); g.setLineDash([]);
+          if (!reduced) for (var q = 0; q < 2; q++) {
+            var u = (t * 0.45 + q * 0.5 + j * 0.3) % 1, back = q % 2, uu = back ? 1 - u : u;
+            var px = (1 - uu) * (1 - uu) * a0[0] + 2 * (1 - uu) * uu * cxm + uu * uu * a1[0], py = (1 - uu) * (1 - uu) * a0[1] + 2 * (1 - uu) * uu * cym + uu * uu * a1[1];
+            var pg = g.createRadialGradient(px, py, 0, px, py, H * 0.009); pg.addColorStop(0, rgba(COL.fg, 0.95)); pg.addColorStop(1, rgba(COL.fg, 0));
+            g.fillStyle = pg; g.fillRect(px - H * 0.009, py - H * 0.009, H * 0.018, H * 0.018);
+          }
+          g.globalCompositeOperation = "source-over";
+        }
+      });
     }
     // ---------------- your network: every device is a car on the grid (light trails), a new one blinks
     function drawCars(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!carsOn || !lan.length || kind === "calm") return;
       var cx = W / 2, n = Math.min(lan.length, 14);
       g.globalCompositeOperation = "lighter";
@@ -1644,6 +1771,7 @@
     }
     // ---------------- the city that grows with you: one building for every focus you finished, lit while the streak lives
     function drawGrowth(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!growth || !growth.recent || !growth.recent.length || kind === "orbit") return;
       var bs = growth.recent, n = bs.length, lit = growth.lit, y = hz + H * 0.035;
       var unit = Math.min(W * 0.011, (band[1] - band[0]) * 0.22 / 24);
@@ -1704,6 +1832,7 @@
       return x;
     }
     function drawPlanes(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!planes.length) return;
       var seen = {}, boxes = [], shown = 0;
       for (var i = 0; i < planes.length; i++) {
@@ -1767,8 +1896,9 @@
     }
     // ---------------- your calendar: an elevated line across the city; each event is a train coming into the station
     function drawTrains(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!trains.length || kind === "calm") return;
-      var y = hz - H * 0.006, st = band[0] + (band[1] - band[0]) * 0.16, now = Date.now() / 1000, span = 3 * 3600;
+      var y = hz - H * 0.006, st = band[0] + (band[1] - band[0]) * 0.16, now = hubNow(), span = 3 * 3600;
       g.strokeStyle = rgba(COL.accent, 0.5); g.lineWidth = Math.max(1, H / 600);
       g.beginPath(); g.moveTo(band[0], y); g.lineTo(band[1], y); g.stroke();
       g.fillStyle = rgba(COL.accent, 0.8); g.fillRect(st - H * 0.03, y - H * 0.028, H * 0.06, H * 0.004);   // the station roof
@@ -1797,6 +1927,7 @@
     // ---------------- your containers: humanoid robots walking on the floor (eyes: green ok, amber restarting, red unhealthy)
     var robots = [], robotPos = {}, agentsAs = "drones";
     function drawRobots(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!robots.length || kind === "calm" || kind === "orbit") return;
       var u = H / 1080, seen = {};
       for (var i = 0; i < Math.min(12, robots.length); i++) {
@@ -1847,6 +1978,7 @@
     // a thank-you to Omarchy: a plane tows its icon and your words across the whole sky, left to right, in 16 seconds
     function banner(text) { if (text) banners.push({ t: performance.now(), text: String(text).toUpperCase(), dir: 1, y: 0.07 }); }   // high in the sky, above the clock and the panels' text
     function drawBanners(now, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (bannerText && bannerEvery > 0 && !away && PRIMARY) {
         if (!bannerNext) bannerNext = now + (1 + Math.random() * 2) * 60000;   // the first one a minute or two after start
         // when it is time, it waits until you can see the sky (no window over the desktop), so you do not miss it
@@ -1878,7 +2010,187 @@
       }
       banners = keep;
     }
+    // ---------------- 1.6: the Hyprland workspaces tower, the ivy of your uptime, the parcels of your updates, a balloon of tips
+    var tower = [], towerAt = [], uptimeS = 0, ivyOn = true, parcels = null, tipsList = [], tipsEvery = 40, tipNext = 0, balloons = [], meetingOn = false;
+    var wledOn = false, glowAt = 0;
+    function hashCol(s) {   // an app always gets the same colour: one of the theme's
+      var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+      return [COL.accent, COL.accent2, COL.ok, COL.warn, mix(COL.accent, COL.fg, 0.4)][Math.abs(h) % 5];
+    }
+    var APP_ICONS = [[/chrom|brave|vivaldi/, "\uf268"], [/firefox|zen|librewolf/, "\uf269"], [/ghostty|alacritty|kitty|foot|wezterm|terminal|konsole/, "\uf120"],
+                     [/code|cursor|zed|nvim|neovide|jetbrains|idea/, "\uf121"], [/spotify|music|rhythmbox/, "\uf1bc"], [/discord|vesktop/, "\uf392"],
+                     [/signal|telegram|whatsapp|slack|teams|chat/, "\uf086"], [/nautilus|thunar|files|dolphin|yazi/, "\uf07b"], [/steam|lutris|game/, "\uf1b6"],
+                     [/obsidian|typora|notes|logseq/, "\uf249"], [/mpv|vlc|celluloid|video/, "\uf03d"], [/gimp|krita|inkscape|pinta/, "\uf1fc"],
+                     [/mail|thunderbird|hey/, "\uf0e0"], [/1password|bitwarden|keepass/, "\uf084"], [/libreoffice|office|docs/, "\uf15c"]];
+    function appIcon(cls) { cls = String(cls || "").toLowerCase(); if (!cls) return ""; for (var i = 0; i < APP_ICONS.length; i++) if (APP_ICONS[i][0].test(cls)) return APP_ICONS[i][1]; return "\uf2d0"; }   // a window
+    function drawTower(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
+      if (worldOff() || kind === "calm" || kind === "orbit" || kind === "noir") return;
+      var floors = tower.length ? tower : [{ id: 1, active: true, apps: [] }];
+      var u = H / 1080, fh = Math.min(H * 0.036, H * 0.22 / floors.length), w = H * 0.085, x = band[0] + (band[1] - band[0]) * 0.035, y0 = hz - 1;
+      var top = y0 - fh * floors.length;
+      towerAt = [x, top, w, y0 - top];
+      g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.08), 1); g.fillRect(x, top, w, y0 - top);
+      g.strokeStyle = rgba(COL.accent, 0.55); g.lineWidth = Math.max(1, u); g.strokeRect(x + 0.5, top + 0.5, w - 1, y0 - top - 1);
+      g.fillStyle = rgba(COL.accent, 0.8); g.fillRect(x + w * 0.45, top - H * 0.02, Math.max(1, u * 1.5), H * 0.02);   // the antenna
+      if ((t % 1.7) < 0.22) { g.fillStyle = rgba(COL.crit, 0.95); g.fillRect(x + w * 0.45 - u, top - H * 0.022, 3 * u, 3 * u); }
+      g.font = "600 " + Math.round(fh * 0.42) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "left"; g.textBaseline = "middle";
+      var act = 0;
+      for (var i = 0; i < floors.length; i++) {
+        var f = floors[i], fy = y0 - fh * (i + 1);
+        if (f.active) { act = fy; g.fillStyle = rgba(COL.accent, 0.16); g.fillRect(x + 1, fy + 1, w - 2, fh - 2); }
+        g.fillStyle = rgba(f.active ? COL.accent : COL.fg, f.active ? 1 : 0.45); g.fillText(String(f.id), x + w * 0.06, fy + fh / 2);
+        for (var k = 0; k < Math.min(4, f.apps.length); k++) {   // a lit room for every app on that workspace, with its icon
+          var c = f.apps[k] ? hashCol(f.apps[k]) : COL.accent, rw = w * 0.15, wx = x + w * (0.24 + k * 0.17);
+          g.fillStyle = rgba(c, f.active ? 0.9 : 0.55); g.fillRect(wx, fy + fh * 0.16, rw, fh * 0.68);
+          var ic = appIcon(f.apps[k]);
+          if (ic && fh > H * 0.018) { g.save(); g.font = Math.round(Math.min(rw, fh * 0.6) * 0.95) + "px 'CaskaydiaMono Nerd Font', 'Symbols Nerd Font', monospace"; g.textAlign = "center";
+            g.fillStyle = rgba(COL.bg, 0.95); g.fillText(ic, wx + rw / 2, fy + fh / 2 + 1); g.restore(); }
+        }
+        g.fillStyle = rgba(COL.fg, 0.12); g.fillRect(x, fy, w, Math.max(1, u));
+      }
+      // the lift goes to the workspace you are on
+      if (act) { towerLift += (act - towerLift) * (reduced ? 1 : 0.12); if (!towerLift || Math.abs(towerLift - act) > H) towerLift = act; }
+      g.fillStyle = rgba(COL.fg, 0.85); g.fillRect(x + w - w * 0.1, towerLift + fh * 0.18, w * 0.07, fh * 0.64);
+      g.textBaseline = "alphabetic";
+      if (ivyOn) drawIvy(t, x, top, w, y0);
+    }
+    var towerLift = 0, friends = [], friendsAt = 0, newsSeen = "", hubT = 0, hubAt = 0;
+    function hubNow() { return hubT ? hubT + (performance.now() - hubAt) / 1000 : Date.now() / 1000; }
+    // 1.6: the friends' neighbourhood: on the far horizon, a building for each friend of your crew who shares it, as tall
+    // as their commits of the week; a floor flashes when they commit, the light on top is their CI
+    function drawFriends(t, hz) {
+      if (simpleMon || !friends.length || worldOff() || kind === "calm" || kind === "orbit" || kind === "noir") return;
+      var u = H / 1080, x0 = band[1] - (band[1] - band[0]) * 0.035;
+      g.font = "600 " + Math.round(H * 0.0095) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "center";
+      friends.forEach(function (f, i) {
+        var w = H * 0.026, x = x0 - i * w * 1.6 - w, hh = H * (0.04 + 0.09 * Math.min(1, Math.log(1 + f.week) / Math.log(80))), top = hz - hh;
+        var fl = f.flashAge == null ? 0 : Math.max(0, 1 - (f.flashAge + (performance.now() - friendsAt) / 1000) / 4), floors = Math.max(2, Math.round(hh / (H * 0.008)));
+        g.fillStyle = rgba(mix(COL.bg, COL.accent2, 0.16), 0.85); g.fillRect(x, top, w, hh);
+        g.strokeStyle = rgba(COL.accent2, 0.45); g.lineWidth = Math.max(1, u); g.strokeRect(x + 0.5, top + 0.5, w - 1, hh - 1);
+        for (var k = 0; k < floors; k++) {   // its lit floors: more commits, more light
+          var lit = ((k * 7 + i * 13) % 10) / 10 < Math.min(1, f.week / 40);
+          if (!lit && !(fl > 0 && k === floors - 1)) continue;
+          var fy = hz - (k + 1) * hh / floors + hh / floors * 0.3, hot = fl > 0 && k === floors - 1;
+          g.fillStyle = rgba(hot ? COL.fg : COL.accent2, hot ? 0.6 + 0.4 * fl : 0.55); g.fillRect(x + w * 0.15, fy, w * 0.7, Math.max(1, hh / floors * 0.4));
+        }
+        if (fl > 0 && !reduced) { var gl = g.createRadialGradient(x + w / 2, top, 0, x + w / 2, top, H * 0.05); gl.addColorStop(0, rgba(COL.accent2, 0.5 * fl)); gl.addColorStop(1, rgba(COL.accent2, 0)); g.fillStyle = gl; g.fillRect(x - H * 0.05, top - H * 0.05, w + H * 0.1, H * 0.1); }
+        if (f.ci) { g.fillStyle = rgba(f.ci === "fail" ? COL.crit : COL.ok, reduced || (t * 0.8 + i) % 1.6 < 1.2 ? 1 : 0.3); g.fillRect(x + w / 2 - 1.5 * u, top - 4 * u, 3 * u, 3 * u); }
+        if (f.name && !shareMode) { g.fillStyle = rgba(COL.accent2, 0.75); g.fillText(f.name, x + w / 2, top - 8 * u); }
+      });
+      g.textAlign = "left";
+    }
+    function ivyOn2(t, x, y0, hgt, seed) {   // 1.6: ivy on a building of the city: higher the longer the PC stays on
+      if (hgt < H * 0.004) return;
+      var u = H / 1080, n = Math.round(hgt / (H * 0.006)), sway = reduced ? 0 : Math.sin(t * 0.8 + seed) * u * 0.6;
+      for (var k = 0; k < n; k++) {
+        var q = k / Math.max(1, n), yy = y0 - hgt * q, xx = x + Math.sin(q * 11 + seed) * 3 * u + sway * q;
+        g.fillStyle = rgba(mix(COL.ok, COL.fg, (k % 4) * 0.07), 0.8);
+        g.beginPath(); g.ellipse(xx, yy, 2.2 * u, 1.3 * u, k % 2 ? 0.6 : -0.6, 0, Math.PI * 2); g.fill();
+      }
+    }
+    function drawIvy(t, x, top, w, y0) {
+      // the ivy of your uptime: it climbs a little every hour the PC stays on (all the way up after a week), and
+      // starts again from the ground after a reboot
+      var days = uptimeS / 86400, k = Math.min(1, days / 7), hgt = (y0 - top) * k;
+      if (hgt < H * 0.004) return;
+      var u = H / 1080, leaves = Math.round(6 + 60 * k), sway = reduced ? 0 : Math.sin(t * 0.8) * u;
+      g.strokeStyle = rgba(mix(COL.ok, COL.bg, 0.35), 0.9); g.lineWidth = Math.max(1, 1.4 * u); g.beginPath();
+      for (var s = 0; s <= 1.0001; s += 0.05) { var yy = y0 - hgt * s, xx = x + Math.sin(s * 9) * w * 0.12 + w * 0.06; if (s) g.lineTo(xx + sway * s, yy); else g.moveTo(xx, yy); }
+      g.stroke();
+      for (var i = 0; i < leaves; i++) {
+        var q = ((i * 0.618) % 1), yy2 = y0 - hgt * q, xx2 = x + Math.sin(q * 9) * w * 0.12 + w * 0.06 + (i % 2 ? 1 : -1) * 3 * u + sway * q;
+        g.fillStyle = rgba(mix(COL.ok, COL.fg, (i % 5) * 0.06), 0.85);
+        g.beginPath(); g.ellipse(xx2, yy2, 2.6 * u, 1.5 * u, (i % 2 ? 0.6 : -0.6), 0, Math.PI * 2); g.fill();
+      }
+      if (days >= 7) {   // a week without a reboot: it flowers
+        for (i = 0; i < 6; i++) { g.fillStyle = rgba(COL.accent2, 0.9); g.beginPath(); g.arc(x + w * (0.08 + (i % 3) * 0.3), top + (y0 - top) * (0.1 + i * 0.13), 1.8 * u, 0, Math.PI * 2); g.fill(); }
+      }
+    }
+    function drawParcels(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
+      if (!parcels || worldOff() || kind === "calm" || kind === "orbit" || kind === "noir") return;
+      var n = (parcels.n || 0) + (parcels.aur || 0), news = parcels.news || [];
+      if (!n && !news.length) return;
+      var u = H / 1080, s = H * 0.016 * (1 + Math.min(1, n / 60) * 0.6), x0 = band[1] - (band[1] - band[0]) * 0.13, y0 = hz + H * 0.03, shown = Math.min(14, n);   // more updates, bigger parcels
+      for (var i = 0; i < shown; i++) {   // a pile of parcels: one for each update (up to 14), the kernel in red, the AUR ones in the second accent
+        var row = i < 5 ? 0 : i < 9 ? 1 : i < 12 ? 2 : 3, inRow = [5, 4, 3, 2][row], idx = i - [0, 5, 9, 12][row];
+        var bx = x0 - (inRow * s * 1.08) / 2 + idx * s * 1.08, by = y0 - (row + 1) * s * 0.92;
+        var c = i === 0 && parcels.kernel ? COL.crit : i >= shown - Math.min(parcels.aur || 0, shown) ? COL.accent2 : mix(COL.warn, COL.bg, 0.25);
+        g.fillStyle = rgba(mix(COL.bg, c, 0.55), 1); g.fillRect(bx, by, s, s * 0.88);
+        g.strokeStyle = rgba(c, 0.95); g.lineWidth = Math.max(1, u); g.strokeRect(bx + 0.5, by + 0.5, s - 1, s * 0.88 - 1);
+        g.fillStyle = rgba(c, 0.9); g.fillRect(bx + s * 0.45, by, s * 0.1, s * 0.88);   // the tape
+      }
+      g.font = "600 " + Math.round(H * 0.012) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.textAlign = "center";
+      if (n) { g.fillStyle = rgba(parcels.kernel ? COL.crit : COL.fg, 0.9); g.fillText(n + (n === 1 ? " update" : " updates") + (parcels.kernel ? " · new kernel" : ""), x0, y0 + H * 0.018); }
+      if (news.length) {   // Arch news that asks for manual intervention: a road sign with a blinking light
+        var sx = x0 + s * 4.2, sy = y0 - s * 3.6, on = reduced || (t % 1.2) < 0.7;
+        g.fillStyle = rgba(COL.fg, 0.5); g.fillRect(sx - u, sy, 2 * u, y0 - sy);
+        g.beginPath(); g.moveTo(sx, sy - s * 1.3); g.lineTo(sx + s * 0.9, sy + s * 0.2); g.lineTo(sx - s * 0.9, sy + s * 0.2); g.closePath();
+        g.fillStyle = rgba(COL.warn, on ? 0.95 : 0.45); g.fill();
+        g.fillStyle = rgba(COL.bg, 1); g.font = "800 " + Math.round(s * 0.9) + "px sans-serif"; g.fillText("!", sx, sy - s * 0.05);
+        if (!shareMode) { g.font = "600 " + Math.round(H * 0.011) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace"; g.fillStyle = rgba(COL.warn, 0.95);
+          g.fillText("news: read before you update", sx, y0 + H * 0.036); }
+      }
+    }
+    function drawBalloons(now, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
+      // an Omarchy tip on a hot-air balloon: now and then, only when you can see the sky, never in a meeting, a
+      // focus session or while you share the screen
+      if (tipsList.length && tipsEvery > 0 && PRIMARY && !away && !worldOff()) {
+        if (!tipNext) tipNext = now + (2 + Math.random() * 3) * 60000;
+        if (now > tipNext && deskEmpty && !covered && !balloons.length && !meetingOn && !focus && !privacyOn) {
+          balloons.push({ t: now, text: tipsList[Math.floor(Math.random() * tipsList.length)], dir: windX < -0.05 ? -1 : 1 });
+          tipNext = now + tipsEvery * 60000 * (0.7 + Math.random() * 0.6);
+        }
+      }
+      var keep = [];
+      for (var i = 0; i < balloons.length; i++) {
+        var b = balloons[i], dur = window.PULSE_BALLOON_MS || (reduced ? 20000 : 42000), u = (now - b.t) / dur; if (u > 1) continue; keep.push(b);
+        var s = H / 1080, r = H * 0.04;
+        var x = reduced ? W * 0.5 : (b.dir > 0 ? -W * 0.1 + u * W * 1.2 : W * 1.1 - u * W * 1.2);
+        var y = hz * 0.7 + (reduced ? 0 : Math.sin(u * 7) * H * 0.012 - Math.sin(u * Math.PI) * H * 0.04);
+        var fade = Math.min(1, Math.min(u, 1 - u) * 12);
+        g.save(); g.globalAlpha = fade;
+        // the envelope: stripes of the theme's two accents
+        for (var k = 0; k < 6; k++) {
+          g.beginPath(); g.ellipse(x, y, r * (1 - k / 6), r * 1.15, 0, 0, Math.PI * 2);
+          g.fillStyle = rgba(k % 2 ? COL.accent2 : COL.accent, 0.95); g.fill();
+        }
+        g.beginPath(); g.moveTo(x - r * 0.62, y + r * 0.8); g.quadraticCurveTo(x, y + r * 1.55, x + r * 0.62, y + r * 0.8); g.closePath();
+        g.fillStyle = rgba(COL.accent, 0.95); g.fill();
+        var gl = g.createRadialGradient(x - r * 0.35, y - r * 0.45, 0, x, y, r * 1.2);   // a soft light on the envelope
+        gl.addColorStop(0, "rgba(255,255,255,0.22)"); gl.addColorStop(1, "rgba(255,255,255,0)");
+        g.fillStyle = gl; g.beginPath(); g.ellipse(x, y, r, r * 1.15, 0, 0, Math.PI * 2); g.fill();
+        // the ropes and the basket, and the burner now and then
+        var by = y + r * 1.75, bw = r * 0.42;
+        g.strokeStyle = rgba(COL.fg, 0.7); g.lineWidth = Math.max(1, s);
+        g.beginPath(); g.moveTo(x - r * 0.3, y + r * 1.1); g.lineTo(x - bw / 2, by); g.moveTo(x + r * 0.3, y + r * 1.1); g.lineTo(x + bw / 2, by); g.stroke();
+        g.fillStyle = rgba(mix(COL.warn, COL.bg, 0.45), 1); g.fillRect(x - bw / 2, by, bw, r * 0.32);
+        if (!reduced && (now / 1000 % 4) < 0.5) { g.fillStyle = rgba(COL.warn, 0.9); g.beginPath(); g.ellipse(x, y + r * 1.3, r * 0.06, r * 0.16, 0, 0, Math.PI * 2); g.fill(); }
+        // the sign hanging under the basket: the tip
+        g.font = "700 " + Math.round(H * 0.019) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace";
+        var tw = g.measureText(b.text).width + H * 0.03, sy = by + r * 0.32 + H * 0.022, sh = H * 0.034, sw = reduced ? 0 : Math.sin(now / 700) * H * 0.004;
+        g.beginPath(); g.moveTo(x - bw * 0.3, by + r * 0.32); g.lineTo(x - tw * 0.35 + sw, sy); g.moveTo(x + bw * 0.3, by + r * 0.32); g.lineTo(x + tw * 0.35 + sw, sy); g.stroke();
+        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.92), 0.96); g.fillRect(x - tw / 2 + sw, sy, tw, sh);
+        g.strokeStyle = rgba(COL.accent, 0.9); g.strokeRect(x - tw / 2 + sw + 0.5, sy + 0.5, tw - 1, sh - 1);
+        g.fillStyle = rgba(COL.bg, 1); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(b.text, x + sw, sy + sh / 2 + 1);
+        g.font = "700 " + Math.round(H * 0.013) + "px 'CaskaydiaMono Nerd Font', 'Cascadia Mono', monospace";
+        g.fillStyle = rgba(COL.bg, 0.85); var lw2 = g.measureText("OMARCHY TIP").width + H * 0.012;
+        g.fillRect(x + sw - lw2 / 2, sy - H * 0.021, lw2, H * 0.018);
+        g.fillStyle = rgba(b.warn ? COL.warn : COL.accent, 1); g.fillText(b.warn ? "OMARCHY NEWS" : "OMARCHY TIP", x + sw, sy - H * 0.011);
+        g.textBaseline = "alphabetic"; g.restore();
+      }
+      balloons = keep;
+    }
+    function glowSync(now) {   // WLED: the room in the colour of the sphere (the hub sends it to your LED strips)
+      if (!wledOn || !PRIMARY || now - glowAt < 2000) return;
+      glowAt = now;
+      var c = kind === "sphere" && (avgCol[0] + avgCol[1] + avgCol[2]) > 30 ? avgCol : COL.accent;
+      try { fetch("/api/glow?token=" + encodeURIComponent(TOKEN), { method: "POST", body: JSON.stringify({ rgb: [c[0] | 0, c[1] | 0, c[2] | 0] }) }).catch(function () {}); } catch (e) {}
+    }
     function drawCar(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!car || car.driving || kind === "orbit" || kind === "calm") return;
       var u = H / 1080 * 1.4, x = band[0] + (band[1] - band[0]) * 0.3, y = hz + H * 0.08, L = 150 * u, Hc = 26 * u;
       var b = Math.max(0, Math.min(100, car.battery || 0)), ch = car.state === "Charging", full = car.state === "Complete";
@@ -2047,6 +2359,7 @@
     var pnet = null, netBolts = [], term = [], noc = null, netPos = {}, wifiPos = {}, truckX = {};
     function azX(az) { return W / 2 + Math.max(-1.08, Math.min(1.08, ((az - 180 + 540) % 360 - 180) / 90)) * W * 0.44; }
     function drawNet(now, t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!pnet || worldOff()) return;
       var floor = H - hz, nowS = Date.now() / 1000;
       netPos = {};
@@ -2146,18 +2459,46 @@
           g.fillStyle = rgba(COL.fg, 0.75); g.fillRect(p[0] - 1, p[1] - H * 0.012, 2, H * 0.01); g.beginPath(); g.arc(p[0], p[1] - H * 0.015, H * 0.003, 0, Math.PI * 2); g.fill();
         });
       }
-      // backups: a truck for each job on the night road; arrived = ok, stopped halfway with hazard lights = failed
-      var bks = pnet.backups || [], by = hz + floor * 0.86;
-      bks.forEach(function (b, i) {
-        var lane = by + i * H * 0.012, w2 = H * 0.03, x;
-        if (b.state === "running") { truckX[b.name] = ((truckX[b.name] || W * 0.25) + (reduced ? 0 : W * 0.0008)); if (truckX[b.name] > W * 0.75) truckX[b.name] = W * 0.25; x = truckX[b.name]; }
-        else x = b.state === "ok" ? W * 0.75 : b.state === "unknown" ? W * 0.25 : W * 0.5;
-        var col = b.state === "failed" || b.state === "late" ? COL.crit : b.state === "ok" ? COL.ok : COL.accent;
-        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.35), 0.95); g.fillRect(x - w2 / 2, lane - H * 0.012, w2 * 0.7, H * 0.012);
-        g.fillStyle = rgba(col, 0.95); g.fillRect(x + w2 * 0.22, lane - H * 0.009, w2 * 0.28, H * 0.009);
-        if (b.state === "failed" || b.state === "late") { var on = reduced || t * 2 % 1 < 0.5; g.fillStyle = rgba(COL.warn, on ? 1 : 0.15); g.fillRect(x - w2 / 2 - 2, lane - H * 0.004, 3, 3); g.fillRect(x + w2 / 2 - 1, lane - H * 0.004, 3, 3); }
-        if (b.name && !shareMode) { g.font = Math.round(H * 0.009) + "px monospace"; g.fillStyle = rgba(col, 0.8); g.fillText(b.name + " · " + b.state, x + w2 * 0.6, lane - H * 0.002); }
-      });
+      // backups (1.6: bigger, with a depot and a vault): each job is a truck. Running: it drives from the city to the
+      // vault. Done: it drives back home and parks with a green light. Failed or late: it stops halfway, hazard
+      // lights and smoke, until the next good run.
+      var bks = (pnet.backups || []).slice(0, 4), by = hz + floor * 0.6;
+      if (bks.length) {
+        var x0 = band[0] + (band[1] - band[0]) * 0.12, x1 = band[1] - (band[1] - band[0]) * 0.12, u2 = H / 1080;
+        g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.12), 0.9); g.fillRect(x0 - H * 0.05, by + H * 0.004, x1 - x0 + H * 0.1, H * 0.01 + bks.length * H * 0.022);   // the road
+        [[x0, "BACKUP"], [x1, "VAULT"]].forEach(function (d, k) {   // the depot and the vault
+          var dw = H * 0.05, dh = H * 0.035, dx = d[0] + (k ? H * 0.012 : -H * 0.062);
+          g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.2), 1); g.fillRect(dx, by - dh, dw, dh);
+          g.strokeStyle = rgba(k ? COL.accent2 : COL.accent, 0.8); g.lineWidth = Math.max(1, u2); g.strokeRect(dx + 0.5, by - dh + 0.5, dw - 1, dh - 1);
+          if (!shareMode) { g.font = "600 " + Math.round(H * 0.009) + "px monospace"; g.textAlign = "center"; g.fillStyle = rgba(k ? COL.accent2 : COL.accent, 0.9); g.fillText(d[1], dx + dw / 2, by - dh - H * 0.004); }
+        });
+        bks.forEach(function (b, i) {
+          var lane = by + H * 0.016 + i * H * 0.022, L2 = H * 0.05, x, dir = 1, ago = b.t ? nowS - b.t : 1e9;
+          if (b.state === "running") { var tk = truckX[b.name] = (truckX[b.name] == null ? 0 : truckX[b.name]) + (reduced ? 0 : 0.0012); if (tk > 1) truckX[b.name] = 0; x = x0 + (x1 - x0) * (reduced ? 0.5 : truckX[b.name]); }
+          else if (b.state === "ok") { var back = Math.min(1, ago / 900); x = x1 + (x0 - x1) * (reduced ? 1 : back); dir = back < 1 ? -1 : 1; truckX[b.name] = null; }
+          else if (b.state === "failed" || b.state === "late") x = x0 + (x1 - x0) * 0.5;
+          else x = x0;
+          var col = b.state === "failed" || b.state === "late" ? COL.crit : b.state === "ok" ? COL.ok : COL.accent;
+          g.save(); g.translate(x, lane); g.scale(dir, 1);
+          g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.55), 1); g.fillRect(-L2 * 0.5, -L2 * 0.42, L2 * 0.68, L2 * 0.36);   // the box
+          g.fillStyle = rgba(col, 0.95); g.fillRect(-L2 * 0.46, -L2 * 0.3, L2 * 0.6, L2 * 0.08);                      // its stripe: the state
+          g.fillStyle = rgba(mix(COL.bg, COL.fg, 0.4), 1); g.fillRect(L2 * 0.2, -L2 * 0.3, L2 * 0.26, L2 * 0.24);     // the cab
+          g.fillStyle = rgba(COL.accent, 0.5); g.fillRect(L2 * 0.32, -L2 * 0.27, L2 * 0.11, L2 * 0.1);                 // its window
+          g.fillStyle = rgba(COL.bg, 1); [-0.35, 0.05, 0.34].forEach(function (k) { g.beginPath(); g.arc(L2 * k, -L2 * 0.05, L2 * 0.07, 0, Math.PI * 2); g.fill(); });
+          if (b.state === "running" || dir < 0) { g.fillStyle = rgba(COL.warn, 0.9); g.fillRect(L2 * 0.45, -L2 * 0.12, L2 * 0.03, L2 * 0.04); }   // headlights
+          if (b.state === "failed" || b.state === "late") {
+            var on = reduced || t * 2 % 1 < 0.5;
+            g.fillStyle = rgba(COL.warn, on ? 1 : 0.15); g.fillRect(-L2 * 0.52, -L2 * 0.16, L2 * 0.04, L2 * 0.04); g.fillRect(L2 * 0.44, -L2 * 0.16, L2 * 0.04, L2 * 0.04);
+          }
+          g.restore();
+          if ((b.state === "failed" || b.state === "late") && !reduced) for (var sm = 0; sm < 5; sm++) {   // smoke from the engine
+            var q = (t * 0.25 + sm / 5) % 1, px = x + L2 * 0.3 + Math.sin(q * 6 + sm) * L2 * 0.12 + q * L2 * 0.3 * (windX || 0.3), py = lane - L2 * 0.35 - q * H * 0.05;
+            g.fillStyle = rgba(mix(COL.fg, COL.bg, 0.4), 0.28 * (1 - q)); g.beginPath(); g.arc(px, py, L2 * (0.08 + q * 0.18), 0, Math.PI * 2); g.fill();
+          }
+          if (!shareMode && b.name) { g.font = Math.round(H * 0.01) + "px monospace"; g.textAlign = "left"; g.fillStyle = rgba(col, 0.85); g.fillText(b.name + " · " + b.state, x + L2 * 0.55, lane - L2 * 0.12); }
+        });
+        g.textAlign = "left";
+      }
       // intruders: robots with red eyes walking to the server they hit, bigger when more serious
       (pnet.intruders || []).forEach(function (a, i) {
         var tgt = netPos[a.target] || [W * 0.5, 0, 0, hz + floor * 0.2], age = Math.max(0, nowS - a.t), u = Math.min(1, age / 40);
@@ -2292,7 +2633,7 @@
       g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
       for (k = 0; k < 24; k++) { var a = sw - k * 0.03; g.strokeStyle = rgba(green, 0.5 * (1 - k / 24)); g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); g.stroke(); }
       var dev = [];
-      lan.forEach(function (d) { dev.push({ n: d.name || "", r: 0.5 + 0.4 * ((d.name || d.ip || "").length % 7) / 7 }); });
+      lan.forEach(function (d) { dev.push({ n: d.name || "", r: 0.5 + 0.4 * ((d.name || d.ip || "").length % 7) / 7, isNew: !!d["new"], key: String(d.id || d.ip || "") }); });
       if (pnet) { (pnet.switches || []).forEach(function (s) { dev.push({ n: s.name, r: 0.3, sw: 1, bad: !s.up }); }); ((pnet.wifi || {}).aps || []).forEach(function (a) { dev.push({ n: a, r: 0.45 }); }); ((pnet.dc || {}).hosts || []).forEach(function (h) { dev.push({ n: h.name, r: 0.38, bad: !h.up }); }); }
       g.font = Math.round(H * 0.01) + "px monospace";
       dev.forEach(function (d, i) {
@@ -2301,6 +2642,13 @@
         var since = ((sw - ang) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2), lum = reduced ? 0.8 : Math.max(0.15, 1 - since / 4);
         var col = d.bad ? COL.crit : green;
         g.fillStyle = rgba(col, lum); g.beginPath(); g.arc(x, y, d.sw ? 4 : 2.5, 0, Math.PI * 2); g.fill();
+        if (d.isNew) {   // 1.6: a new device: a blip that keeps pinging, and NEW next to it
+          var pq = reduced ? 0.5 : (t * 0.8 + i * 0.13) % 1;
+          g.strokeStyle = rgba(COL.warn, 0.9 * (1 - pq)); g.lineWidth = Math.max(1, H / 700);
+          g.beginPath(); g.arc(x, y, 4 + pq * R * 0.12, 0, Math.PI * 2); g.stroke();
+          g.fillStyle = rgba(COL.warn, 1); g.beginPath(); g.arc(x, y, 3.5, 0, Math.PI * 2); g.fill();
+          if (!shareMode) { g.fillStyle = rgba(COL.warn, 0.95); g.fillText("NEW" + (d.n ? " " + d.n.slice(0, 12) : ""), x + 7, y - 6); }
+        }
         if (d.n && !shareMode && lum > 0.5) { g.fillStyle = rgba(col, lum * 0.8); g.fillText(d.n.slice(0, 16), x + 6, y + 3); }
       });
       g.globalAlpha = 1;
@@ -2340,6 +2688,7 @@
     }
     // 1.5: what expires: a candle for each certificate, domain or date, shorter as the day comes, red at the end
     function drawCandles(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!expiry.length || worldOff()) return;
       var n = Math.min(6, expiry.length), base = hz + (H - hz) * 0.66, step = W * 0.04, x0 = W * 0.64;
       g.font = Math.round(H * 0.0105) + "px monospace"; g.textAlign = "center";
@@ -2365,6 +2714,7 @@
     // 1.5: the energy of your home as a river across the floor: golden from the sun, blue from the grid, wider with more load
     var riverT = 0;
     function drawRiver(t, hz) {
+      if (simpleMon) { return; }   // 1.6: [pulse] secondary = "simple"
       if (!energy || worldOff() || energy.load == null) return;
       var load = Math.max(0, energy.load), solar = Math.max(0, energy.solar || 0), grid = energy.grid || 0;
       var f = load > 0 ? Math.min(1, solar / load) : solar > 0 ? 1 : 0, col = mix([80, 160, 255], [255, 200, 80], f);
@@ -2608,6 +2958,12 @@
       if (here) { var km = 1 + Math.random() * 6; sound.thunder(km / 0.343, Math.max(0.2, 1 - km / 8)); }   // sound: 3 s per km
       flash = here ? 1 : 0.35;
     }
+    function zapNow() {   // 1.6: a news rule ("CVE" -> lightning): one bolt over the city, now
+      var hz = H * 0.745, x = band[0] + (band[1] - band[0]) * (0.2 + Math.random() * 0.6), pts = [[x, H * 0.12]], y = H * 0.12;
+      while (y < hz) { y += H * (0.03 + Math.random() * 0.05); pts.push([pts[pts.length - 1][0] + (Math.random() - 0.5) * W * 0.03, Math.min(y, hz)]); }
+      bolts.push({ t: performance.now(), pts: pts, x: x, far: false }); flash = reduced ? 0.3 : 1;
+      try { sound.thunder(1.5, 0.5); } catch (e) {}
+    }
     function drawBolts(now, hz) {
       var keep = [];
       for (var i = 0; i < bolts.length; i++) {
@@ -2829,7 +3185,7 @@
       }
 
       if (kind !== "sphere" && focus) {   // focus: the time left as a ring around the core
-        var leftF = Math.max(0, focus.until - Date.now() / 1000) / Math.max(1, focus.until - focus.start);
+        var leftF = Math.max(0, focus.until - hubNowG()) / Math.max(1, focus.until - focus.start);
         g.beginPath(); g.arc(cx, cy, R * 1.12, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * leftF); g.strokeStyle = rgba(a2, 0.9); g.lineWidth = Math.max(2, H / 250); g.stroke();
       }
       if (kind === "orbit") {
@@ -2851,11 +3207,12 @@
         var nc = kind === "noir" ? 0 : Math.min(Math.max(cores.length, 8), 32), side = Math.max(1, Math.ceil(nc / 2));
         var inner = R * (kind === "sphere" ? 1.08 : 1.18), outer = Math.min(cx - band[0], band[1] - cx);
         var slot = Math.max(4, (outer - inner) / side), bw = slot * 0.74;
+        focusK += ((focus ? 1 : 0) - focusK) * (reduced ? 1 : 0.02);   // 1.6: a focus slowly brings the city down
         for (i = 0; i < nc; i++) {
           var load = cores.length ? cores[i % cores.length] || 0 : cpu;
           if (music) load = Math.min(100, load * 0.4 + (audio[Math.min(audio.length - 1, (i / 2) | 0)] || 0) * 0.9);   // the city dances
           heights[i] = (heights[i] == null ? load : heights[i] + (load - heights[i]) * (music ? 0.35 : 0.06));
-          var hh = (H * 0.035 + (heights[i] / 100) * H * 0.2 + ((i * 37) % 11) / 11 * H * 0.03) * (CITIES[city] ? 0.62 : 1);   // lower in front of a real city
+          var hh = (H * 0.035 + (heights[i] / 100) * H * 0.2 * (1 - focusK * 0.7) + ((i * 37) % 11) / 11 * H * 0.03) * (CITIES[city] ? 0.62 : 1);   // lower in front of a real city; 1.6: lower in a focus
           var s2 = i % 2 ? 1 : -1, idx = (i / 2) | 0;
           var bx = s2 > 0 ? cx + inner + idx * slot : cx - inner - idx * slot - bw;
           var tg = g.createLinearGradient(0, hz - hh, 0, hz);
@@ -2873,7 +3230,9 @@
             }
           }
           if (heights[i] > 90 && (t * 2 % 1) < 0.5) { g.fillStyle = rgba(COL.crit, 1); g.fillRect(bx + bw / 2 - 1, hz - hh - H / 90, 2, 2); }
+          if (ivyOn && i % 3 === 0 && uptimeS > 3600) ivyOn2(t, bx + (s2 > 0 ? 0 : bw), hz, hh * Math.min(0.85, uptimeS / 86400 / 7 * (0.6 + (i % 5) * 0.1)), i);   // 1.6: the ivy of your uptime
         }
+        drawFriends(t, hz);   // 1.6: your friends' cities, in front of the far towers
       }
 
       if (kind === "sphere") drawSphere(cx, cy, R, t);
@@ -2896,10 +3255,13 @@
       drawGrowth(t, hz);    // 1.3: in front, on the floor: your district, the train line, the quake waves
       drawTrains(t, hz);
       drawCar(t, hz);
+      drawTower(t, hz);
+      drawParcels(t, hz);
       drawRobots(t, hz);
       drawCandles(t, hz);
       drawPlanes(t, hz);   // in front of the sphere, so a plane is never hidden behind it
       drawBanners(now, hz);
+      drawBalloons(now, hz);
       drawQuakeWaves(now, hz);
       drawTsunami(now, hz);
       // reflection of the core on the floor
@@ -2929,7 +3291,7 @@
         for (var j = 0; j < path.length; j++) { if (j) g.lineTo(j * 3, path[j]); else g.moveTo(0, path[j]); }
         g.lineWidth = pass[0] * H / 1080 * 1.6; g.strokeStyle = rgba(lc, pass[1]); g.stroke();
       });
-      } else { spikes = []; drawPlanes(t, hz); drawBanners(now, hz); }
+      } else { spikes = []; drawPlanes(t, hz); drawBanners(now, hz); drawBalloons(now, hz); }
 
       // weather from the real sky
       drawAir(t, hz);
@@ -3002,6 +3364,7 @@
       frameId = requestAnimationFrame(frame);
       if (paused && last) return;
       var want = probe ? 60 : Math.min(Math.max(fps, (parts.length || rockets.length || liftoffs.length || music) && !paused ? 24 : 0), cap);
+      if (simpleMon && !probe) want = Math.min(want, 12);   // 1.6: a calm, light second screen
       if (now - last < 1000 / want - 2) return;
       if (last) gap = gap * 0.9 + (now - last) * 0.1;
       last = now;
@@ -3009,6 +3372,7 @@
       var a = performance.now();
       try { draw(now); } catch (e) { if (window.PULSE_DEBUG && !frame._err) { frame._err = 1; console.error("draw: " + e + " " + (e.stack || "")); } }   // never stop the wallpaper for one bad frame
       var cost = performance.now() - a;
+      glowSync(now);
       if (!probe && (cost > 22 || gap > 1.7 * 1000 / want) && want > 6) {
         if (++slow > 60) {
           if (quality === "auto" && qAuto > 0.5) { qAuto = 0.5; qSlowAt = now; resize(); }   // first, fewer pixels
@@ -3046,6 +3410,8 @@
         if (f.kind === "build") { buildAt = tnow; fxText(f.text); return; }
         if (f.kind === "train") { sound.chime([659, 523, 440]); fxText(f.text); return; }
         if (f.kind === "banner") { banner(f.text); return; }
+        if (f.kind === "lightning") { zapNow(); fxText(f.text); return; }
+        if (f.kind === "tip") { balloons.push({ t: performance.now(), text: f.text || tipsList[0] || "SUPER + K · Show key bindings", dir: 1 }); return; }
         if (f.kind === "summary" || f.kind === "starlink") { if (f.kind === "starlink") sound.chime([880, 1175]); fxText(f.text); return; }
         if (f.kind === "car") { carAt = tnow; carText = f.text; if (!f.small) fxText(f.text); return; }
         if (f.kind === "doorbell") { ringAt = performance.now(); fxText(f.text); return; }
@@ -3069,9 +3435,10 @@
       },
       mode: function (m, st) {
         var ui = st.ui || {};
-        kind = window.PULSE_SCENE || Q.get("scene") || ui.scene || "skyline";
+        kind = window.PULSE_SCENE || Q.get("scene") || ui.scene || "sphere";
         pluginSync(kind, st);
         wallpaperSync(ui.wallpaper);
+        musicSync(ui.musicCover);
         reduced = ui.motion === "reduced";
         var sys = st.sys || {};
         cpu = sys.cpu || 0; cores = sys.cores || []; ram = sys.ram || 0; net = (sys.rx || 0) + (sys.tx || 0);
@@ -3098,6 +3465,12 @@
           }).concat(robots).slice(0, 12);
         }
         hackerStyle = ui.hackerStyle === "noir" ? "noir" : "phosphor";
+        var nw16 = (st.updates && st.updates.news) || [];
+        if (nw16.length && nw16[0] !== newsSeen) { newsSeen = nw16[0]; if (!privacyOn && PRIMARY) balloons.push({ t: performance.now(), text: "read the news before you update", dir: 1, warn: true }); }   // 1.6: the warning in the sky, once
+        hubT = +st.t || 0; hubAt = performance.now();
+        tower = st.tower || []; friends = st.friends || []; friendsAt = performance.now(); uptimeS = +(sys.uptime || 0); ivyOn = ui.ivy !== false; parcels = st.updates || null;
+        simpleMon = !PRIMARY && ui.secondary === "simple"; document.body.classList.toggle("simplemon", simpleMon);
+        tipsList = st.tips || []; tipsEvery = ui.tipsEvery != null ? +ui.tipsEvery : 40; meetingOn = !!st.meeting; wledOn = !!ui.wled;
         pnet = st.net || null; netBolts = st.bolts || []; term = st.term || []; noc = st.noc || null;
         document.body.classList.toggle("noc", !!(noc && noc.on));
         nocView(noc, ui);
@@ -3161,7 +3534,7 @@
       fails = 0;
       if (!j) return;
       if (isCovered(j, (j.ui || {}).pause_when_covered)) { Scene.setCovered(true); return; }
-      S = j;
+      S = j; stateAt = performance.now();
       try { render(); Scene.setCovered(false); } catch (e) { console.error(e); }
     }).catch(function () { fails++; }).then(function () { setTimeout(poll, fails ? Math.min(10000, 1000 * fails) : 1000); });
   }

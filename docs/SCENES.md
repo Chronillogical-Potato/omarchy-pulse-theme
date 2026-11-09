@@ -1,5 +1,9 @@
 # Creating scenes for Omarchy Pulse
 
+**No code? Use the scene editor** (1.6): `omarchy-pulse scene editor` lets you draw a scene with the mouse and link
+every shape to your data: [EDITOR.md](EDITOR.md) is its guide; [section 12](#12-the-scene-editor-16) explains the file
+it writes.
+
 A **scene** is a whole world on the wallpaper, drawn from your real data: a pond where every AI agent is a fish, a
 garage where your agents are mechanics, a forest that grows with your commits, your own room. You write it in one
 JavaScript file. You do not touch Pulse's engine: Pulse keeps the sky, the real weather, the planes, the effects and
@@ -17,6 +21,7 @@ try it and share it.
 - [9. Safety: what a scene cannot do](#9-safety-what-a-scene-cannot-do)
 - [10. Sharing your scene](#10-sharing-your-scene)
 - [11. Recipes](#11-recipes)
+- [12. The scene editor (1.6)](#12-the-scene-editor-16)
 
 ---
 
@@ -229,3 +234,52 @@ var bob = still ? 0 : Math.sin(t * 2) * box.h * 0.005;
 ```
 
 **The holidays**: `state.season.xmas` (lights, a tree), `state.season.newYear.left` (seconds to midnight).
+
+## 12. The scene editor (1.6)
+
+```bash
+omarchy-pulse scene editor [NAME]
+```
+
+The editor is for a scene without writing code. Everything it makes is a normal scene, so sections 2 to 10 still
+apply: it runs in the sandbox, the lab checks it, it follows the same rules to be shared.
+
+**How you build one.** Pick a template (*Agent lanterns*, *Core skyline*, *Packet rain*, *Night garden*) or start
+blank, add shapes, move them on the stage, and in the inspector say how each one looks, how it moves, which data moves
+it, whether it repeats once per agent, repo or core, and what a click on it shows. Every option is explained in
+[the guide, section 61](GUIDE.md#61-the-scene-editor-16).
+
+**What the file looks like.** Save writes `~/.config/omarchy-pulse/scenes/NAME.js`:
+
+```js
+// my-world: a scene made with the Pulse scene editor (omarchy-pulse scene editor my-world). MIT.
+var DESIGN = /*DESIGN*/{ "v": 1, "sky": "none", "city": false, "shapes": [ ... ] }/*END*/;
+var PulseDesign = (function () { ... })();          // the engine that draws a design (web/scene-design.js)
+PulseScene.register("my-world", PulseDesign.scene(DESIGN));
+```
+
+The design is plain data (JSON): Pulse writes it again itself when you save, so a design can never carry code. The
+engine is the same file the editor uses for its preview, so the wallpaper shows exactly what you saw. Open the scene
+in the editor again to change it; if you edit the file by hand, the editor will not overwrite it (it asks for another
+name), and from then on it is yours like any scene.
+
+**A shape**, in the design:
+
+| Key | Meaning |
+|---|---|
+| `type` | `rect`, `ellipse`, `line`, `star`, `text`, `ring` (a gauge), `bars`, `tower` (a building), `wave`, `particles` |
+| `x`, `y`, `w`, `h` | centre and size, as fractions of the screen (0 to 1) |
+| `color`, `color2` | a theme colour (`accent`, `accent2`, `ok`, `warn`, `crit`, `fg`, `dim`, `bg`) or `#rrggbb` |
+| `alpha`, `glow`, `rot`, `fill`, `line` | opacity, glow, rotation in degrees, filled or outline, line width |
+| `anim` | `{ kind: none \| pulse \| bob \| sway \| spin \| blink \| breathe \| drift, speed }` |
+| `bind` | `[{ prop, src, from, to }]`: `src` from its low to its high moves `prop` from `from` to `to` |
+| `repeat` | `{ by: none \| agents \| repos \| cores \| count, n, spread, from, to, dx, dy, stateColors }` |
+| `click` | the text a click shows, with `{cpu}`, `{name}`... |
+
+`prop` is one of `x`, `y`, `w`, `h`, `alpha`, `rot`, `glow`, `heat` (the colour towards `color2`), `speed`, `level`,
+`count`, `amp`; `src` one of `cpu`, `ram`, `gpu`, `temp`, `disk`, `net`, `hour`, `second`, `outside`, `rain`, `wind`,
+`cloud`, `daylight`, `agents`, `working`, `waiting`, `failed`, `commits`, `cifail`, `focus`, `away`, `item` (the
+agent, repo or core of a copy).
+
+**Sharing.** Like any scene (section 10): put `NAME.js` in `community/scenes/NAME/` with a README and a screenshot made
+with demo data. The editor's preview uses demo data unless you tick *my live data*.

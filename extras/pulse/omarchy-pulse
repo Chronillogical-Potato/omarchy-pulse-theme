@@ -12,7 +12,9 @@
   omarchy-pulse robot NAME STATE           an AI bot of yours as a robot walking on the floor (ok, working, waiting,
                                  failed, gone); your Docker or Podman containers walk there by themselves
   omarchy-pulse watch NAME -- COMMAND...  a drone while COMMAND runs; lands green or red with its exit code
-  omarchy-pulse hook claude|codex         for the hooks of Claude Code / Codex CLI (reads what they send)
+  omarchy-pulse hook claude|codex|grok|gemini|copilot|hermes|opencode|pi
+                                 for the hooks of your AI agents (reads what they send: state, tool, folder)
+  omarchy-pulse hook setup [AGENT]        what to paste in each agent's config; hook install opencode|pi
   omarchy-pulse fireworks [TEXT]          fireworks over the city
   omarchy-pulse banner [TEXT]             a little plane crosses the sky towing a banner
   omarchy-pulse focus MINUTES [LABEL]     focus mode: the desktop calms down, a countdown, fireworks at the end
@@ -29,7 +31,8 @@
   omarchy-pulse crew             the crew status
   omarchy-pulse city             your city: the buildings your focus sessions built, your streak
   omarchy-pulse calendar         the next events (the trains)
-  omarchy-pulse timelapse [DATE] your day as a video (by itself at midnight; DATE = today or 2026-11-07)
+  omarchy-pulse timelapse [DATE] your day as a video, a diary with its numbers (at midnight, or at [timelapse] at)
+  omarchy-pulse recap [DATE]     your week in a minute: a moment of each day, the week's numbers (by itself on Sunday)
   omarchy-pulse phone new|test    your phone: the moments that matter as push notifications (the ntfy app)
   omarchy-pulse lights pair|test  the lights of your room follow Pulse (pair a Philips Hue bridge, or try an effect)
   omarchy-pulse wrapped [YEAR]   Pulse Wrapped: your year as a video, with its numbers (by itself on 31 December)
@@ -43,8 +46,14 @@
   omarchy-pulse term             (beta) a terminal on the city: scan, ping NAME, status; read-only
   omarchy-pulse noc on|off|ack   (beta) NOC mode: the city of your infrastructure, an incident until you ack it
   omarchy-pulse trap             (beta) for snmptrapd: traphandle default /usr/bin/omarchy-pulse trap
-  omarchy-pulse scene list | new NAME | check NAME | lab [NAME]
-                                 community scenes: your own world on the wallpaper (docs/SCENES.md)
+  omarchy-pulse scene list | new NAME | check NAME | lab [NAME] | editor [NAME]
+                                 community scenes: your own world on the wallpaper (docs/SCENES.md); editor: draw one
+                                 with the mouse, no code
+  omarchy-pulse layout edit | done | reset   move and hide the panels with the mouse (Save and Cancel on screen)
+  omarchy-pulse ask QUESTION     ask the sphere in writing (the same answers as the voice; a local Ollama for the rest)
+  omarchy-pulse theme from-wallpaper [PICTURE] NAME
+                                 a new Omarchy theme from a picture's colours (to review; Pulse never applies it)
+  omarchy-pulse news [read]      the news to read before you update (manual interventions); read: mark them read
 
 Config: ~/.config/omarchy-pulse/pulse.toml (written on the first run; your own scripts go in
 ~/.config/omarchy-pulse/sources/, which is on the PATH of every source command).
@@ -88,7 +97,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -411,6 +420,7 @@ class Hub:
         self.crew_id = secrets.token_hex(6)
         self.crew_agents: dict = {}            # your friends' agents
         self.crew_last: dict = {}
+        self.crew_city: dict = {}              # 1.6: your friends' cities on the horizon (numbers only)
         self.crew_status = "off"
         self.crew_q: queue.Queue = queue.Queue(maxsize=50)
         self.launches: list = []               # the next rocket launches (Launch Library 2)
@@ -420,6 +430,20 @@ class Hub:
         self.speaking = False
         self.scene_override = ""
         self.scene_err_t = 0.0
+        self.cover_url = ""
+        self.cover_cache: dict = {}
+        self.glow: dict | None = None          # 1.6: the sphere's colour, sent to WLED
+        try:
+            self.health: dict = json.loads((STATE_DIR / "agents.json").read_text())   # 1.6: agents' last outcomes
+        except (OSError, ValueError):
+            self.health = {}
+        self.wled_sent: tuple = ((), 0.0)
+        self.tower: list = []                  # 1.6: Hyprland's workspaces, as a tower
+        self.tips: list = []                   # 1.6: Omarchy's shortcuts, as tips on a hot-air balloon
+        self.updates: dict | None = None       # 1.6: pending updates as parcels, and Arch news
+        self.layout_edit = False               # 1.6: omarchy-pulse layout edit
+        self.news_seen: dict = {}              # 1.6: the items the news rules have already seen
+        self.diary_done = ""
         self.eclipse_list: list = []
         self.expiry: list = []
         self.energy: dict | None = None
@@ -500,12 +524,45 @@ class Hub:
         log(f"config loaded: {len([s for s in cfg.get('source', []) if isinstance(s, dict)])} sources")
 
     # -- widgets
+    def news_rules(self, wid: str, w: dict) -> None:
+        """1.6: [[news.rule]] match = "CVE", effect = "lightning": a new item of any feed panel whose title matches
+        fires an effect on the wallpaper (once per item). Nothing by default."""
+        rules = [r for r in ((self.conf("news", default={}) or {}).get("rule") or []) if isinstance(r, dict) and r.get("match")][:20]
+        items = (w.get("data") or {}).get("items") if isinstance(w.get("data"), dict) else None
+        if not rules or not isinstance(items, list) or w.get("private"):
+            return
+        seen = self.news_seen.setdefault(wid, set())
+        first = not seen
+        for it in items[:20]:
+            title = str((it or {}).get("title") or "") if isinstance(it, dict) else str(it)
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            if first:
+                continue   # what was already there when Pulse started is not news
+            for r in rules:
+                try:
+                    hit = re.search(str(r["match"]), title, re.I)
+                except re.error:
+                    hit = str(r["match"]).lower() in title.lower()
+                if hit:
+                    eff = str(r.get("effect") or "lightning")
+                    eff = eff if eff in ("lightning", "fireworks", "banner", "shooting", "alert") else "lightning"
+                    if eff == "alert":
+                        self.raise_alert("news:" + title[:40], title[:60], str(w.get("title") or wid), "warn", speak=False)
+                    else:
+                        self.add_fx(eff, title[:60])
+                    break
+        if len(seen) > 500:
+            self.news_seen[wid] = set(list(seen)[-200:])
+
     def set_widget(self, wid: str, **f) -> None:
         notify = None
         with self.lock:
             w = self.widgets.get(wid) or {"id": wid, "title": wid, "type": "text", "slot": "auto", "data": {}}
             old = w.get("level")
             w.update({k: v for k, v in f.items() if v is not None})
+            news_w = dict(w)
             if w.get("level") == "crit" and old != "crit" and wid not in BUILTIN_IDS:
                 self.noc_event(f"{w.get('title', wid)} is critical")
             w["updated"] = time.time()
@@ -548,6 +605,10 @@ class Hub:
                 if w.get("_notify"):
                     notify = (w.get("title", wid), txt, new)
             self.widgets[wid] = w
+        try:
+            self.news_rules(wid, news_w)
+        except Exception as e:   # noqa: BLE001 - a rule never breaks a panel
+            log(f"news rule: {e}")
         if notify and shutil.which("notify-send"):
             subprocess.Popen(["notify-send", "-u", "critical" if notify[2] == "crit" else "normal",
                               "Pulse · " + notify[0], notify[1]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -587,8 +648,16 @@ class Hub:
                             "t": time.time(), **{k: round(float(v), 2) for k, v in extra.items()
                                                  if isinstance(v, (int, float)) and k in ("mag", "az", "near", "tsunami")}})
 
-    def set_agent(self, name: str, state: str, text: str = "") -> None:
+    def set_agent(self, name: str, state: str, text: str = "", group: str = "", settle: float = 0) -> None:
         name = re.sub(r"[^\w.:@\- ·]", "", str(name or ""))[:32].strip() or "agent"
+        if settle and str(state).lower() == "done":   # 1.6: done only if nothing else arrives in the next seconds
+            asked = time.time()
+            def later():
+                a0 = self.agents.get(name)
+                if a0 and a0.get("t", 0) <= asked:
+                    self.set_agent(name, "done", text, group)
+            threading.Timer(min(30.0, settle), later).start()
+            return
         st = str(state or "").lower()
         st = {"thinking": "working", "busy": "working", "run": "working", "running": "working", "start": "working",
               "started": "working", "input": "waiting", "ask": "waiting", "permission": "waiting", "blocked": "waiting",
@@ -607,9 +676,13 @@ class Hub:
             if st == "working" and prev != "working":
                 a["since"] = now
             a.update(state=st, text=str(text or "")[:80], t=now)
+            if re.match(r"^[0-9a-f]{8}$", str(group or "")):
+                a["group"] = group   # 1.6: agents in the same repo are linked by light
             self.agents[name] = a
         if st == prev:
             return
+        if st in ("done", "failed"):
+            self.agent_outcome(name, st == "done")
         self.crew_send({"ev": "agent", "agent": name, "state": st})
         spoken = name.replace("·", ",")
         if st == "done":
@@ -623,6 +696,26 @@ class Hub:
             self.raise_alert("agent:" + name, f"{name} failed", text or "the agent stopped with an error", "warn",
                              speak=False)
             self.say(self.T("agent_fail", name=spoken), "agents")
+
+    # -- 1.6: an agent's health: how often its last runs ended well (kept on your PC, by agent name)
+    def agent_outcome(self, name: str, ok: bool) -> None:
+        key = name.split(" · ")[0]   # claude, codex, grok, hermes...: the agent, not the folder
+        try:
+            f = STATE_DIR / "agents.json"
+            with self.lock:
+                d = json.loads(f.read_text()) if f.exists() else {}
+                runs = (d.get(key) or [])[-49:] + [1 if ok else 0]
+                d[key] = runs
+                STATE_DIR.mkdir(parents=True, exist_ok=True)
+                f.write_text(json.dumps(d))
+                self.health[key] = runs
+            self.stat("agents_done" if ok else "agents_failed")
+        except (OSError, ValueError) as e:
+            log(f"agents: {e}")
+
+    def agent_health(self, name: str) -> dict:
+        runs = self.health.get(str(name).split(" · ")[0]) or []
+        return {"health": round(sum(runs) / len(runs), 2), "runs": len(runs)} if runs else {}
 
     def expire_agents(self) -> None:
         now = time.time()
@@ -1862,6 +1955,14 @@ class Hub:
                 y[key] = round(y.get(key, 0) + n, 1)
                 STATE_DIR.mkdir(parents=True, exist_ok=True)
                 f.write_text(json.dumps(d))
+                day = time.strftime("%Y-%m-%d")   # 1.6: each day's numbers too, for the day's video and the week's
+                dd = STATE_DIR / "days.json"
+                days = json.loads(dd.read_text()) if dd.exists() else {}
+                today = days.setdefault(day, {})
+                today[key] = round(today.get(key, 0) + n, 1)
+                for old in sorted(days)[:-60]:
+                    del days[old]
+                dd.write_text(json.dumps(days))
         except (OSError, ValueError) as e:
             log(f"stats: {e}")
 
@@ -1950,15 +2051,30 @@ class Hub:
         while True:
             time.sleep(30)
             now_day = time.strftime("%Y-%m-%d")
+            conf = self.conf("timelapse", default={}) or {}
+            at = str(conf.get("at") or "").strip()
+            out = None
+            if at and re.match(r"^\d{1,2}:\d{2}$", at) and conf.get("enabled") is not False and now_day == day \
+                    and time.strftime("%H:%M") >= at.zfill(5) and self.diary_done != day:
+                self.diary_done = day   # 1.6: the day's video at the hour you choose (the evening), not at midnight
+                if not diary_path(day, conf).exists():
+                    out = make_timelapse(day, conf)
             if now_day != day:
                 done, day = day, now_day
-                if (self.conf("timelapse", default={}) or {}).get("enabled") is not False:
-                    out = make_timelapse(done, self.conf("timelapse", default={}) or {})
-                    if out:
-                        self.note("timelapse", "your day as a video: " + out.name, "info")
-                        if shutil.which("notify-send"):
-                            subprocess.Popen(["notify-send", "Pulse · your day in a video", str(out)],
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if conf.get("enabled") is not False:
+                    if at and diary_path(done, conf).exists():   # already made in the evening: drop the late pictures
+                        shutil.rmtree(STATE_DIR / "timelapse" / done, ignore_errors=True)
+                    else:
+                        out = make_timelapse(done, conf)
+                    if conf.get("weekly", True) is not False and time.strptime(done, "%Y-%m-%d").tm_wday == 6:
+                        wk = make_recap(done, conf)   # 1.6: Sunday is over: the week in a minute
+                        if wk:
+                            self.note("timelapse", "your week as a video: " + wk.name, "info")
+            if out:
+                self.note("timelapse", "your day as a video: " + out.name, "info")
+                if shutil.which("notify-send"):
+                    subprocess.Popen(["notify-send", "Pulse · your day in a video", str(out)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def click(self, wid: str, item: int | None = None) -> bool:
         if wid == "home" and item is not None and 0 <= item < len(self.home_lights):
@@ -2180,6 +2296,8 @@ class Hub:
                 devices.sort(key=lambda d: tuple(int(p) for p in d["ip"].split(".")))
                 with self.lock:
                     self.lan = {"devices": devices[:24], "net": route["cidr"]}
+                    for ip in new[:5]:   # 1.6: the hacker scene's terminal logs it (hidden in privacy, like the terminal)
+                        self.term.append({"t": now, "text": f"+ new device on the network: {ip}"})
                 if self.conf("lan", "alert_new", default=True) is not False:
                     for ip in new:
                         nm = cfg_names.get(ip) or names.get(ip) or ""
@@ -2311,6 +2429,9 @@ class Hub:
                         self.note("git", f"{name} pushed", "ok")
                     elif p and info["head"] != p["head"]:
                         self.add_fx("commit", name, small=True)
+                        self.stat("commits")   # 1.6: counted for the day's and the week's video
+                        if self.conf("crew", "city", default=False) is True:
+                            self.crew_send({"ev": "commit"})   # 1.6: a floor lights in your city on your friends' horizon
                     ci = (p or {}).get("ci", "")
                     slug = github_slug(info["remote"])
                     if use_ci and slug and time.time() - ci_t.get(key, 0) > 300:
@@ -2329,6 +2450,12 @@ class Hub:
                 out.sort(key=lambda r: (-r["week"], -r["last"]))
                 with self.lock:
                     self.git = out[: int(g.get("max", 8) or 8)]
+                    if self.conf("crew", "city", default=False) is True:   # 1.6: only numbers: commits this week, CI
+                        cis = [r.get("ci") for r in self.git]
+                        summ = (sum(int(r.get("week") or 0) for r in self.git), "fail" if "fail" in cis else "ok" if "ok" in cis else "")
+                        if summ != getattr(self, "_city_sent", None) or time.time() - getattr(self, "_city_sent_t", 0) > 6 * 3600:
+                            self._city_sent, self._city_sent_t = summ, time.time()
+                            self.crew_send({"ev": "city", "week": summ[0], "ci": summ[1]})
             except Exception as e:   # noqa: BLE001
                 log(f"git: {e}")
             time.sleep(max(15, int(g.get("every", 60) or 60)))
@@ -2530,6 +2657,29 @@ class Hub:
                 self.add_fx("fireworks", f"{key} · done", small=True)
         elif payload.get("ev") == "fx":
             self.add_fx("fireworks", f"{who} · {clean(payload.get('text'), 40)}".strip(" ·"), small=True)
+        elif payload.get("ev") in ("city", "commit"):   # 1.6: the friends' neighbourhood
+            with self.lock:
+                c = self.crew_city.get(who) or {"name": who, "week": 0, "ci": "", "flash": 0}
+                if payload["ev"] == "city":
+                    try:
+                        c["week"] = max(0, min(999, int(payload.get("week") or 0)))
+                    except (TypeError, ValueError):
+                        pass
+                    c["ci"] = payload.get("ci") if payload.get("ci") in ("ok", "fail") else ""
+                else:
+                    c["week"] = min(999, c["week"] + 1)
+                    c["flash"] = time.time()
+                c["t"] = time.time()
+                self.crew_city[who] = c
+                if len(self.crew_city) > 12:
+                    del self.crew_city[min(self.crew_city, key=lambda k: self.crew_city[k]["t"])]
+
+    def friends_public(self) -> list:
+        """The friends' cities: a building each, as tall as their week; their nickname hidden in privacy."""
+        now = time.time()
+        return [{"name": "" if self.privacy() else c["name"], "week": c["week"], "ci": c["ci"],
+                 "flashAge": round(now - c["flash"], 2) if c.get("flash") else None}
+                for c in list(self.crew_city.values()) if now - c["t"] < 3 * 86400][:8]
 
     def loop_crew(self) -> None:
         backoff = 5
@@ -2711,7 +2861,10 @@ class Hub:
         if m:
             self.scene_override = {"sfera": "sphere"}.get(m.group(2), m.group(2))
             return L(f"Scene {self.scene_override}.", f"Scena {self.scene_override}.")
-        if re.search(r"server|status|stato|come (va|sta)|alert|problem|tutto bene|everything", t):
+        # 1.6: with a local AI, a question about why or about the past goes to it, not to the quick status
+        deep = bool((self.conf("ai", default={}) or {}).get("ollama")) and re.search(
+            r"\b(why|when|yesterday|this morning|last night|today|perch[eé]|quando|ieri|stamattina|stanotte|oggi|cosa ho)\b", t)
+        if not deep and re.search(r"server|status|stato|come (va|sta)|alert|problem|tutto bene|everything", t):
             with self.lock:
                 bad = [w.get("title", w["id"]) for w in self.widgets.values() if w.get("level") in ("warn", "crit")
                        and not (w.get("private") and self.privacy())]
@@ -2719,6 +2872,19 @@ class Hub:
             if not bad:
                 return L(f"Everything is fine: {n} sources, no alerts.", f"Tutto a posto: {n} sorgenti, nessun allarme.")
             return L(f"{len(bad)} need attention: " + ", ".join(bad[:4]) + ".", f"{len(bad)} da controllare: " + ", ".join(bad[:4]) + ".")
+        ol = self.conf("ai", default={}) or {}
+        if ol.get("ollama"):   # 1.6: a local model answers the rest, with what Pulse sees
+            url = str(ol.get("ollama"))
+            if not local_url(url):
+                log("ai: ollama must be on this PC or your network")
+            else:
+                try:
+                    out = ollama_answer(url, str(ol.get("model") or "llama3.2"), text, self.ai_context(),
+                                        float(ol.get("timeout", 60) or 60))
+                    if out:
+                        return out
+                except Exception as e:   # noqa: BLE001
+                    log(f"ai: {e}")
         ask = str((self.conf("listen", default={}) or {}).get("ask") or "")
         if ask:
             try:
@@ -2734,6 +2900,137 @@ class Hub:
                  "your agents, the ISS or what you missed.",
                  "Posso avviare un focus, attivare la privacy, lanciare fuochi d'artificio e dirti lo stato, il meteo, "
                  "l'ora, i tuoi agenti, la ISS o cosa ti sei perso.")
+
+    def ai_context(self) -> str:
+        """What the local model may know: what is on your wallpaper now. No names while privacy is on."""
+        priv = self.privacy()
+        with self.lock:
+            sysd, w = dict(self.sys or {}), dict(self.weather or {})
+            ag = list(self.agents.values())
+            bad = [x.get("title", x["id"]) for x in self.widgets.values() if x.get("level") in ("warn", "crit") and not x.get("private")]
+            up = dict(self.updates or {})
+        lines = [time.strftime("Now: %A %d %B %Y, %H:%M.")]
+        if sysd.get("cpu") is not None:
+            lines.append(f"PC: CPU {sysd.get('cpu')}%, RAM {sysd.get('ram')}%, disk {sysd.get('disk')}%, up {int((sysd.get('uptime') or 0) // 3600)} hours.")
+        if w and not w.get("error") and w.get("temp") is not None:
+            lines.append(f"Weather: {w.get('temp')}°" + (f", {w['desc']}" if w.get("desc") else "") + ".")
+        if ag:
+            lines.append("AI agents: " + ", ".join((("an agent" if priv else a.get("name", "agent")) + " " + a.get("state", "")) for a in ag[:6]) + ".")
+        lines.append(("Needs attention: " + ", ".join(bad[:5]) + ".") if bad and not priv else ("Needs attention: " + str(len(bad)) + " items." if bad else "No alerts."))
+        if up.get("n"):
+            lines.append(f"Pending updates: {up['n']}" + (" (with a new kernel)" if up.get("kernel") else "") + ".")
+        if self.focus:
+            lines.append("A focus session is running.")
+        days = day_stats()   # what you did today and yesterday ("what did I do yesterday?")
+        for label, off in (("Today", 0), ("Yesterday", 1)):
+            d = days.get(time.strftime("%Y-%m-%d", time.localtime(time.time() - off * 86400))) or {}
+            if d:
+                lines.append(f"{label}: " + ", ".join(day_card("", d)[1:]) + ".")
+        with self.lock:
+            past = [a for a in self.alerts if time.time() - a["t"] < 86400][-8:]
+        if past:   # the alerts of the last 24 hours, with their time ("why was the server slow this morning?")
+            lines.append("Alerts in the last 24 hours: " + "; ".join(
+                time.strftime("%H:%M", time.localtime(a["t"])) + " " + ("an alert" if priv else f"{a['title']} {a.get('text') or ''}".strip())
+                + f" ({a['level']})" for a in past) + ".")
+        hist = {k: list(v) for k, v in (self.hist or {}).items() if k in ("cpu", "temp")}
+        for k, v in hist.items():
+            if v:
+                lines.append(f"{k.upper()} in the last minutes: average {sum(v) / len(v):.0f}, peak {max(v):.0f}.")
+        return "\n".join(lines)
+
+    # -- 1.6: WLED, the room in the colour of the sphere
+    def loop_wled(self) -> None:
+        while True:
+            time.sleep(2)
+            c = self.conf("wled", default={}) or {}
+            if c.get("enabled") is not True:
+                continue
+            hosts = [str(h) for h in (c.get("hosts") or []) if str(h).strip()][:8]
+            g = self.glow
+            if not hosts or not g or time.time() - g["t"] > 15:
+                continue
+            with self.lock:
+                crit = any(w.get("level") == "crit" for w in self.widgets.values())
+                party = any(f["kind"] in ("fireworks", "burst", "newyear") and time.time() - f["t"] < 8 for f in self.fx)
+            mode, rgb = ("rainbow", g["rgb"]) if party else ("blink", (255, 30, 30)) if crit and c.get("alerts", True) is not False \
+                else ("solid", g["rgb"])
+            bri = int(c.get("brightness", 128) or 128) // (4 if self.away else 1)
+            key = (mode, tuple(v // 12 for v in rgb), bri)
+            if key == self.wled_sent[0] and time.time() - self.wled_sent[1] < 60:
+                continue
+            self.wled_sent = (key, time.time())
+            body = json.dumps(wled_state(rgb, mode, bri)).encode()
+            for h in hosts:
+                url = (h if "//" in h else "http://" + h).rstrip("/") + "/json/state"
+                if not local_url(url):
+                    continue
+                try:
+                    urllib.request.urlopen(urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}), timeout=3).read()
+                except Exception as e:   # noqa: BLE001
+                    log(f"wled {h}: {e}")
+
+    # -- 1.6: Omarchy tips, from Hyprland's own shortcut descriptions
+    def loop_tips(self) -> None:
+        while True:
+            c = self.conf("tips", default={}) or {}
+            if c.get("enabled", True) is not False and shutil.which("hyprctl"):
+                try:
+                    r = subprocess.run(["hyprctl", "-j", "binds"], capture_output=True, timeout=5, env=hypr_env())
+                    tips = bind_tips(json.loads(r.stdout or b"[]"))
+                    extra = [str(x)[:80] for x in (c.get("extra") or [])][:40]
+                    with self.lock:
+                        self.tips = (tips + extra)[:200]
+                except Exception as e:   # noqa: BLE001
+                    log(f"tips: {e}")
+            time.sleep(1800)
+
+    # -- 1.6: pending updates as parcels, and the Arch news that asks for manual intervention
+    def loop_updates(self) -> None:
+        time.sleep(60)
+        while True:
+            c = self.conf("updates", default={}) or {}
+            if c.get("enabled", True) is not False:
+                try:
+                    self.updates = self.read_updates(c)
+                except Exception as e:   # noqa: BLE001
+                    log(f"updates: {e}")
+            time.sleep(max(1, float(c.get("every", 3) or 3)) * 3600)
+
+    def read_updates(self, c: dict) -> dict:
+        pk, aur = [], 0
+        if shutil.which("checkupdates"):
+            r = subprocess.run(["checkupdates", "--nocolor"], capture_output=True, text=True, timeout=180)
+            pk = [ln.split()[0] for ln in r.stdout.splitlines() if ln.strip()]
+        for helper in ("yay", "paru"):
+            if c.get("aur", True) is not False and shutil.which(helper):
+                r = subprocess.run([helper, "-Qua"], capture_output=True, text=True, timeout=180)
+                aur = len([ln for ln in r.stdout.splitlines() if ln.strip()])
+                break
+        news = []
+        if c.get("news", True) is not False:
+            try:
+                with urllib.request.urlopen(urllib.request.Request("https://archlinux.org/feeds/news/",
+                                            headers={"User-Agent": "omarchy-pulse"}), timeout=15) as r:
+                    news = arch_news(r.read(1_000_000).decode("utf-8", "replace"))
+            except Exception as e:   # noqa: BLE001
+                log(f"arch news: {e}")
+        return {"n": len(pk), "aur": aur, "kernel": any(p in ("linux", "linux-lts", "linux-zen", "linux-hardened") for p in pk),
+                "news": news, "t": time.time()}
+
+    def updates_public(self) -> dict | None:
+        u = self.updates
+        if not u:
+            return None
+        read = news_read()
+        return {"n": u["n"], "aur": u["aur"], "kernel": u["kernel"],
+                "news": [x["title"] for x in u.get("news", []) if x["link"] not in read][:3]}
+
+    def layout_public(self) -> dict:
+        try:
+            d = json.loads((CONF_DIR / "layout.json").read_text())
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
 
     def drop_widget(self, wid: str) -> None:
         with self.lock:
@@ -3172,20 +3469,64 @@ class Hub:
             try:
                 if self.builtin("media") is not False and shutil.which("playerctl"):
                     r = subprocess.run(["playerctl", "metadata", "--format",
-                                        "{{status}}\t{{artist}}\t{{title}}\t{{position}}\t{{mpris:length}}\t{{playerName}}"],
+                                        "{{status}}\t{{artist}}\t{{title}}\t{{position}}\t{{mpris:length}}\t{{playerName}}\t{{mpris:artUrl}}"],
                                        capture_output=True, text=True, timeout=3)
-                    parts = r.stdout.strip().split("\t")
+                    parts = r.stdout.strip("\n").split("\t")
                     if r.returncode == 0 and len(parts) >= 6 and parts[0] in ("Playing", "Paused"):
+                        self.cover_url = parts[6].strip() if len(parts) > 6 and parts[0] == "Playing" else ""
                         pos = int(parts[3] or 0) / 1e6
                         ln = int(parts[4] or 0) / 1e6
                         self.set_widget("media", title="now playing", type="media", slot="left", order=20,
                                         data={"status": parts[0], "artist": parts[1], "title": parts[2], "pos": pos,
                                               "len": ln, "player": parts[5]})
                     else:
+                        self.cover_url = ""
                         self.drop_widget("media")
             except Exception:   # noqa: BLE001
+                self.cover_url = ""
                 self.drop_widget("media")
             time.sleep(3)
+
+    # -- 1.6: the city takes the colours of the album that is playing ([music] colors = true)
+    def cover_now(self) -> str:
+        fl = os.environ.get("PULSE_DEMO_COVER", "") if self.demo else ""
+        if fl:   # the demo video: the cover of the moment, from its flag file (made-up covers)
+            try:
+                return open(fl).read().strip()
+            except OSError:
+                return ""
+        return self.cover_url
+
+    def cover_bytes(self) -> tuple | None:
+        """The cover of what plays now (Spotify, YouTube Music, any MPRIS player): (bytes, type), from the player's
+        own file or its https address; cached by address. Nothing is sent anywhere."""
+        url = self.cover_now()
+        if not url:
+            return None
+        if self.cover_cache.get("url") == url:
+            return self.cover_cache.get("val")
+        val = None
+        try:
+            if url.startswith("file://"):
+                f = Path(urllib.parse.unquote(url[7:]))
+                if f.is_file() and f.stat().st_size <= 8_000_000:
+                    val = (f.read_bytes(), WALL_TYPES.get(f.suffix.lower(), "image/jpeg"))
+            elif url.startswith("https://"):
+                req = urllib.request.Request(url, headers={"User-Agent": "omarchy-pulse/" + VERSION})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    ct = r.headers.get("Content-Type", "image/jpeg").split(";")[0]
+                    if ct.startswith("image/"):
+                        val = (r.read(8_000_000), ct)
+        except Exception as e:   # noqa: BLE001
+            log(f"cover: {e}")
+        self.cover_cache = {"url": url, "val": val}
+        return val
+
+    def cover_ui(self) -> dict | None:
+        url = self.cover_now()
+        if self.conf("music", "colors", default=False) is not True or not url or self.privacy():
+            return None
+        return {"v": hashlib.sha1(url.encode()).hexdigest()[:12]}
 
     def loop_notifications(self) -> None:
         while True:
@@ -3195,6 +3536,7 @@ class Hub:
                     items = visible_notifications(notification_history(), hours, self.notes_cleared, read_battery(),
                                                   float(self.builtin("notifications_quick", 120) or 0),
                                                   tuple(str(a).lower() for a in (self.builtin("notifications_quick_apps", list(QUICK_APPS)) or [])))
+                    self.agents_from_notes(items)
                     if items:
                         self.set_widget("notifications", title="notifications", type="list", slot="center", order=40,
                                         private=True, data={"items": items[:5]}, click="clear")
@@ -3203,6 +3545,26 @@ class Hub:
             except Exception:   # noqa: BLE001
                 pass
             time.sleep(5)
+
+    def agents_from_notes(self, items: list) -> None:
+        """1.6: agents that live in the cloud (Claude Duet, Meta Muse...) have no hooks: their desktop notifications
+        become a drone. [agents] from_notifications = ["Claude Duet"]; only the app's name decides, never the text."""
+        names = [str(x) for x in ((self.conf("agents", default={}) or {}).get("from_notifications") or [])][:12]
+        if not names:
+            return
+        seen = getattr(self, "_agent_note_t", time.time() - 60)
+        for it in sorted(items, key=lambda x: x.get("t") or 0):
+            t = it.get("t") or 0
+            if t <= seen:
+                continue
+            seen = t
+            where = f"{it.get('right', '')} {it.get('title', '')}".lower()
+            who = next((nm for nm in names if nm.lower() in where), None)
+            if who:
+                ask = re.search(r"approv|approval|confirm|needs? (you|your|input)|waiting|review|permission",
+                                f"{it.get('title', '')} {it.get('text', '')}", re.I)
+                self.set_agent(who.lower()[:32], "waiting" if ask else "done", "needs your OK" if ask else "finished")
+        self._agent_note_t = seen
 
     def loop_theme(self) -> None:
         while True:
@@ -3278,8 +3640,10 @@ class Hub:
                     out[f"{m.get('x', 0)},{m.get('y', 0)}"] = {"name": m.get("name"), "windows": w.get("windows", 0),
                         "fullscreen": bool(w.get("hasfullscreen")) or bool(sp),
                         "covered": monitor_covered(m, clients)}
+                act = next(((m.get("activeWorkspace") or {}).get("id", 0) for m in mons if m.get("focused")), 0)
                 with self.lock:
                     self.mons = out
+                    self.tower = hypr_floors(list(wss.values()), clients, act)   # 1.6: the workspaces tower
                 saver = any("screensaver" in str(c.get("class", "")).lower() for c in clients)
                 if self.conf("presence", "lock", default=True) is not False:
                     if saver and not self.away:
@@ -3311,7 +3675,8 @@ class Hub:
                     "hist": {k: list(v) for k, v in self.hist.items()}, "weather": self.weather,
                     "widgets": ws, "alerts": list(self.alerts), "privacy": self.privacy(), "screencast": self.screencast,
                     "mons": self.mons, "theme": self.colors(),
-                    "agents": sorted(list(self.agents.values()) + list(self.crew_agents.values()), key=lambda a: a.get("since", 0)),
+                    "agents": sorted([{**a, **self.agent_health(a.get("name", ""))} for a in self.agents.values()] + list(self.crew_agents.values()),
+                                     key=lambda a: a.get("since", 0)),
                     "focus": self.focus,
                     "git": [{**r, "name": "" if self.privacy() else r["name"], "branch": "" if self.privacy() else r["branch"]}
                             for r in self.git],
@@ -3347,6 +3712,12 @@ class Hub:
                     "timelapse": (self.conf("timelapse", default={}) or {}).get("enabled") is not False,
                     "timelapseEvery": int((self.conf("timelapse", default={}) or {}).get("every", 90) or 90),
                     "away": bool(self.away), "digest": self.public_digest(),
+                    "tower": [{**f, "apps": [""] * len(f["apps"]) if self.privacy() else f["apps"]} for f in self.tower]
+                             if self.conf("pulse", "tower", default=True) is not False else [],
+                    "tips": list(self.tips) if (self.conf("tips", default={}) or {}).get("enabled", True) is not False else [],
+                    "updates": self.updates_public() if (self.conf("updates", default={}) or {}).get("enabled", True) is not False else None,
+                    "layout": self.layout_public(), "layoutEdit": self.layout_edit,
+                    "friends": self.friends_public(),
                     "lan": [{**d, "name": "" if self.privacy() else d["name"], "ip": "" if self.privacy() else d["ip"]}
                             for d in self.lan["devices"]],
                     "scene": self.scene_state() if scene_path(self.scene_kind()) else None,
@@ -3368,6 +3739,11 @@ class Hub:
                            "fireworks": self.conf("pulse", "celebrate", default=True) is not False,
                            "infraWeather": self.conf("pulse", "infra_weather", default=True) is not False,
                            "wallpaper": self.wallpaper_ui(),
+                           "musicCover": self.cover_ui(),
+                           "wled": (self.conf("wled", default={}) or {}).get("enabled") is True,
+                           "tipsEvery": float((self.conf("tips", default={}) or {}).get("every", 40) or 40),
+                           "ivy": self.conf("pulse", "ivy", default=True) is not False,
+                           "secondary": "simple" if str(self.conf("pulse", "secondary", default="full")) == "simple" else "full",
                            "hackerStyle": str(self.conf("pulse", "hacker_style", default="phosphor")),
                            "nocHide": [str(x) for x in (self.conf("pulse", "noc_hide", default=["media", "notifications"]) or [])][:20],
                            "music": self.conf("music", "enabled", default="auto") not in (False, "off"),
@@ -3415,7 +3791,7 @@ class Hub:
         fl = os.environ.get("PULSE_DEMO_SCENE", "") if self.demo else ""
         if fl and os.path.exists(fl):   # the demo video: the scene of the moment, from its flag file
             return open(fl).read().strip() or "sphere"
-        return str(self.scene_override or self.conf("pulse", "scene", default="skyline"))
+        return str(self.scene_override or self.conf("pulse", "scene", default="sphere"))
 
     def demo_now(self) -> float:
         """The demo video's clock for the sky and the holidays: PULSE_DEMO_WARP holds a moment, which then runs on."""
@@ -3499,7 +3875,8 @@ class Hub:
                    self.loop_crew_send, self.loop_launches, self.loop_sky, self.loop_calendar, self.loop_home,
                    self.loop_car, self.loop_quakes, self.loop_timelapse,
                    self.loop_night, self.loop_starlink, self.loop_storms, self.loop_air, self.loop_wrapped,
-                   self.loop_robots, self.loop_season, self.loop_expiry, self.loop_energy, self.loop_net, self.loop_syslog):
+                   self.loop_robots, self.loop_season, self.loop_expiry, self.loop_energy, self.loop_net, self.loop_syslog,
+                   self.loop_wled, self.loop_tips, self.loop_updates):
             threading.Thread(target=fn, daemon=True).start()
 
 
@@ -4049,6 +4426,40 @@ def scene_page(name: str) -> bytes | None:
             f'<canvas id="c"></canvas><script>{safe(rt)}</script><script>{safe(src)}</script></body></html>').encode()
 
 
+DESIGN_RE = re.compile(r"/\*DESIGN\*/(.*?)/\*END\*/", re.S)
+
+
+def design_clean(d) -> dict:
+    """A design from the scene editor, checked: plain data only (it is drawn by scene-design.js, never run)."""
+    if not isinstance(d, dict) or not isinstance(d.get("shapes", []), list) or len(d.get("shapes", [])) > 200:
+        raise ValueError("not a design")
+    out = {"v": 1, "sky": str(d.get("sky") or "none")[:16], "city": bool(d.get("city")),
+           "shapes": [x for x in d.get("shapes", []) if isinstance(x, dict)]}
+    if len(json.dumps(out)) > 300_000:
+        raise ValueError("the design is too big")
+    return out
+
+
+def design_scene(name: str, design: dict) -> str:
+    """The scene file the editor saves: the design as data, then the engine that draws it. One file, like every scene."""
+    data = json.dumps(design_clean(design), indent=1, ensure_ascii=True).replace("/", "\\/")   # no */ or </script inside
+    engine = (WEB / "scene-design.js").read_text(encoding="utf-8")
+    return (f"// {name}: a scene made with the Pulse scene editor (omarchy-pulse scene editor {name}). MIT.\n"
+            "// The DESIGN below is plain data: open it in the editor to change it. The code after it draws it.\n"
+            f"var DESIGN = /*DESIGN*/{data}/*END*/;\n{engine}\nPulseScene.register({json.dumps(name)}, PulseDesign.scene(DESIGN));\n")
+
+
+def design_of(src: str):
+    """The design inside a scene the editor saved, or None for a scene written by hand."""
+    m = DESIGN_RE.search(src or "")
+    if not m:
+        return None
+    try:
+        return design_clean(json.loads(m.group(1)))
+    except ValueError:
+        return None
+
+
 def scene_check(src: str) -> list:
     """What a scene needs to be shared: the checks of `omarchy-pulse scene check` and of the scene lab."""
     out = []
@@ -4086,6 +4497,170 @@ PulseScene.register("NAME", {
   click: function (x, y, state) { return (state.agents || []).length + " agents"; }   // optional: a line of text
 });
 """
+
+
+# ---------------------------------------------------------------------------- 1.6
+def ollama_answer(url: str, model: str, question: str, context: str, timeout: float = 60) -> str:
+    """A free question answered by a local model (Ollama), with a short snapshot of what Pulse sees. Local only."""
+    prompt = ("You are the voice of Omarchy Pulse, a live desktop wallpaper. Answer in one or two short spoken "
+              "sentences, in the language of the question, from these facts when they help:\n" + context +
+              "\nQuestion: " + question.strip())
+    body = json.dumps({"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 120}}).encode()
+    req = urllib.request.Request(url.rstrip("/") + "/api/generate", data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        out = json.loads(r.read(2_000_000)).get("response", "")
+    return re.sub(r"\s+", " ", out).strip()[:400]
+
+
+def local_url(url: str) -> bool:
+    """Ollama and WLED must be on this PC or the LAN: never a host on the internet."""
+    import ipaddress as _ip
+    host = urllib.parse.urlsplit(url if "//" in url else "http://" + url).hostname or ""
+    if host in ("localhost",) or host.endswith(".local") or host.endswith(".lan"):
+        return True
+    try:
+        a = _ip.ip_address(socket.gethostbyname(host))
+        return a.is_private or a.is_loopback or a.is_link_local
+    except (OSError, ValueError):
+        return False
+
+
+def wled_state(rgb, mode: str = "solid", bri: int = 128) -> dict:
+    """The WLED JSON API state for a colour: solid, blink (an alert) or rainbow (fireworks)."""
+    fx = {"solid": 0, "blink": 1, "breathe": 2, "rainbow": 9}.get(mode, 0)
+    return {"on": True, "bri": max(1, min(255, int(bri))), "seg": [{"col": [[int(c) for c in rgb]], "fx": fx, "sx": 160}]}
+
+
+def image_rgb(path: str, w: int = 48, h: int = 27) -> list:
+    """A picture as w*h RGB pixels, through ffmpeg (no image library needed)."""
+    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", path, "-vf", f"scale={w}:{h}", "-frames:v", "1",
+                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, timeout=60)
+    d = r.stdout
+    if len(d) < w * h * 3:
+        raise OSError("ffmpeg could not read the picture")
+    return [tuple(d[i:i + 3]) for i in range(0, w * h * 3, 3)]
+
+
+def palette_from(px: list) -> dict:
+    """The same palette the page takes from a picture: a dark background, two accents, light text; then a whole
+    16-colour terminal palette around them, for a theme to review."""
+    import colorsys
+    lum = sorted(px, key=lambda p: 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2])
+    dark = [sum(p[i] for p in lum[:max(1, len(lum) // 5)]) / max(1, len(lum) // 5) for i in range(3)]
+    bins = [[0.0, 0.0, 0.0, 0.0] for _ in range(24)]
+    for r, g, b in px:
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        if s > 0.3 and v > 0.3:
+            w = s * v
+            bn = bins[int(h * 24) % 24]
+            bn[0] += w; bn[1] += r * w; bn[2] += g * w; bn[3] += b * w   # noqa: E702
+    order = sorted(range(24), key=lambda k: -bins[k][0])
+    avg = lambda k: [bins[k][i] / bins[k][0] for i in (1, 2, 3)]   # noqa: E731
+    bright = lambda c: [min(255, x * max(1, 210 / (max(c) or 1))) for x in c]   # noqa: E731
+    mixc = lambda a, b, k: [a[i] + (b[i] - a[i]) * k for i in range(3)]   # noqa: E731
+    a1 = bright(avg(order[0])) if bins[order[0]][0] else [122, 162, 247]
+    a2 = None
+    for k in order[1:]:
+        if bins[k][0] > bins[order[0]][0] * 0.05 and min(abs(k - order[0]), 24 - abs(k - order[0])) >= 4:
+            a2 = bright(avg(k))
+            break
+    a2 = a2 or mixc(a1, [255, 255, 255], 0.45)
+    bg = mixc(dark, [0, 0, 0], 0.45)
+    fg = mixc([238, 238, 242], a1, 0.12)
+    hx = lambda c: "#" + "".join(f"{int(round(max(0, min(255, x)))):02x}" for x in c)   # noqa: E731
+    def hue(deg, s=0.55, v=0.85):   # the classic terminal colours (red, green, yellow, blue), soft
+        return [x * 255 for x in colorsys.hsv_to_rgb((deg / 360) % 1, s, v)]
+    red, green, yellow, blue = hue(355), hue(120), hue(45), hue(220)
+    base = {"color0": bg, "color1": red, "color2": green, "color3": yellow, "color4": blue, "color5": a2, "color6": a1,
+            "color7": fg, "color8": mixc(bg, fg, 0.35)}
+    for i in range(1, 7):
+        base[f"color{i + 8}"] = mixc(base[f"color{i}"], [255, 255, 255], 0.2)
+    base["color15"] = mixc(fg, [255, 255, 255], 0.5)
+    out = {"accent": hx(a1), "cursor": hx(a1), "foreground": hx(fg), "background": hx(bg),
+           "selection_foreground": hx(bg), "selection_background": hx(a1)}
+    out.update({k: hx(v) for k, v in base.items()})
+    return out
+
+
+def theme_from_picture(pic: str, name: str) -> Path:
+    """omarchy-pulse theme from-wallpaper: a new Omarchy theme folder (colors.toml and the picture) to review by
+    hand. Pulse never applies it: omarchy-theme-set NAME when you like it."""
+    if not re.match(r"^[a-z0-9][a-z0-9-]{1,40}$", name):
+        raise ValueError("a theme name: a-z, 0-9 and -")
+    src = Path(pic).expanduser()
+    if not src.is_file() or src.suffix.lower() not in WALL_TYPES:
+        raise ValueError("a picture: jpg, png or webp")
+    d = HOME / ".config/omarchy/themes" / name
+    if d.exists():
+        raise ValueError(f"{d} already exists")
+    pal = palette_from(image_rgb(str(src)))
+    (d / "backgrounds").mkdir(parents=True)
+    shutil.copy2(src, d / "backgrounds" / ("1-" + src.name))
+    lines = [f"# {name}: made by Omarchy Pulse from {src.name}. Review every colour before you use it."]
+    lines += [f'{k} = "{v}"' for k, v in pal.items()]
+    (d / "colors.toml").write_text("\n".join(lines) + "\n")
+    return d
+
+
+def bind_tips(binds: list) -> list:
+    """Omarchy's own shortcuts with their descriptions (Hyprland bindd), as tips: 'SUPER + SPACE · Launch apps'."""
+    mods = [(64, "SUPER"), (8, "ALT"), (4, "CTRL"), (1, "SHIFT")]
+    out = []
+    for b in binds or []:
+        desc = str(b.get("description") or "").strip()
+        key = str(b.get("key") or "").strip()
+        if not desc or not key or b.get("submap") or desc.lower() == key.lower():
+            continue
+        m = int(b.get("modmask") or 0)
+        combo = " + ".join([n for v, n in mods if m & v] + [key.upper() if len(key) == 1 else key])
+        out.append(f"{combo} · {desc}"[:80])
+    return sorted(set(out))
+
+
+def arch_news(xml: str, days: float = 30, now: float | None = None) -> list:
+    """Arch Linux news that asks for manual intervention before you update."""
+    import email.utils
+    now = now or time.time()
+    out = []
+    for item in re.findall(r"<item>(.*?)</item>", xml, re.S):
+        title = re.sub(r"<!\[CDATA\[|\]\]>", "", (re.findall(r"<title>(.*?)</title>", item, re.S) or [""])[0]).strip()
+        link = (re.findall(r"<link>(.*?)</link>", item, re.S) or [""])[0].strip()
+        date = (re.findall(r"<pubDate>(.*?)</pubDate>", item, re.S) or [""])[0].strip()
+        try:
+            t = email.utils.parsedate_to_datetime(date).timestamp()
+        except (TypeError, ValueError):
+            continue
+        if now - t <= days * 86400 and re.search(r"manual intervention|requires? (?:manual|user) action", title + item, re.I):
+            out.append({"title": title[:120], "link": link, "t": t})
+    return out
+
+
+def hypr_floors(workspaces: list, clients: list, active: int) -> list:
+    """Hyprland's workspaces as the floors of a tower: each window a lit room (the app's class, never its title)."""
+    floors = {}
+    for w in workspaces or []:
+        wid = int(w.get("id", 0))
+        if wid > 0:
+            floors[wid] = {"id": wid, "active": wid == active, "apps": []}
+    for c in clients or []:
+        wid = int((c.get("workspace") or {}).get("id", 0))
+        if wid in floors and c.get("mapped", True):
+            floors[wid]["apps"].append(str(c.get("class") or c.get("initialClass") or "app")[:24].lower())
+    return [floors[k] for k in sorted(floors)][:12]
+
+
+def day_card(day: str, st: dict) -> list:
+    """The numbers of one day, for the end of its video."""
+    n = lambda k: int(st.get(k, 0) or 0)   # noqa: E731
+    lines = [f"YOUR DAY · {day}"]
+    for k, what in (("commits", "commits"), ("agents_done", "agent tasks done"), ("focus", "focus sessions"),
+                    ("focus_min", "minutes of deep work"), ("meetings", "meetings"), ("planes", "planes over you"),
+                    ("launches", "rockets launched"), ("starlink", "Starlink trains overhead"), ("quakes", "quakes felt"),
+                    ("doorbell", "times someone rang")):
+        if n(k):
+            lines.append(f"{n(k):,} {what}")
+    return lines
+
 
 
 def quality_mode(v) -> str:
@@ -4991,7 +5566,8 @@ def sat_eci(o: dict, t: float) -> tuple:
         sat = o.get("_sgp4")
         if sat is None:
             sat = Satrec()
-            _omm.initialize(sat, o)
+            _omm.initialize(sat, {"CLASSIFICATION_TYPE": "U", "NORAD_CAT_ID": 0, "ELEMENT_SET_NO": 999, "REV_AT_EPOCH": 0, "EPHEMERIS_TYPE": 0,
+                                  "BSTAR": 0, "MEAN_MOTION_DOT": 0, "MEAN_MOTION_DDOT": 0, **o})   # newer sgp4 wants every field
             o["_sgp4"] = sat
         jd = julian(t)
         e, r, _v = sat.sgp4(math.floor(jd - 0.5) + 0.5, jd - (math.floor(jd - 0.5) + 0.5))
@@ -5337,18 +5913,132 @@ def make_timelapse(day: str, conf: dict, keep: bool = False) -> Path | None:
     mons = sorted((d for d in root.iterdir() if d.is_dir()), key=lambda d: -len(list(d.glob("*.jpg"))))
     if not mons or len(list(mons[0].glob("*.jpg"))) < 5:
         return None
-    out_dir = Path(str(conf.get("dir") or (HOME / "Videos" / "omarchy-pulse"))).expanduser()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"pulse-{day}.mp4"
+    out = diary_path(day, conf)
+    out.parent.mkdir(parents=True, exist_ok=True)
     r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(int(conf.get("fps", 30) or 30)), "-pattern_type", "glob",
-                        "-i", str(mons[0] / "*.jpg"), "-vf", "scale=1280:-2:flags=lanczos", "-c:v", "libx264", "-preset", "veryfast",
+                        "-i", str(mons[0] / "*.jpg"), "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:flags=lanczos,"
+                        "pad=1280:720:(ow-iw)/2:(oh-ih)/2", "-r", "30", "-c:v", "libx264", "-preset", "veryfast",
                         "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], capture_output=True, timeout=600)
     if r.returncode != 0:
         log("timelapse: " + r.stderr.decode(errors="replace")[-200:])
         return None
+    if conf.get("cards", True) is not False:   # 1.6: the day's diary: a title before, your numbers after
+        try:
+            add_day_cards(out, day)
+        except Exception as e:   # noqa: BLE001 - the plain video is still there
+            log(f"timelapse cards: {e}")
     if not keep:
         shutil.rmtree(root, ignore_errors=True)
     return out
+
+
+def diary_path(day: str, conf: dict) -> Path:
+    return Path(str(conf.get("dir") or (HOME / "Videos" / "omarchy-pulse"))).expanduser() / f"pulse-{day}.mp4"
+
+
+def text_clip(work: Path, i: int, text: str, font: str, secs: float = 2.6) -> Path | None:
+    """A card of white text on the night blue, as a short clip (ffmpeg drawtext)."""
+    tf = work / f"card{i}.txt"
+    tf.write_text(text)
+    out = work / f"card{i}.mp4"
+    dt_ = (f"drawtext=textfile='{tf}':fontcolor=white:fontsize=54:line_spacing=18:x=(w-text_w)/2:y=(h-text_h)/2"
+           + (f":fontfile='{font}'" if font else ""))
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=0x0b0f1a:s=1280x720:d={secs}",
+                        "-vf", dt_ + f",fade=t=in:d=0.4,fade=t=out:st={secs - 0.4}:d=0.4", "-c:v", "libx264", "-preset", "veryfast",
+                        "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30", str(out)], capture_output=True, timeout=120)
+    return out if r.returncode == 0 else None
+
+
+def add_day_cards(video: Path, day: str) -> None:
+    """The day's video becomes a diary: a title card, the day, the numbers of the day (counts only, never names)."""
+    work = STATE_DIR / "diary"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    font = ""
+    if shutil.which("fc-match"):
+        font = subprocess.run(["fc-match", "-f", "%{file}", "monospace:bold"], capture_output=True, text=True).stdout.strip()
+    when = time.strftime("%A %d %B %Y", time.strptime(day, "%Y-%m-%d"))
+    head = text_clip(work, 0, f"{when.upper()}\nOMARCHY PULSE", font, 2.2)
+    lines = day_card(day, day_stats().get(day) or {})
+    tail = text_clip(work, 1, "\n".join(lines[1:]) if len(lines) > 1 else "see you tomorrow", font, 3.0)
+    parts = [p for p in (head, video, tail) if p]
+    if len(parts) < 2:
+        return
+    lst = work / "list.txt"
+    lst.write_text("".join(f"file '{x}'\n" for x in parts))
+    tmp = work / "diary.mp4"
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy",
+                        "-movflags", "+faststart", str(tmp)], capture_output=True, timeout=300)
+    if r.returncode == 0 and tmp.stat().st_size > 0:
+        shutil.move(str(tmp), str(video))
+    shutil.rmtree(work, ignore_errors=True)
+
+
+def news_read() -> set:
+    try:
+        return set(json.loads((STATE_DIR / "news-read.json").read_text()))
+    except (OSError, ValueError):
+        return set()
+
+
+def day_stats() -> dict:
+    try:
+        d = json.loads((STATE_DIR / "days.json").read_text())
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def make_recap(last_day: str, conf: dict) -> Path | None:
+    """1.6: the week in a minute: a moment of each day's video (the diary), then the numbers of the week."""
+    if not shutil.which("ffmpeg"):
+        return None
+    end = time.mktime(time.strptime(last_day, "%Y-%m-%d")) + 43200
+    days = [time.strftime("%Y-%m-%d", time.localtime(end - (6 - i) * 86400)) for i in range(7)]
+    vids = [diary_path(d, conf) for d in days if diary_path(d, conf).exists()]
+    if not vids:
+        return None
+    work = STATE_DIR / "recap"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    font = ""
+    if shutil.which("fc-match"):
+        font = subprocess.run(["fc-match", "-f", "%{file}", "monospace:bold"], capture_output=True, text=True).stdout.strip()
+    year, week = time.strftime("%G", time.localtime(end)), time.strftime("%V", time.localtime(end))   # the ISO week
+    parts = [text_clip(work, 0, f"WEEK {int(week)} · {year}\nOMARCHY PULSE", font, 2.2)]
+    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30"]
+    for k, f in enumerate(vids):
+        out = work / f"day{k}.mp4"
+        mid = 6.0
+        if shutil.which("ffprobe"):
+            pr = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+                                capture_output=True, text=True, timeout=30)
+            try:
+                mid = max(0.0, float(pr.stdout.strip()) / 2 - 1.5)
+            except ValueError:
+                pass
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{mid:.2f}", "-i", str(f), "-t", "3",
+                            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2", "-an",
+                            *enc, str(out)], capture_output=True, timeout=120)
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            parts.append(out)
+    total: dict = {}
+    allst = day_stats()
+    for d in days:
+        for k, v in (allst.get(d) or {}).items():
+            total[k] = total.get(k, 0) + v
+    lines = day_card("", total)[1:]
+    parts.append(text_clip(work, 1, "\n".join(lines) if lines else "see you next week", font, 3.2))
+    parts = [p for p in parts if p]
+    if len(parts) < 2:
+        return None
+    lst = work / "list.txt"
+    lst.write_text("".join(f"file '{x}'\n" for x in parts))
+    final = Path(str(conf.get("dir") or (HOME / "Videos" / "omarchy-pulse"))).expanduser() / f"pulse-week-{year}-W{week}.mp4"
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy",
+                        "-movflags", "+faststart", str(final)], capture_output=True, timeout=300)
+    shutil.rmtree(work, ignore_errors=True)
+    return final if r.returncode == 0 else None
 
 
 def year_stats(year: str) -> dict:
@@ -5754,6 +6444,21 @@ def make_handler(hub: Hub, tok: str, port: int):
                 self.end_headers()
                 self.wfile.write(page)
                 return
+            if path == "/api/cover":   # 1.6: the cover of the song that plays, for its colours
+                if not self._authed(q):
+                    return
+                cv = hub.cover_bytes()
+                if not cv:
+                    self._send(404, b"{}")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", cv[1])
+                self.send_header("Content-Length", str(len(cv[0])))
+                self.send_header("Cache-Control", "private, max-age=86400")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(cv[0])
+                return
             if path == "/api/wallpaper":   # 1.5.1: your own wallpaper, read from your disk (never from the network)
                 if not self._authed(q):
                     return
@@ -5769,6 +6474,16 @@ def make_handler(hub: Hub, tok: str, port: int):
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.end_headers()
                 self.wfile.write(data)
+                return
+            if path == "/api/scene-design":   # 1.6: the scene editor opens a scene it made
+                if not self._authed(q):
+                    return
+                f = scene_path(q.get("name", ""))
+                if not f:
+                    self._send(200, b"{}")
+                    return
+                d = design_of(f.read_text(encoding="utf-8", errors="replace"))
+                self._send(200, json.dumps({"design": d, "path": str(f)} if d else {"error": "handwritten", "path": str(f)}).encode())
                 return
             if path in ("/api/scenes", "/api/scene-src", "/api/scene-state"):   # the scene lab
                 if not self._authed(q):
@@ -5896,6 +6611,76 @@ def make_handler(hub: Hub, tok: str, port: int):
             if u.path.startswith("/api/ack/"):   # 1.5: acknowledge a problem on its own system (a source with ack = "...")
                 self._send(200, json.dumps(hub.ack(urllib.parse.unquote(u.path[9:]))).encode())
                 return
+            if u.path == "/api/scene-design":   # 1.6: the scene editor saves (only into your scenes folder)
+                name = q.get("name", "")
+                if not SCENE_NAME.match(name) or name in BUILTIN_SCENES:
+                    self._send(400, b'{"error":"a name: a-z, 0-9 and -, not a built-in scene"}')
+                    return
+                f = USER_SCENES / f"{name}.js"
+                if (WEB / "scenes" / f"{name}.js").exists() and not f.exists():
+                    self._send(409, b'{"error":"a scene that comes with Pulse has this name: choose another"}')
+                    return
+                if f.exists() and design_of(f.read_text(encoding="utf-8", errors="replace")) is None:
+                    self._send(409, b'{"error":"a scene written by hand has this name: choose another"}')
+                    return
+                try:
+                    src = design_scene(name, json.loads(body or b"{}"))
+                except (ValueError, TypeError) as e:
+                    self._send(400, json.dumps({"error": str(e)}).encode())
+                    return
+                if len(src.encode()) > SCENE_MAX:
+                    self._send(400, b'{"error":"too big"}')
+                    return
+                USER_SCENES.mkdir(parents=True, exist_ok=True)
+                tmp = f.with_suffix(".js.tmp")
+                tmp.write_text(src, encoding="utf-8")
+                tmp.replace(f)
+                shown = "~/" + str(f.relative_to(HOME)) if HOME in f.parents else str(f)
+                self._send(200, json.dumps({"path": shown, "checks": scene_check(src)}).encode())
+                return
+            if u.path == "/api/scene-try":   # 1.6: the editor shows its scene on the wallpaper (until a restart)
+                name = q.get("name", "")
+                with hub.lock:
+                    hub.scene_override = "" if hub.scene_override == name or not scene_path(name) else name
+                self._send(200, json.dumps({"on": bool(hub.scene_override)}).encode())
+                return
+            if u.path == "/api/glow":   # 1.6: the page tells the colour of the sphere (for WLED)
+                try:
+                    gj = json.loads(body or b"{}")
+                    rgb = tuple(max(0, min(255, int(v))) for v in gj.get("rgb", [])[:3])
+                    if len(rgb) == 3:
+                        hub.glow = {"rgb": rgb, "t": time.time()}
+                except (ValueError, TypeError, AttributeError):
+                    pass
+                self._send(204, b"")
+                return
+            if u.path == "/api/ask":   # 1.6: omarchy-pulse ask "...": the same answers as the voice
+                self._send(200, json.dumps({"answer": hub.voice_command(body.decode("utf-8", "replace")[:500])}).encode())
+                return
+            if u.path == "/api/layout":   # 1.6: where you put the panels (omarchy-pulse layout edit)
+                do = q.get("do", "")
+                if do in ("edit", "cancel", "done"):
+                    hub.layout_edit = do == "edit"
+                elif do == "reset":
+                    (CONF_DIR / "layout.json").unlink(missing_ok=True)
+                    hub.layout_edit = False
+                elif do == "save":
+                    try:
+                        lj = json.loads(body or b"{}")
+                    except ValueError:
+                        lj = None
+                    if isinstance(lj, dict) and len(lj) <= 200:
+                        clean = {}
+                        for k, v in lj.items():
+                            if isinstance(v, dict) and re.match(r"^[\w.:-]{1,64}$", str(k)):
+                                clean[str(k)] = {"slot": v.get("slot") if v.get("slot") in ("left", "right", "center") else None,
+                                                 "order": float(v["order"]) if isinstance(v.get("order"), (int, float)) else None,
+                                                 "hidden": bool(v.get("hidden"))}
+                        CONF_DIR.mkdir(parents=True, exist_ok=True)
+                        (CONF_DIR / "layout.json").write_text(json.dumps(clean, indent=1))
+                    hub.layout_edit = False
+                self._send(200, json.dumps({"edit": hub.layout_edit}).encode())
+                return
             if u.path == "/api/scene-error":   # a community scene broke: once a minute in the log
                 try:
                     e = json.loads(body or b"{}")
@@ -5922,7 +6707,8 @@ def make_handler(hub: Hub, tok: str, port: int):
                 self._send(200, b'{"ok":true}')
             elif u.path.startswith("/api/agent/"):
                 hub.set_agent(urllib.parse.unquote(u.path[11:]), q.get("state", "working"),
-                              q.get("text") or body.decode("utf-8", "replace").strip())
+                              q.get("text") or body.decode("utf-8", "replace").strip(), group=q.get("group", ""),
+                              settle=float(q.get("settle") or 0) if re.match(r"^\d{1,2}(\.\d+)?$", q.get("settle", "")) else 0)
                 self._send(200, b'{"ok":true}')
             elif u.path == "/api/fx":
                 kind = re.sub(r"[^a-z]", "", q.get("kind", "fireworks"))[:20] or "fireworks"
@@ -6204,14 +6990,46 @@ def from_demo(hub: Hub) -> None:
                                    {"title": "BTC 71,240 $ ▲ 1.2%"}, {"title": "next: standup 09:30"},
                                    {"title": "Omarchy 4.5 released"}]})
     threading.Thread(target=tick, daemon=True).start()
+    # 1.6: the workspaces tower, the tips, the parcels (made up)
+    hub.tower = [{"id": 1, "active": False, "apps": ["ghostty", "ghostty"]},
+                 {"id": 2, "active": True, "apps": ["chromium", "ghostty", "obsidian"]},
+                 {"id": 3, "active": False, "apps": ["spotify"]}, {"id": 4, "active": False, "apps": []},
+                 {"id": 5, "active": False, "apps": ["signal", "chromium"]}]
+    hub.crew_city = {"luca": {"name": "luca", "week": 34, "ci": "ok", "flash": 0, "t": time.time() + 86400 * 365},
+                     "sara": {"name": "sara", "week": 12, "ci": "fail", "flash": 0, "t": time.time() + 86400 * 365},
+                     "dev42": {"name": "dev42", "week": 61, "ci": "ok", "flash": 0, "t": time.time() + 86400 * 365}}
+
+    def friends_commit():   # a friend commits now and then (made up)
+        import random as _r
+        while True:
+            time.sleep(float(os.environ.get("PULSE_DEMO_FRIEND_EVERY") or 0) or 14 + _r.random() * 10)
+            hub.crew_receive({"v": 1, "id": "demo-friend", "name": _r.choice(["luca", "sara", "dev42"]), "t": time.time(), "ev": "commit"})
+    threading.Thread(target=friends_commit, daemon=True).start()
+    threading.Thread(target=hub.loop_wled, daemon=True).start()   # 1.6: WLED works in the demo too (if [wled] is set)
+    if os.environ.get("PULSE_DEMO_NEWS"):   # the demo video: the news to read before an update, while its flag file exists
+        def news_flag(flag=os.environ["PULSE_DEMO_NEWS"]):
+            while True:
+                with hub.lock:
+                    hub.updates = {**(hub.updates or {}), "news": [{"title": "Demo: an update that asks for manual intervention", "link": "demo:1",
+                                                            "t": time.time()}] if os.path.exists(flag) else []}
+                time.sleep(0.2)
+        threading.Thread(target=news_flag, daemon=True).start()
+    hub.tips = ["SUPER + SPACE · Launch apps", "SUPER + RETURN · Terminal", "SUPER + K · Show key bindings",
+                "SUPER + W · Close window", "SUPER + ALT + SPACE · Omarchy menu"]
+    hub.updates = {"n": 23, "aur": 2, "kernel": True, "t": time.time(),
+                   "news": [] if os.environ.get("PULSE_DEMO_NONEWS") else
+                   [{"title": "Demo: an update that asks for manual intervention", "link": "demo:1", "t": time.time()}]}
     hub.lan = {"net": "10.0.0.0/24", "devices": [
         {"ip": "10.0.0.1", "name": "router", "new": False, "id": 11}, {"ip": "10.0.0.5", "name": "nas", "new": False, "id": 23},
         {"ip": "10.0.0.8", "name": "tv", "new": False, "id": 37}, {"ip": "10.0.0.12", "name": "phone", "new": False, "id": 41},
         {"ip": "10.0.0.20", "name": "doorbell", "new": False, "id": 58}, {"ip": "10.0.0.31", "name": "printer", "new": False, "id": 66},
         {"ip": "10.0.0.33", "name": "", "new": False, "id": 72}, {"ip": "10.0.0.40", "name": "laptop", "new": False, "id": 89}]}
-    hub.set_agent("claude · omarchytv", "working", "editing")
+    for k, v in {"claude": [1] * 23 + [0, 1], "codex": [1, 1, 0, 1, 1, 1, 1, 0, 1, 1], "grok": [1, 1, 1, 0, 1, 1],
+                 "hermes": [0, 1, 0, 0, 1]}.items():   # 1.6: made-up health
+        hub.health.setdefault(k, v)
+    hub.set_agent("claude · omarchytv", "working", "editing", group="a1b2c3d4")   # 1.6: claude and codex in one repo
     hub.set_agent("grok", "waiting", "needs your OK")
-    hub.set_agent("codex · pulse", "working", "running a command")
+    hub.set_agent("codex · omarchytv", "working", "running a command", group="a1b2c3d4")
     try:   # the real news feeds, if the network answers
         r = subprocess.run([str(HERE / "sources" / "pulse-feed"), "Omarchy=https://github.com/basecamp/omarchy/releases.atom",
                             "DHH=https://world.hey.com/dhh/feed.atom"], capture_output=True, timeout=12)
@@ -6353,6 +7171,7 @@ def from_demo(hub: Hub) -> None:
                         devs = [d for d in hub.lan["devices"] if d["ip"] != "10.0.0.57"]
                         if on:
                             devs.append({"ip": "10.0.0.57", "name": "", "new": True, "id": 97})
+                            hub.term.append({"t": time.time(), "text": "+ new device on the network: 10.0.0.57"})
                         hub.lan = {**hub.lan, "devices": devs}
                     if on:
                         hub.raise_alert("lan", "new device on your network", "10.0.0.57", "warn")
@@ -6393,11 +7212,11 @@ def port_of(cfg: dict | None = None) -> int:
     return int(os.environ.get("PULSE_PORT") or (cfg.get("pulse") or {}).get("port") or DEFAULT_PORT)
 
 
-def client(method: str, path: str, body: bytes = b"", ctype: str = "text/plain") -> dict:
+def client(method: str, path: str, body: bytes = b"", ctype: str = "text/plain", timeout: float = 5) -> dict:
     port = port_of()
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=body if method == "POST" else None,
                                  method=method, headers={"X-Pulse-Token": token(), "Content-Type": ctype})
-    with urllib.request.urlopen(req, timeout=5) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"{}")
 
 
@@ -6524,10 +7343,10 @@ def cmd_term() -> int:
 
 
 def cmd_scene(args: list) -> int:
-    """omarchy-pulse scene list | new NAME | check NAME | lab [NAME]"""
+    """omarchy-pulse scene list | new NAME | check NAME | lab [NAME] | editor [NAME]"""
     sub = args[0] if args else "list"
     if sub == "list":
-        cur = str((load_config().get("pulse") or {}).get("scene") or "skyline")
+        cur = str((load_config().get("pulse") or {}).get("scene") or "sphere")
         for n in BUILTIN_SCENES:
             print(f"  {'*' if n == cur else ' '} {n:16} built in")
         for n, where in scene_list().items():
@@ -6560,18 +7379,19 @@ def cmd_scene(args: list) -> int:
         for lv, msg in res:
             print({"ok": "  ✓", "warn": "  !", "crit": "  ✗"}[lv], msg)
         return 1 if any(lv == "crit" for lv, _ in res) else 0
-    if sub == "lab":
-        url = f"http://127.0.0.1:{port_of()}/lab.html?token={urllib.parse.quote(token())}&scene={urllib.parse.quote(name)}"
+    if sub in ("lab", "editor"):
+        page = "lab.html" if sub == "lab" else "editor.html"
+        url = f"http://127.0.0.1:{port_of()}/{page}?token={urllib.parse.quote(token())}&scene={urllib.parse.quote(name)}"
         try:
             client("GET", "/api/scenes")
         except Exception:   # noqa: BLE001
             print("Pulse is not running: start it first (or omarchy-pulse serve --demo)")
             return 1
-        print(f"the scene lab: {url}")
+        print(f"the scene {sub}: {url}")
         if shutil.which("xdg-open"):
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return 0
-    print("usage: omarchy-pulse scene list | new NAME | check NAME | lab [NAME]")
+    print("usage: omarchy-pulse scene list | new NAME | check NAME | lab [NAME] | editor [NAME]")
     return 2
 
 
@@ -6592,29 +7412,108 @@ TOOL_WORDS = {"Bash": "running a command", "Edit": "editing", "MultiEdit": "edit
               "WebSearch": "on the web", "Task": "delegating", "TodoWrite": "planning", "NotebookEdit": "editing"}
 
 
+TOOL_WORDS.update({"bash": "running a command", "shell": "running a command", "terminal": "running a command",
+                   "read_file": "reading", "write_file": "writing a file", "edit_file": "editing", "patch": "editing",
+                   "search": "searching", "search_files": "searching", "web_search": "on the web", "web_fetch": "on the web",
+                   "browser": "on the web", "delegate_task": "delegating", "todo": "planning",
+                   "run_shell_command": "running a command", "replace": "editing", "edit": "editing", "read": "reading",
+                   "write": "writing a file", "glob": "searching", "grep": "searching", "search_file_content": "searching",
+                   "google_web_search": "on the web", "webfetch": "on the web", "task": "delegating", "todowrite": "planning"})
+
+HOOK_SETUP = {   # 1.6: omarchy-pulse hook setup: what to paste for each agent
+    "claude": ("~/.claude/settings.json", '"hooks": {EV} with each event running  omarchy-pulse hook claude',
+               ["SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "SessionEnd"]),
+    "codex": ("~/.codex/hooks.json", '{"hooks": {EV}} with each event running  omarchy-pulse hook codex',
+              ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Stop", "SessionEnd"]),
+    "grok": ("~/.grok/hooks/pulse.json", '{"hooks": {EV}} with each event running  omarchy-pulse hook grok',
+             ["SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "StopFailure", "SessionEnd"]),
+    "gemini": ("~/.gemini/settings.json", '"hooks": {EV} with each event running  omarchy-pulse hook gemini',
+               ["SessionStart", "BeforeAgent", "BeforeTool", "Notification", "AfterAgent", "SessionEnd"]),
+    "copilot": ("~/.copilot/hooks/pulse.json", '{"version": 1, "hooks": {EV}} with each event running  omarchy-pulse hook copilot EVENT',
+                ["sessionStart", "userPromptSubmitted", "preToolUse", "notification", "agentStop", "errorOccurred", "sessionEnd"]),
+    "hermes": ("~/.hermes/config.yaml", "hooks: {EV} each with  command: omarchy-pulse hook hermes",
+               ["on_session_start", "pre_llm_call", "pre_tool_call", "post_llm_call", "on_session_end"]),
+}
+
+
+def hook_snippet(kind: str) -> str:
+    """The exact text to paste in an agent's config so it tells Pulse what it does."""
+    where, _, evs = HOOK_SETUP[kind]
+    if kind == "hermes":
+        body = "hooks:\n" + "".join(f"  {e}:\n    - command: \"omarchy-pulse hook hermes\"\n      timeout: 5\n" for e in evs)
+        return f"# {where}\n{body}"
+    if kind == "copilot":
+        hooks = {e: [{"type": "command", "bash": f"omarchy-pulse hook copilot {e}", "timeoutSec": 5}] for e in evs}
+        return f"// {where}\n" + json.dumps({"version": 1, "hooks": hooks}, indent=2)
+    unit = "timeout"
+    hooks = {e: [{"hooks": [{"type": "command", "command": f"omarchy-pulse hook {kind}", unit: 5000 if kind == "gemini" else 5}]}]
+             for e in evs}
+    if kind == "claude" or kind == "gemini":
+        return f"// {where}: merge this \"hooks\" block into the file\n" + json.dumps({"hooks": hooks}, indent=2)
+    return f"// {where}\n" + json.dumps({"hooks": hooks}, indent=2)
+# 1.6: the hook events of each agent -> (state, words). Claude Code, Codex and Grok Build send the same kind of JSON
+# (Grok in camelCase); Hermes Agent uses its own event names.
+HOOK_EVENTS = {
+    "SessionStart": ("idle", "ready"), "UserPromptSubmit": ("working", "thinking"), "PreToolUse": ("working", None),
+    "PostToolUseFailure": ("working", "retrying"), "Notification": ("waiting", "needs you"),
+    "PermissionRequest": ("waiting", "needs you"), "Stop": ("done", "finished"), "StopFailure": ("failed", "stopped with an error"),
+    "SessionEnd": ("gone", ""),
+    "on_session_start": ("idle", "ready"), "pre_llm_call": ("working", "thinking"), "pre_tool_call": ("working", None),
+    "post_llm_call": ("done", "answered"), "on_session_end": ("gone", ""),
+    # Gemini CLI
+    "BeforeAgent": ("working", "thinking"), "BeforeTool": ("working", None), "AfterAgent": ("done", "finished"),
+    # GitHub Copilot CLI (camelCase events: the hook passes the event's name as an argument)
+    "sessionStart": ("idle", "ready"), "userPromptSubmitted": ("working", "thinking"), "preToolUse": ("working", None),
+    "notification": ("waiting", "needs you"), "permissionRequest": ("waiting", "needs you"), "agentStop": ("done", "finished"),
+    "errorOccurred": ("failed", "stopped with an error"), "sessionEnd": ("gone", ""),
+    # the OpenCode and Pi plugins of community/agents send Pulse's own states
+    "idle": ("idle", "ready"), "working": ("working", None), "waiting": ("waiting", "needs you"), "done": ("done", "finished"),
+    "failed": ("failed", "stopped with an error"), "gone": ("gone", ""),
+}
+HOOK_AGENTS = ("claude", "codex", "grok", "hermes", "gemini", "copilot", "opencode", "pi")
+
+
+def agent_group(cwd: str) -> str:
+    """Agents working in the same repo (or folder) share a group: a short hash, never the path."""
+    top = cwd
+    try:
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=1)
+        if r.returncode == 0 and r.stdout.strip():
+            top = r.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return hashlib.sha1(os.path.realpath(top).encode()).hexdigest()[:8]
+
+
 def agent_hook(kind: str, args: list) -> None:
-    """Claude Code hooks send JSON on stdin; Codex CLI's notify passes JSON as the last argument.
-    Only the event, the tool name and the project folder are used: never the prompt or the code."""
-    if kind == "codex":
-        data = json.loads(args[-1]) if args else {}
+    """The hooks of Claude Code, Codex, Grok Build, Hermes Agent, Gemini CLI and Copilot CLI send JSON on stdin
+    (Codex's older notify passes it as the last argument; Copilot's event name comes as an argument); the OpenCode and
+    Pi plugins in community/agents send Pulse's own states. Only the event, the tool's name and the project folder are used: never the prompt,
+    the answer or the code."""
+    kind = kind if kind in HOOK_AGENTS else "claude"
+    if kind == "codex" and args and args[-1].lstrip().startswith("{"):   # the older notify
+        data = json.loads(args[-1])
         if data.get("type") == "agent-turn-complete":
-            cwd = Path(data.get("cwd") or os.getcwd()).name
-            quiet_client("/api/agent/" + urllib.parse.quote(f"codex · {cwd}"[:32]) + "?state=done&text=turn+complete")
+            cwd = data.get("cwd") or os.getcwd()
+            quiet_client("/api/agent/" + urllib.parse.quote(f"codex · {Path(cwd).name}"[:32]) + "?" +
+                         urllib.parse.urlencode({"state": "done", "text": "turn complete", "group": agent_group(cwd)}))
         return
-    data = json.loads(sys.stdin.read() or "{}")
-    ev = data.get("hook_event_name", "")
-    name = f"claude · {Path(data.get('cwd') or os.getcwd()).name}"[:32]
-    state, text = {
-        "SessionStart": ("idle", "ready"),
-        "UserPromptSubmit": ("working", "thinking"),
-        "PreToolUse": ("working", TOOL_WORDS.get(data.get("tool_name", ""), str(data.get("tool_name", "working"))[:24])),
-        "Notification": ("waiting", "needs you"),
-        "Stop": ("done", "finished"),
-        "SessionEnd": ("gone", ""),
-    }.get(ev, (None, None))
-    if state:
-        quiet_client("/api/agent/" + urllib.parse.quote(name) + "?" + urllib.parse.urlencode({"state": state,
-                                                                                               "text": text}))
+    raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+    data = json.loads(raw or "{}")
+    data = data if isinstance(data, dict) else {}
+    ev = str(data.get("hook_event_name") or data.get("hookEventName") or os.environ.get("GROK_HOOK_EVENT") or
+             (args[0] if args else ""))
+    cwd = str(data.get("cwd") or data.get("workspaceRoot") or os.environ.get("GROK_WORKSPACE_ROOT") or os.getcwd())
+    tool = str(data.get("tool_name") or data.get("toolName") or "")
+    state, text = HOOK_EVENTS.get(ev, (None, None))
+    if not state:
+        return
+    if text is None:
+        text = TOOL_WORDS.get(tool, TOOL_WORDS.get(tool.lower(), tool[:24] or "working"))
+    q = {"state": state, "text": text, "group": agent_group(cwd)}
+    if kind in ("hermes", "pi") and state == "done":
+        q["settle"] = "5"   # they call the model again after a tool: it is done only if nothing follows
+    quiet_client("/api/agent/" + urllib.parse.quote(f"{kind} · {Path(cwd).name}"[:32]) + "?" + urllib.parse.urlencode(q))
 
 
 def main(argv: list[str]) -> int:
@@ -6872,6 +7771,11 @@ def main(argv: list[str]) -> int:
         out = make_timelapse(day, load_config().get("timelapse") or {}, keep=day == time.strftime("%Y-%m-%d"))
         print(out if out else f"no pictures for {day} yet (the wallpaper takes one every few minutes while you see it), or no ffmpeg")
         return 0 if out else 1
+    if cmd == "recap":
+        day = argv[2] if len(argv) > 2 and argv[2] != "today" else time.strftime("%Y-%m-%d")
+        out = make_recap(day, load_config().get("timelapse") or {})
+        print(out if out else "no day videos in the 7 days up to " + day + " yet (they are made every night), or no ffmpeg")
+        return 0 if out else 1
     if cmd == "listen":
         a = argv[2] if len(argv) > 2 else "5"
         if a == "--file" and len(argv) > 3:
@@ -6909,6 +7813,29 @@ def main(argv: list[str]) -> int:
         quiet_client(f"/api/agent/{urllib.parse.quote(name)}?" + urllib.parse.urlencode(
             {"state": "done" if rc == 0 else "failed", "text": "ok" if rc == 0 else f"exit {rc}"}))
         return rc
+    if cmd == "hook" and argv[2:3] == ["setup"]:   # 1.6: what to paste for each agent
+        kinds = argv[3:] or list(HOOK_SETUP) + ["opencode", "pi"]
+        for k in kinds:
+            if k in HOOK_SETUP:
+                print(hook_snippet(k) + "\n")
+            elif k in ("opencode", "pi"):
+                print(f"# {k}: omarchy-pulse hook install {k}\n")
+        print("# Codex: approve the new hooks once with /hooks. Hermes: it asks once for each hook (or hooks_auto_accept: true).\n"
+              "# Grok Build also reads Claude Code's hook files: with those it already shows up, named claude.\n"
+              "# Claude Duet, Meta Muse and other agents without hooks: [agents] from_notifications = [\"Claude Duet\"]\n"
+              "# any other command: omarchy-pulse watch NAME -- COMMAND ...")
+        return 0
+    if cmd == "hook" and argv[2:3] == ["install"]:   # 1.6: OpenCode and Pi load a small plugin file
+        k = argv[3] if len(argv) > 3 else ""
+        dest = {"opencode": HOME / ".config/opencode/plugins/omarchy-pulse.js", "pi": HOME / ".pi/agent/extensions/omarchy-pulse.ts"}.get(k)
+        src = HERE / "agents" / {"opencode": "opencode-pulse.js", "pi": "pi-pulse.ts"}.get(k, "-")
+        if not dest or not src.exists():
+            print("omarchy-pulse hook install opencode | pi   (the others: omarchy-pulse hook setup)", file=sys.stderr)
+            return 2
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        print(f"{dest}\n  restart {k} and its sessions fly over your city")
+        return 0
     if cmd == "hook":
         try:
             agent_hook(argv[2] if len(argv) > 2 else "claude", argv[3:])
@@ -6931,6 +7858,65 @@ def main(argv: list[str]) -> int:
             print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
             return 1
         return 0
+    if cmd == "ask":
+        q = " ".join(argv[2:]).strip()
+        if not q:
+            print('omarchy-pulse ask "how are my servers?"', file=sys.stderr)
+            return 2
+        try:
+            print(client("POST", "/api/ask", q.encode(), timeout=150)["answer"])
+        except Exception as e:   # noqa: BLE001
+            print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
+            return 1
+        return 0
+    if cmd == "layout":
+        do = {"edit": "edit", "done": "done", "cancel": "cancel", "reset": "reset"}.get(argv[2] if len(argv) > 2 else "", "")
+        if not do:
+            print("omarchy-pulse layout edit | done | reset", file=sys.stderr)
+            return 2
+        try:
+            client("POST", "/api/layout?do=" + do)
+        except Exception as e:   # noqa: BLE001
+            print(f"omarchy-pulse is not running? ({e})", file=sys.stderr)
+            return 1
+        print({"edit": "drag the panels with the mouse, then press Save on the wallpaper (or omarchy-pulse layout done)",
+               "done": "done", "cancel": "done", "reset": "the panels are back where Pulse puts them"}[do])
+        return 0
+    if cmd == "theme":
+        rest = argv[2:]
+        if not rest or rest[0] != "from-wallpaper" or len(rest) < 2 or not shutil.which("ffmpeg"):
+            print("omarchy-pulse theme from-wallpaper [PICTURE] NAME   (needs ffmpeg)", file=sys.stderr)
+            return 2
+        name = rest[-1]
+        pic = rest[1] if len(rest) > 2 else str(wallpaper_path((load_config().get("pulse") or {}).get("wallpaper") or "omarchy") or "")
+        if not pic:
+            print("no picture: give one, or set wallpaper in [pulse]", file=sys.stderr)
+            return 2
+        try:
+            d = theme_from_picture(pic, name)
+        except (ValueError, OSError) as e:
+            print(f"theme: {e}", file=sys.stderr)
+            return 1
+        print(f"{d}\n  colors.toml and the picture are there: review them, then  omarchy-theme-set {name}")
+        return 0
+    if cmd == "news":
+        try:
+            with urllib.request.urlopen(urllib.request.Request("https://archlinux.org/feeds/news/",
+                                        headers={"User-Agent": "omarchy-pulse"}), timeout=15) as r:
+                items = arch_news(r.read(1_000_000).decode("utf-8", "replace"))
+        except Exception as e:   # noqa: BLE001
+            print(f"arch news: {e}", file=sys.stderr)
+            return 1
+        if argv[2:3] == ["read"]:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            (STATE_DIR / "news-read.json").write_text(json.dumps(sorted(news_read() | {x["link"] for x in items})))
+            print("marked as read")
+            return 0
+        if not items:
+            print("no Arch news asking for manual intervention in the last 30 days")
+        for x in items:
+            print(time.strftime("%d %b", time.localtime(x["t"])) + "  " + x["title"] + "\n        " + x["link"])
+        return 0
     if cmd == "doctor":
         ok = True
         print(f"Omarchy Pulse {VERSION}")
@@ -6943,7 +7929,9 @@ def main(argv: list[str]) -> int:
                           ("gh", "GitHub notifications"), ("fping", "finds every device on your network"),
                           ("piper-tts", "the voice (or espeak-ng)"), ("espeak-ng", "a simpler voice"),
                           ("whisper-cli", "hey sphere: speech to text (or faster-whisper)"), ("git", "the Git city"),
-                          ("hyprctl", "calm down under windows, privacy")):
+                          ("hyprctl", "calm down under windows, privacy, the workspaces tower, the tips"),
+                          ("checkupdates", "1.6: pending updates as parcels (pacman-contrib)"),
+                          ("ollama", "1.6: ask the sphere anything, with a local AI ([ai] ollama)")):
             print(("  ok   " if shutil.which(tool) else "  --   ") + f"{tool:20} ({why})")
         notification_dir = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy/notifications"
         notification_backend = "Omarchy" if any((notification_dir / n).is_file() for n in ("live.json", "history.json")) else "makoctl" if shutil.which("makoctl") else "none detected"

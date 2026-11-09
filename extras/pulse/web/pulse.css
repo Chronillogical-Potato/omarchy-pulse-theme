@@ -192,6 +192,8 @@ body.blink .lv-crit, body.blink .text .cur, body.blink .cam .rec::before, body.b
 .drone i { display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; margin-right: .45rem; vertical-align: .08rem; }
 .drone span { color: rgba(var(--fg-rgb), .6); }
 .drone b { color: var(--accent2); font-weight: 400; margin-left: .3rem; }
+.drone em { font-style: normal; color: var(--ok); margin-left: .3rem; opacity: .85; }   /* 1.6: the agent's health */
+.drone em.sick { color: var(--crit); }
 .drone.waiting { border-color: var(--warn); } .drone.waiting b { color: var(--warn); }
 .drone.done { border-color: var(--ok); } .drone.failed { border-color: var(--crit); }
 #fxtext { position: fixed; left: 0; right: 0; top: 82%; text-align: center; font-size: 3.4rem; font-weight: 200; letter-spacing: .18em;
@@ -239,3 +241,18 @@ body.noc .panel.noc-hide { display: none; }
   background: rgba(20, 0, 4, .82); border: 1px solid var(--crit); padding: .7rem 1rem; cursor: pointer; font-size: .9rem; }
 #incident .tag { color: var(--crit); letter-spacing: .14em; margin-bottom: .35rem; }
 #incident .ev { color: var(--fg); opacity: .9; } #incident .ev b { color: var(--crit); font-weight: normal; margin-right: .4rem; }
+
+/* 1.6: omarchy-pulse layout edit: drag the panels, × hides one, Save and Cancel on screen */
+body.layoutedit #ui .panel { pointer-events: auto; cursor: grab; outline: 1px dashed rgba(var(--accent-rgb), .7); outline-offset: 3px; }
+body.layoutedit #ui .panel.ldrag { cursor: grabbing; z-index: 20; opacity: .85; box-shadow: 0 1rem 3rem rgba(0,0,0,.5); transition: none; }
+body.layoutedit #ui .panel.lhidden { opacity: .3; }
+.panel .lx { display: none; }
+body.layoutedit .panel .lx { display: block; position: absolute; top: .3rem; right: .4rem; z-index: 3; width: 1.6rem; height: 1.6rem;
+  border: 1px solid rgba(var(--accent-rgb), .7); border-radius: 50%; background: var(--bg); color: var(--fg); font: inherit; line-height: 1; cursor: pointer; }
+#layoutbar { position: fixed; top: .8rem; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; gap: .8rem; align-items: center;
+  padding: .6rem 1rem; border: 1px solid rgba(var(--accent-rgb), .8); border-radius: .6rem; background: rgba(0,0,0,.75); color: var(--fg);
+  font-size: 1rem; pointer-events: auto; }
+#layoutbar[hidden] { display: none; }
+#layoutbar button { font: inherit; padding: .3rem .9rem; border-radius: .4rem; border: 1px solid rgba(var(--accent-rgb), .8); background: transparent; color: var(--fg); cursor: pointer; }
+#layoutbar button[data-do="save"] { background: rgba(var(--accent-rgb), .85); color: var(--bg); font-weight: 700; }
+body.simplemon #center-w, body.simplemon #ticker, body.simplemon #drones { display: none; }   /* 1.6: [pulse] secondary = "simple" */

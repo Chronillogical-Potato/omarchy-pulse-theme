@@ -68,7 +68,22 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [58. NOC mode](#58-noc-mode-15-beta) ·
   [59. Reduced motion](#59-reduced-motion-15) ·
   [60. Your own wallpaper](#60-your-own-wallpaper-151)
-- Creating scenes: [docs/SCENES.md](SCENES.md)
+- New in 1.6:
+  [61. The scene editor](#61-the-scene-editor-16) ·
+  [62. All your AI agents](#62-all-your-ai-agents-their-health-and-working-together-16) ·
+  [63. Move and hide the panels](#63-move-and-hide-the-panels-16) ·
+  [64. The workspaces tower and the ivy](#64-the-workspaces-tower-and-the-ivy-16) ·
+  [65. Omarchy tips on a hot-air balloon](#65-omarchy-tips-on-a-hot-air-balloon-16) ·
+  [66. Updates as parcels](#66-updates-as-parcels-and-the-news-before-you-update-16) ·
+  [67. The colours of your music](#67-the-colours-of-your-music-16) ·
+  [68. A theme from your wallpaper](#68-a-theme-from-your-wallpaper-16) ·
+  [69. Your day's diary, and your week](#69-your-days-diary-and-your-week-16) ·
+  [70. Ask the sphere, with a local AI](#70-ask-the-sphere-with-a-local-ai-16) ·
+  [71. WLED](#71-wled-your-led-strips-16) ·
+  [72. News that strikes](#72-news-that-strikes-16) ·
+  [73. Backups as trucks, a second monitor, focus, the radar](#73-backups-as-trucks-a-calmer-second-monitor-focus-and-the-radar-16) ·
+  [74. The friends' neighbourhood](#74-the-friends-neighbourhood-16)
+- Creating scenes: with the mouse, [docs/EDITOR.md](EDITOR.md) (1.6); in code, [docs/SCENES.md](SCENES.md)
 
 ---
 
@@ -500,6 +515,13 @@ In `[builtin]` (`false` hides one):
   understood and never leaves the PC (only the text of a question goes to `ask`, if you set it). The crew sends only
   the kind of agent and its state (or the folder name with `share = "full"`), sealed with your code.
 
+**1.6.** The agents' hooks (section 62) send only the event, the tool's name and the folder, never prompts, answers or
+code; agents in the same repo are matched by a short hash of the folder. A local AI (section 70) and WLED strips
+(section 71) are reached only at addresses on this PC or your network. The friends' neighbourhood (section 74) shares
+only numbers, and only with `[crew] city = true`. Pulse reads the update news from archlinux.org every few hours and
+runs `checkupdates` (section 66): it never installs anything and asks for no password. The scene editor saves only
+into `~/.config/omarchy-pulse/scenes/`, and what it saves is data, not code (section 61).
+
 ## 12. Light on the PC
 
 - Pulse pauses each monitor's drawing and panel updates when windows cover at least 95% of its usable area; the small
@@ -629,7 +651,14 @@ browser; `omarchy-pulse serve --demo` does the same with demo data (no personal 
 ~/.local/state/omarchy-pulse/stats.json    the numbers of your year, for Pulse Wrapped (1.4)
 ~/.local/state/omarchy-pulse/starlink.json the orbits of the last Starlink launches, from CelesTrak (1.4)
 ~/.config/omarchy-pulse/scenes/            your community scenes (1.5)
-~/Videos/omarchy-pulse/pulse-DATE.mp4      your days as videos (1.3)
+~/Videos/omarchy-pulse/pulse-DATE.mp4      your days as videos (1.3), a diary with their numbers (1.6)
+~/Videos/omarchy-pulse/pulse-week-YEAR-WNN.mp4   your weeks in a minute (1.6)
+~/.config/omarchy-pulse/layout.json        where you put the panels (1.6, omarchy-pulse layout edit)
+~/.local/state/omarchy-pulse/days.json     the numbers of each day, kept 60 days (1.6)
+~/.local/state/omarchy-pulse/agents.json   how your agents' last runs ended, for their health (1.6)
+~/.local/state/omarchy-pulse/news-read.json   the update news you marked read (1.6)
+~/.config/omarchy/themes/NAME/             a theme made by omarchy-pulse theme from-wallpaper (1.6)
+~/.config/opencode/plugins/omarchy-pulse.js, ~/.pi/agent/extensions/omarchy-pulse.ts   (1.6, hook install)
 ```
 
 MIT, © 2026 Marco Porro ([x.com/MarcoPorro](https://x.com/MarcoPorro)). Weather by [Open-Meteo](https://open-meteo.com).
@@ -704,8 +733,9 @@ Claude Code, even when Pulse is not running.
 **Codex CLI**: in `~/.codex/config.toml`, `notify = ["omarchy-pulse", "hook", "codex"]`: a drone lands at the end of
 every turn.
 
-**Grok Bot, or any other agent**: call `omarchy-pulse agent NAME STATE "text"` from its hooks or its scripts, or
-start it with `omarchy-pulse watch NAME -- ...`.
+**Grok Build, Gemini CLI, Copilot CLI, Hermes Agent, OpenCode, Pi (1.6)**: section 62, or `omarchy-pulse hook setup`.
+**Any other agent**: call `omarchy-pulse agent NAME STATE "text"` from its hooks or its scripts, or start it with
+`omarchy-pulse watch NAME -- ...`.
 
 Drones are hidden in privacy mode: agent names are often project names.
 
@@ -1199,7 +1229,13 @@ generic one, of no brand.
 | `omarchy-pulse privacy on \| off \| auto \| toggle` | privacy mode (section 11) |
 | `omarchy-pulse agent NAME STATE [TEXT]` | an AI agent as a drone (section 16) |
 | `omarchy-pulse watch NAME -- COMMAND...` | a drone while a command runs |
-| `omarchy-pulse hook claude \| codex` | for the hooks of Claude Code and Codex CLI |
+| `omarchy-pulse hook claude \| codex \| grok \| gemini \| copilot \| hermes \| opencode \| pi` | for the hooks of your AI agents (16, 62) |
+| `omarchy-pulse hook setup [AGENT]` / `hook install opencode \| pi` | what to paste in each agent's config / install the plugin (62) |
+| `omarchy-pulse ask QUESTION` | ask the sphere in writing; a local Ollama for the rest (70) |
+| `omarchy-pulse layout edit \| done \| reset` | move and hide the panels with the mouse (63) |
+| `omarchy-pulse theme from-wallpaper [PICTURE] NAME` | a new Omarchy theme from a picture (68) |
+| `omarchy-pulse news [read]` | the news to read before you update (66) |
+| `omarchy-pulse recap [DATE]` | your week in a minute (69) |
 | `omarchy-pulse fireworks [TEXT]` | fireworks (in the whole crew, too) |
 | `omarchy-pulse focus MINUTES [LABEL]` / `focus off` | focus mode; when it ends, a building in your city (28) |
 | `omarchy-pulse away` / `back` | you left / you are back: the digest (19) |
@@ -1208,7 +1244,7 @@ generic one, of no brand.
 | `omarchy-pulse crew new` / `crew` | the crew code / its status (26) |
 | `omarchy-pulse city` | your city: buildings, streak, monuments (28) |
 | `omarchy-pulse calendar` | the next events, the trains (31) |
-| `omarchy-pulse timelapse [today \| DATE]` | your day as a video (30) |
+| `omarchy-pulse timelapse [today \| DATE]` | your day as a video, a diary with its numbers (30, 69) |
 | `omarchy-pulse sky` | tonight: the Moon, the planets, the meteor shower, the next Starlink train, the next eclipses, the air (37-40, 49) |
 | `omarchy-pulse wrapped [YEAR]` | Pulse Wrapped, your year as a video (44) |
 | `omarchy-pulse lights pair [IP] \| test \| alert \| lightning \| quake` | the lights of your room (42) |
@@ -1221,7 +1257,7 @@ generic one, of no brand.
 | `omarchy-pulse perf [--probe]` | frame times on every monitor (12) |
 | `omarchy-pulse reload` | read `pulse.toml` again now |
 | `omarchy-pulse doctor` | check dependencies, config and sources |
-| `omarchy-pulse scene list \| new NAME \| check NAME \| lab [NAME]` | community scenes and the scene lab (47, docs/SCENES.md) |
+| `omarchy-pulse scene list \| new NAME \| check NAME \| lab [NAME] \| editor [NAME]` | community scenes, the scene lab and the scene editor (47, 61, docs/SCENES.md) |
 | `omarchy-pulse term` | (beta) a read-only terminal on the city: scan, ping, status (56) |
 | `omarchy-pulse noc on \| off \| ack` | (beta) NOC mode and its incidents (58) |
 | `omarchy-pulse trap` | (beta) for snmptrapd's traphandle: SNMP traps as bolts (57) |
@@ -1253,6 +1289,8 @@ generic one, of no brand.
 ```bash
 T="X-Pulse-Token: $(cat ~/.config/omarchy-pulse/token)"
 curl -X POST -H "$T" "localhost:47800/api/fx?kind=fireworks&text=shipped"
+curl -X POST -H "$T" "localhost:47800/api/fx?kind=tip&text=SUPER%20%2B%20K%20%C2%B7%20Show%20key%20bindings"   # 1.6: a balloon now
+curl -X POST -H "$T" "localhost:47800/api/fx?kind=lightning&text=CVE"    # 1.6: one bolt over the city
 curl -X POST -H "$T" "localhost:47800/api/fx?kind=quake&mag=6.8&az=100&tsunami=1&text=test"   # try a quake and a tsunami
 curl -X POST -H "$T" "localhost:47800/api/doorbell"
 curl -X POST -H "$T" "localhost:47800/api/car?do=start_charging"    # stop_charging, lock, start_climate, stop_climate, flash
@@ -1945,3 +1983,272 @@ colours change with it.
 The picture fills the screen like a wallpaper (cropped, never stretched). It is read from your disk by Pulse itself,
 never from the network; change the file or the theme and Pulse picks it up in a few seconds. `wallpaper = ""` goes
 back to Pulse's own scene.
+
+## 61. The scene editor (1.6)
+
+Draw your own world on the wallpaper with the mouse, no code: shapes that move with your data. **The full guide, with
+a first scene in two minutes and recipes, is [EDITOR.md](EDITOR.md)**; here is the short version.
+
+```bash
+omarchy-pulse scene editor            # a new scene: pick a template or start blank
+omarchy-pulse scene editor my-world   # open one the editor made
+```
+
+Pulse must be running (or `omarchy-pulse serve --demo`). The editor opens in your browser:
+
+- **Add** (left): box, circle, line, star, text, gauge, bars, building, wave, particles. Click one and it appears in
+  the middle of the stage.
+- **The stage** (middle): Pulse's sky, the horizon line and the dashed zones the panels and the clock cover (what you
+  put there is hidden on the wallpaper). Drag a shape to move it (its bottom snaps to the horizon; hold Alt to stop
+  that), drag a corner to resize it (Shift keeps its shape). A click on a shape that has a click text shows it, as the
+  wallpaper will.
+- **Demo data** (under the stage): CPU, RAM, network, the hour, agents, rain, reduced motion and privacy, to see how the
+  scene reacts; **my live data** uses your real data instead.
+- **The inspector** (right), for the selected shape:
+  - **place**: position, size, rotation, and what is particular to each shape (corners, points, thickness, waves...);
+  - **look**: one of the theme's colours (so the scene fits every Omarchy theme) or your own, a second colour, opacity,
+    glow, filled or outline;
+  - **motion**: still, pulse, float, sway, spin, blink, breathe, drift across, and its speed. With `motion = "reduced"`
+    everything keeps still by itself;
+  - **follows your data**: what moves (height, width, position, opacity, rotation, glow, the colour towards the second
+    colour, speed, level, how many, wave height) and with which data (CPU, RAM, GPU, temperature, disk, network, the
+    hour, the seconds, the outside temperature, rain, wind, clouds, day or night, your agents, how many work, wait or
+    failed, the commits of the week, the failing CI, focus, away). The data goes from its low to its high, the
+    property from "from" to "to";
+  - **repeat**: one copy per AI agent, Git repo or CPU core, or a fixed number; spread across, or a step each;
+    coloured by state (working, waiting, done, failed) or all the same. "Each copy's own value" in *follows your data*
+    is that agent, repo or core;
+  - **click**: the line Pulse shows when you click the shape on the wallpaper. `{cpu}`, `{ram}`, `{gpu}`, `{temp}`,
+    `{net}`, `{time}`, `{date}`, `{outside}`, `{agents}`, `{working}`, `{waiting}`, `{commits}`, and for copies
+    `{name}`, `{state}`, `{item}` are filled in live. Names are empty in privacy mode.
+- **Layers**: the order (the top one is in front), show or hide, and a dot on the shapes that move with your data.
+- **Scene**: Pulse's real sky behind, or a sky of its own; Pulse's far city behind or not.
+
+**Save** (Ctrl+S) writes `~/.config/omarchy-pulse/scenes/NAME.js` and checks it. **Try on wallpaper** shows it on
+your desktop at once (until Pulse restarts; `scene = "NAME"` in `[pulse]` keeps it). **Export .js** downloads the
+file, to share it. **Lab** opens it in the scene lab (section 47). Ctrl+Z / Ctrl+Y undo and redo, Ctrl+D duplicates,
+Delete removes, the arrows move (Shift: more). A draft you did not save comes back when you open the editor again.
+
+A scene made with the editor is a normal community scene: the design is plain data at the top of the file, and the
+code after it draws it. It runs in the same sandbox as every scene (no network, no token), and it shows the time a
+frame takes, so you can see if it is light enough. The editor never overwrites a scene written by hand. More in
+[docs/SCENES.md](SCENES.md#12-the-scene-editor-16).
+
+## 62. All your AI agents, their health, and working together (1.6)
+
+**Every agent Omarchy 4.5 ships** (OpenCode, Claude Code, Codex, Gemini CLI, Copilot CLI, Pi) and Grok Build and
+Hermes Agent tell Pulse what they do through their own hooks or plugins. `omarchy-pulse hook setup` prints what to
+paste in each one's configuration (`omarchy-pulse hook setup gemini` for one):
+
+| Agent | Where | How |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json` | hooks, `omarchy-pulse hook claude` (section 16) |
+| Codex | `~/.codex/hooks.json` | hooks, `omarchy-pulse hook codex`; approve them once with `/hooks` in Codex (the older `notify` still works) |
+| Grok Build | `~/.grok/hooks/pulse.json` | hooks, `omarchy-pulse hook grok`. It also reads Claude Code's hook files: if you set those, Grok already shows up, named `claude` |
+| Gemini CLI | `~/.gemini/settings.json` | hooks, `omarchy-pulse hook gemini` |
+| Copilot CLI | `~/.copilot/hooks/pulse.json` | hooks, `omarchy-pulse hook copilot EVENT` |
+| Hermes Agent | `~/.hermes/config.yaml` | shell hooks, `omarchy-pulse hook hermes`; Hermes asks once to allow each one (or `hooks_auto_accept: true`) |
+| OpenCode | a plugin | `omarchy-pulse hook install opencode` |
+| Pi | an extension | `omarchy-pulse hook install pi` |
+
+Each one is a drone named after the agent and the project folder (`gemini · omarchy-pulse`). The hooks read only the
+event, the tool's name and the folder: never your prompts, the answers or the code. They exit at once and never slow
+an agent down, even when Pulse is not running.
+
+**Their health.** Pulse remembers how the last 50 runs of each agent ended (on your PC, in
+`~/.local/state/omarchy-pulse/agents.json`). After three runs, its tag shows `ok 92%`; a healthy agent flies a bigger
+drone, one that fails often is smaller and its lights flicker, its percentage red under 60%.
+
+**Working together.** Agents working in the same Git repo (or folder) are linked by a line of light, with packets of
+light running between them: Claude Code and Codex on the same project, a reviewer and a writer. Pulse compares only a
+short hash of the folder, never its path. An agent that does not say its folder is never linked.
+
+**Agents that live in the cloud** (Claude Duet, Meta Muse...) have no hooks on your PC, but they send desktop
+notifications when they finish or need your approval. Pulse can turn those into a drone:
+
+```toml
+[agents]
+from_notifications = ["Claude Duet", "Muse"]
+```
+
+Only the app's name decides; a notification that asks for an approval or your input makes the drone wait (amber),
+any other means done. The text of the notification never leaves the notifications panel.
+
+**Anything else**: `omarchy-pulse agent NAME STATE "text"`, or `omarchy-pulse watch NAME -- COMMAND ...`.
+
+## 63. Move and hide the panels (1.6)
+
+```bash
+omarchy-pulse layout edit     # then use the mouse on the wallpaper (an empty desktop)
+```
+
+Every panel gets a dashed outline: drag it to another column or another place in its column, × hides it (click again
+to show it). **Save** on the wallpaper keeps the layout in `~/.config/omarchy-pulse/layout.json`; **Cancel** leaves
+everything as it was; **Reset** (or `omarchy-pulse layout reset`) gives the panels back to Pulse. The wallpaper has no
+keyboard, so the buttons are on screen. While you edit, clicks on panels do not run their commands.
+
+## 64. The workspaces tower and the ivy (1.6)
+
+On the left of the city stands a tower of your Hyprland workspaces: a floor for each, its number on the side, a lit
+room for each app on it with the app's icon (a browser, a terminal, an editor, music, chat, files...; always the same
+colour for the same app), and a lift that goes up or down to the floor you are on. It shows
+the kind of app (chromium, ghostty), never the windows' titles; in privacy mode the windows are lit with no names
+anywhere. `tower = false` in `[pulse]` removes it.
+
+**The ivy of your uptime** climbs the tower and the city's buildings while the PC stays on: a little every hour, all
+the way up the tower after a week, and then it flowers. After a reboot it starts again from the ground: the quiet
+pride of a sysadmin. `ivy = false` removes it.
+
+## 65. Omarchy tips on a hot-air balloon (1.6)
+
+Now and then a hot-air balloon in the theme's colours drifts across the sky with an Omarchy shortcut hanging under it:
+`SUPER + SPACE · Launch apps`. The tips are your own key bindings, with the descriptions Omarchy gives them
+(`hyprctl binds`), so they are always true for your setup. A balloon comes only on an empty desktop, never during a
+meeting, a focus or while you share the screen.
+
+```toml
+[tips]
+enabled = true
+every = 40                     # minutes, more or less
+extra = ["SUPER + K · Show key bindings"]   # tips of your own
+```
+
+## 66. Updates as parcels, and the news before you update (1.6)
+
+Pending updates pile up as parcels at the city's door, one for each (up to 14), bigger when there are many, with the
+count under them: the kernel's parcel is red (a reboot after the update), the AUR ones in the second accent. When the
+[Arch Linux news](https://archlinux.org/news/) asks for manual intervention before an update, a balloon crosses the
+sky once with "OMARCHY NEWS · read the news before you update", and a road sign with a blinking light stays next to the pile
+until you read it.
+
+```bash
+omarchy-pulse news         # the news that asks for manual intervention before an update (last 30 days), with links
+omarchy-pulse news read    # read: the sign goes away
+```
+
+`checkupdates` comes with `pacman-contrib`; the AUR ones need `yay` or `paru`. Pulse looks every 3 hours
+(`[updates] every`), never updates anything, and asks for no password. `[updates] enabled = false` turns it off.
+
+## 67. The colours of your music (1.6)
+
+```toml
+[music]
+colors = true
+```
+
+While a song plays (Spotify, YouTube Music in the browser, any MPRIS player that gives its cover), the city takes the
+colours of its cover, like the picture colours of section 60. When the music stops, the theme's colours come back.
+The cover is read from the player, never searched on the internet, and not while privacy is on.
+
+## 68. A theme from your wallpaper (1.6)
+
+```bash
+omarchy-pulse theme from-wallpaper ~/Pictures/city.jpg my-city   # or no picture: your current wallpaper
+```
+
+Pulse reads the picture's colours (the same way as section 60) and writes a new Omarchy theme in
+`~/.config/omarchy/themes/my-city/`: `colors.toml` (accent, foreground, background, selection, the 16 terminal
+colours) and the picture as its background. It never applies it and never overwrites a theme: open `colors.toml`,
+change what you like, then `omarchy-theme-set my-city`. Needs `ffmpeg`.
+
+## 69. Your day's diary, and your week (1.6)
+
+The day's video (section 30) is now a diary: it opens with the date and ends with the numbers of the day (commits,
+agent tasks done, focus sessions and minutes, meetings, planes over you, rockets, Starlink, quakes, doorbell). Counts
+only, never names.
+
+```toml
+[timelapse]
+cards = true          # the date and the numbers (false: the plain video)
+at = "18:00"          # make it at the end of your work day instead of at midnight
+weekly = true         # Sunday night: your week in a minute
+```
+
+**Your week**: on Sunday night Pulse puts together three seconds of each day's video and the numbers of the week,
+`~/Videos/omarchy-pulse/pulse-week-2026-W45.mp4`. `omarchy-pulse recap [DATE]` makes it now (the week that ends on
+DATE). The numbers of each day are kept for 60 days in `~/.local/state/omarchy-pulse/days.json`.
+
+## 70. Ask the sphere, with a local AI (1.6)
+
+What the sphere does not know by itself ("why is my PC slow?", "how did my agents do today?") can go to a model on
+your own PC, with [Ollama](https://ollama.com) (Omarchy: Install > AI):
+
+```toml
+[ai]
+ollama = "http://127.0.0.1:11434"
+model = "llama3.2"
+```
+
+```bash
+omarchy-pulse ask "is everything fine?"     # in writing; "hey sphere" (27) asks the same way by voice
+```
+
+The model gets a short summary of what Pulse knows (time, CPU, RAM, disk, uptime, weather, agents, alerts, updates,
+focus; the numbers of today and yesterday, the alerts of the last 24 hours with their time, the average and the peak of
+CPU and temperature of the last minutes), so it can answer "what did I do yesterday?" or "why was the server slow this
+morning?" in one or two sentences. Pulse sends it only to an address on this PC or your network,
+never to the internet; in privacy mode the agents have no names and the alerts no titles. The voice's own commands
+(focus, privacy, weather...) still come first; `[listen] ask` (any CLI) is still there, after Ollama.
+
+## 71. WLED: your LED strips (1.6)
+
+Your [WLED](https://kno.wled.ge) strips glow with the colour of the sphere:
+
+```toml
+[wled]
+enabled = true
+hosts = ["192.168.1.60", "wled-desk.local"]
+brightness = 128
+alerts = true          # a critical alert blinks them red
+```
+
+Fireworks make them a rainbow for a few seconds; while you are away they dim. Pulse sends a colour only when it
+changes (and once a minute), to addresses on your network only. Works with any WLED 0.10 or newer, no pairing.
+
+## 72. News that strikes (1.6)
+
+A feed panel (news, GitHub, any list source) can fire an effect when a new item matches a word:
+
+```toml
+[[news.rule]]
+match = "CVE"              # a word or a regular expression, any case
+effect = "lightning"       # lightning | fireworks | banner | shooting | alert
+
+[[news.rule]]
+match = "Starship|launch"
+effect = "shooting"
+```
+
+Each item fires once; what is already there when Pulse starts is not news; private panels are never read. There are
+no rules by default.
+
+## 73. Backups as trucks, a calmer second monitor, focus and the radar (1.6)
+
+**Backups (Pulse Net).** Each backup job is now a truck on a road between the city's BACKUP depot and the VAULT: it
+drives to the vault while the backup runs, comes back home when it is done and parks with a green stripe; a failed or
+late backup stops halfway, hazard lights on and smoke from the engine, until the next good run (section 57).
+
+**A second monitor.** `secondary = "simple"` in `[pulse]`: on monitors other than the main one, only the scene and the
+side panels, no drones, planes, robots or cars, at 12 frames a second. Light for the PC and calm at the edge of your eyes.
+
+**Focus.** During a focus the CPU towers slowly come down and the drones rest on the ground (one that needs you
+still flies and blinks).
+
+**The radar.** In the hacker scene, a new device on your network keeps pinging on the radar with NEW next to it,
+and the terminal writes it down.
+
+## 74. The friends' neighbourhood (1.6)
+
+With a crew (section 26), your friends' cities appear on the far right of your horizon: a building for each friend,
+as tall as their commits of the week, their nickname over it. When a friend commits, a floor of their building
+lights up; the small light on top is their CI, green or red.
+
+```toml
+[crew]
+code = "..."          # the code you shared by hand (omarchy-pulse crew new)
+city = true           # share your city with them, and see theirs
+```
+
+Only numbers travel, sealed with the crew's code: how many commits this week, "a commit now", the CI green or red.
+Never a repo's name, a branch, a message or a file. The building of a friend who stops sharing fades away after three
+days. `city = false` (the default when your `pulse.toml` was written before 1.6) sends nothing.

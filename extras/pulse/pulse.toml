@@ -42,6 +42,10 @@ wallpaper_colors = "theme"       # "picture": the panels and the effects take th
                                  # (green, amber and red stay the theme's, so an alert always looks like one)
 noc = false                      # 1.5 beta: NOC mode (omarchy-pulse noc on|off|ack): personal panels hidden, a red
 noc_hide = ["media", "notifications"]   # incident on screen from a critical event until someone acknowledges it
+tower = true                     # 1.6: Hyprland's workspaces as a tower on the left of the city: a lit window per app,
+                                 # a lift on the one you are on (the apps' kind, never their titles)
+ivy = true                       # 1.6: ivy climbs the tower while the PC stays on (all the way after a week, flowers)
+secondary = "full"               # 1.6, more monitors: "simple" = the scene and the side panels only, calm, 12 fps
 # title = "MISSION CONTROL"      # a word under the clock
 # font = "CaskaydiaMono Nerd Font"
 # port = 47800
@@ -53,6 +57,8 @@ preset = "theme"                 # theme (the Omarchy theme in use) | synthwave 
 [music]
 enabled = "auto"                 # the city dances while music plays (needs cava): "auto" | "always" | "off"
 input = "pulse"                  # cava's input: "pulse" (PipeWire too) or "pipewire"
+colors = false                   # 1.6: true = while a song plays, the city takes the colours of its cover (Spotify,
+                                 # YouTube Music, any player); the theme comes back when the music stops
 
 [presence]
 eyes = true                      # the face's eyes follow your pointer; moving it on an empty desktop wakes the face
@@ -104,12 +110,48 @@ launches = "spacex"              # rocket launches, Starlink included: countdown
 # name = "marco"
 # share = "agent"                # "agent" (claude, codex...) or "full" (with the project folder)
 # relay = "https://ntfy.sh"      # or your own ntfy server
+city = true                      # 1.6: your city on your friends' horizon: only numbers (commits this week, CI green
+                                 # or red); a floor lights there when you commit. Nothing is sent without a code
 
 [listen]
 # "hey sphere": bind = SUPER, A, exec, omarchy-pulse listen   (whisper.cpp or faster-whisper, offline)
 language = "auto"                # or "en", "it"...
 # model = "~/.local/share/whisper/ggml-base.bin"
 # ask = "claude -p"              # questions it does not know go to this AI (the question only, no recording)
+
+[ai]
+# ollama = "http://127.0.0.1:11434"   # 1.6: a local model answers what Pulse does not know (by voice and with
+# model = "llama3.2"                  # omarchy-pulse ask "..."), with what is on your wallpaper; only on this PC or LAN
+
+[agents]
+# from_notifications = ["Claude Duet", "Muse"]   # 1.6: agents with no hooks (they live in the cloud): their desktop
+                                 # notifications become a drone (the app's name decides, the text stays private)
+
+[tips]
+enabled = true                   # 1.6: now and then a hot-air balloon brings an Omarchy shortcut (your own binds),
+every = 40                       # minutes, more or less; only on an empty desktop, never in a meeting, a focus or a share
+# extra = ["SUPER + K · Show key bindings"]   # tips of your own
+
+[updates]
+enabled = true                   # 1.6: pending updates as parcels in the city (checkupdates; the kernel in red)
+aur = true                       # count the AUR ones too (yay or paru)
+news = true                      # a sign when the news asks for manual intervention before an update (omarchy-pulse news)
+every = 3                        # hours
+
+[news]
+# 1.6: a new item of a feed panel whose title matches fires an effect: lightning | fireworks | banner | shooting | alert
+# [[news.rule]]
+# match = "CVE"
+# effect = "lightning"
+# [[news.rule]]
+# match = "Starship|launch"
+# effect = "shooting"
+
+[wled]
+enabled = false                  # 1.6: your WLED LED strips glow with the sphere's colour (red blink on a critical
+# hosts = ["192.168.1.60"]       # alert, a rainbow for fireworks); on your network only
+brightness = 128
+alerts = true
 
 [city]
 enabled = true                   # every focus you finish (10 minutes or more) builds a building in your district;
@@ -124,6 +166,9 @@ routes = true                    # where each flight comes from and goes (adsbdb
 [timelapse]
 enabled = true                   # your day as a video at midnight (~/Videos/omarchy-pulse), the scene alone: no panels,
 every = 90                       # no names; a picture every 90 s while you see it: about 30 s of video (needs ffmpeg)
+cards = true                     # 1.6: the day's diary: its date before, its numbers after (counts only, never names)
+# at = "18:00"                   # 1.6: make it at this hour instead of midnight (the end of your work day)
+weekly = true                    # 1.6: on Sunday night, your week in a minute (omarchy-pulse recap)
 
 [calendar]
 # ics = ["https://calendar.google.com/calendar/ical/.../basic.ics"]   # your secret iCal address(es), or a file

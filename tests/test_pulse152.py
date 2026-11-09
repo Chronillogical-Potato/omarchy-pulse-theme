@@ -49,6 +49,17 @@ class ThemeTests(unittest.TestCase):
             self.assertEqual(pulse.read_theme()["colors"]["accent"], "#123456")   # the live state comes first
 
 
+class DefaultSceneTests(unittest.TestCase):
+    def test_no_scene_line_means_the_sphere(self):
+        hub = pulse.Hub.__new__(pulse.Hub)
+        hub.cfg = {"pulse": {}}
+        hub.demo = False
+        hub.scene_override = ""
+        self.assertEqual(hub.scene_kind(), "sphere")   # 1.5.3: as the docs say since 1.1
+        hub.cfg = {"pulse": {"scene": "skyline"}}
+        self.assertEqual(hub.scene_kind(), "skyline")
+
+
 class GpuTests(unittest.TestCase):
     def test_offload(self):
         self.assertEqual(pulse.gpu_offload_env("auto", True), {})
