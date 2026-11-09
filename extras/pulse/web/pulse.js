@@ -2928,18 +2928,39 @@
       var l = Math.max(1, Math.hypot(dx, dy)), sp = W * (0.008 + Math.random() * 0.008);
       shooting.push({ x: x0, y: y0, vx: dx / l * sp, vy: dy / l * sp, life: 1 });
     }
+    // Starlink: the satellites really in your sky and lit by the Sun. Only those above 10°: lower ones are near the
+    // horizon, hardly visible to the eye and almost still on screen, so the "train" looked parked behind the city.
+    // The label goes over the highest satellite whose label is clear of the panels and the sphere (else no label).
+    var STARLINK_MIN_EL = 10;
     function drawStarlink(t, hz, dk) {
       var ss = starlink && starlink.sats; if (!ss || !ss.length) return;
-      var lead = null;
+      var pts = [];
       for (var i = 0; i < ss.length; i++) {
+        if (!(ss[i].el >= STARLINK_MIN_EL)) continue;
         var p = skyXY(ss[i].az, ss[i].el, hz); if (!p) continue;
         var a = Math.max(0.35, dk.sky) * (0.7 + 0.3 * Math.sin(t * 3 + i)), s = H / 1080 * 2.2;
         var gl = g.createRadialGradient(p[0], p[1], 0, p[0], p[1], s * 3); gl.addColorStop(0, rgba(COL.fg, 0.4 * a)); gl.addColorStop(1, rgba(COL.fg, 0));
         g.fillStyle = gl; g.fillRect(p[0] - s * 3, p[1] - s * 3, s * 6, s * 6);
         g.fillStyle = rgba(COL.fg, a); g.beginPath(); g.arc(p[0], p[1], s / 2, 0, Math.PI * 2); g.fill();
-        if (!lead) lead = p;
+        pts.push(p);
       }
-      if (lead && !shareMode) { g.font = "600 " + Math.round(H * 0.012) + "px 'CaskaydiaMono Nerd Font', monospace"; g.textAlign = "left"; g.fillStyle = rgba(COL.accent, 0.8); g.fillText("STARLINK · " + ss.length, lead[0] + H * 0.01, lead[1] - H * 0.012); }
+      if (!pts.length || shareMode) return;
+      g.font = "600 " + Math.round(H * 0.012) + "px 'CaskaydiaMono Nerd Font', monospace"; g.textAlign = "left";
+      var txt = "STARLINK · " + pts.length, tw = g.measureText(txt).width, th = H * 0.014;
+      pts.sort(function (a, b) { return a[1] - b[1]; });
+      var at = starlinkLabelAt(pts, tw, th, uiBoxes());
+      if (at) { g.fillStyle = rgba(COL.accent, 0.8); g.fillText(txt, at[0], at[1]); }
+    }
+    function starlinkLabelAt(pts, tw, th, boxes) {   // [x, baseline] of a label box clear of every box, or null
+      for (var i = 0; i < pts.length; i++) {
+        var x = pts[i][0] + H * 0.01, y = pts[i][1] - H * 0.012, hit = false;
+        for (var j = 0; j < boxes.length && !hit; j++) {
+          var b = boxes[j];
+          hit = x < b[0] + b[2] && x + tw > b[0] && y > b[1] && y - th < b[1] + b[3];
+        }
+        if (!hit) return [x, y];
+      }
+      return null;
     }
     // clouds: as many as the real cloud cover, drifting with the real wind; darker in a storm
     function drawClouds(t, hz, dk) {
