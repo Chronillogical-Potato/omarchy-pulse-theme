@@ -2080,6 +2080,21 @@
       });
       g.textAlign = "left";
     }
+    function flower(xx, yy, r, open, t, seed) {   // five petals round a warm heart; open 0..1, breathing a little
+      if (open <= 0) return;
+      var br = reduced ? 1 : 1 + 0.06 * Math.sin(t * 1.3 + seed), pr = r * 0.48 * (0.45 + 0.55 * open) * br, d = r * 0.52 * open * br;
+      var rot = seed * 1.7 + (reduced ? 0 : Math.sin(t * 0.5 + seed) * 0.15);
+      g.fillStyle = rgba(mix(COL.accent2, COL.fg, 0.12), 0.95);
+      for (var p = 0; p < 5; p++) {
+        var a = rot + p * Math.PI * 2 / 5;
+        g.beginPath(); g.ellipse(xx + Math.cos(a) * d, yy + Math.sin(a) * d, pr, pr * 0.72, a, 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = rgba(COL.warn, 1); g.beginPath(); g.arc(xx, yy, r * 0.26, 0, Math.PI * 2); g.fill();
+    }
+    function bloomOpen() {   // a week without a reboot: the flowers open over the next six hours
+      var days = uptimeS / 86400;
+      return days < 7 ? 0 : reduced ? 1 : Math.min(1, 0.25 + (days - 7) * 4 * 0.75);
+    }
     function ivyOn2(t, x, y0, hgt, seed) {   // 1.6: ivy on a building of the city: higher the longer the PC stays on
       if (hgt < H * 0.004) return;
       var u = H / 1080, n = Math.round(hgt / (H * 0.006)), sway = reduced ? 0 : Math.sin(t * 0.8 + seed) * u * 0.6;
@@ -2088,6 +2103,8 @@
         g.fillStyle = rgba(mix(COL.ok, COL.fg, (k % 4) * 0.07), 0.8);
         g.beginPath(); g.ellipse(xx, yy, 2.2 * u, 1.3 * u, k % 2 ? 0.6 : -0.6, 0, Math.PI * 2); g.fill();
       }
+      var op = bloomOpen();   // the city's ivy flowers too, a few on each building
+      if (op) for (k = 0; k < 3; k++) { var qf = 0.35 + k * 0.25; flower(x + Math.sin(qf * 11 + seed) * 3 * u + sway * qf, y0 - hgt * qf, 4.5 * u, op, t, seed + k); }
     }
     function drawIvy(t, x, top, w, y0) {
       // the ivy of your uptime: it climbs a little every hour the PC stays on (all the way up after a week), and
@@ -2103,8 +2120,10 @@
         g.fillStyle = rgba(mix(COL.ok, COL.fg, (i % 5) * 0.06), 0.85);
         g.beginPath(); g.ellipse(xx2, yy2, 2.6 * u, 1.5 * u, (i % 2 ? 0.6 : -0.6), 0, Math.PI * 2); g.fill();
       }
-      if (days >= 7) {   // a week without a reboot: it flowers
-        for (i = 0; i < 6; i++) { g.fillStyle = rgba(COL.accent2, 0.9); g.beginPath(); g.arc(x + w * (0.08 + (i % 3) * 0.3), top + (y0 - top) * (0.1 + i * 0.13), 1.8 * u, 0, Math.PI * 2); g.fill(); }
+      var op = bloomOpen();   // a week without a reboot: it flowers, a dozen real flowers along the vine
+      for (i = 0; op && i < 12; i++) {
+        var qf = 0.08 + ((i * 0.618 + 0.2) % 1) * 0.9, side = i % 2 ? 1 : -1;
+        flower(x + Math.sin(qf * 9) * w * 0.12 + w * 0.06 + side * 5 * u + sway * qf, y0 - hgt * qf, (7 + (i % 3) * 1.5) * u, op, t, i);
       }
     }
     function drawParcels(t, hz) {
