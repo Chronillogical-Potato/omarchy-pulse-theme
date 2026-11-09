@@ -767,7 +767,19 @@
       }
       else if (m.pulseScene === "show") fxText(m.text);
       else if (m.pulseScene === "perf") plug.perf = m;
+      else if (m.pulseScene === "fx") sceneFx(m);
     });
+    // 1.7: a scene asks for one of Pulse's effects (PulseScene.fx, or an action made in the scene editor). Only these,
+    // at most one every 4 s and the same one every 15 s, never while the screen is covered or in reduced motion.
+    var SCENE_FX = { fireworks: 1, banner: 1, lightning: 1, shooting: 1, tip: 1, launch: 1, flare: 1, chime: 1 }, sceneFxAt = 0, sceneFxKind = {};
+    function sceneFx(m) {
+      var k = String(m.kind || ""), now = performance.now(), txt = String(m.text || "").slice(0, 60);
+      if (!SCENE_FX[k] || covered || now - sceneFxAt < 4000 || now - (sceneFxKind[k] || -1e9) < 15000) return;
+      sceneFxAt = now; sceneFxKind[k] = now;
+      if (k === "chime") { sound.chime([659, 784, 988]); if (txt) fxText(txt); return; }
+      if (reduced && k !== "banner" && k !== "tip") { if (txt) fxText(txt); return; }
+      Scene.fx({ kind: k === "launch" ? "launch" : k, text: k === "launch" ? (txt || "liftoff") + " · liftoff" : txt });
+    }
     cv.addEventListener("click", function (e) {   // a click on the scene: the scene may answer with a line of text
       var ex = e.clientX * W / innerWidth, ey = e.clientY * H / innerHeight;
       for (var id in infraPos) {   // 1.5: a double click on a storm acknowledges its problems on their system (if its source has ack)

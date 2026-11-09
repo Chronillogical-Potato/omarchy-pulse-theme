@@ -1,0 +1,241 @@
+{
+ "format": "omarchy-pulse-scene",
+ "v": 1,
+ "name": "container-aquarium",
+ "title": "Container aquarium",
+ "author": "Marco Porro",
+ "license": "MIT",
+ "description": "A fish for every container of your docker panel (the docker community source), green when it is up, amber when unhealthy, red when it stopped. Bubbles follow your network. A container goes down: the glass flashes red and lightning strikes. Click a fish: its name.",
+ "pulse": "1.7.0",
+ "kind": "design",
+ "tags": [
+  "docker",
+  "homelab",
+  "containers"
+ ],
+ "created": "2026-11-09",
+ "design": {
+  "v": 2,
+  "sky": "none",
+  "city": false,
+  "shapes": [
+   {
+    "alpha": 0.1,
+    "glow": 0.3,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "glass",
+    "type": "rect",
+    "name": "glass",
+    "x": 0.5,
+    "y": 0.6,
+    "w": 0.4,
+    "h": 0.26,
+    "round": 0.08,
+    "color": "accent"
+   },
+   {
+    "alpha": 0.6,
+    "glow": 0.4,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "frame",
+    "type": "rect",
+    "name": "frame",
+    "x": 0.5,
+    "y": 0.6,
+    "w": 0.4,
+    "h": 0.26,
+    "round": 0.08,
+    "fill": false,
+    "line": 2,
+    "color": "accent"
+   },
+   {
+    "alpha": 0.8,
+    "glow": 0.5,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [
+     {
+      "prop": "amp",
+      "src": "net",
+      "from": 0.2,
+      "to": 1
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "surface",
+    "type": "wave",
+    "name": "surface",
+    "x": 0.5,
+    "y": 0.5,
+    "w": 0.39,
+    "h": 0.012,
+    "fill": false,
+    "line": 2,
+    "freq": 5,
+    "color": "accent2"
+   },
+   {
+    "alpha": 0.25,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "sand",
+    "type": "rect",
+    "name": "sand",
+    "x": 0.5,
+    "y": 0.705,
+    "w": 0.4,
+    "h": 0.05,
+    "round": 0.3,
+    "color": "warn"
+   },
+   {
+    "alpha": 0.5,
+    "glow": 0.3,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [
+     {
+      "prop": "count",
+      "src": "net",
+      "from": 6,
+      "to": 90
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "bubbles",
+    "type": "particles",
+    "name": "bubbles",
+    "x": 0.5,
+    "y": 0.6,
+    "w": 0.36,
+    "h": 0.2,
+    "dir": "up",
+    "count": 12,
+    "dot": 2.5,
+    "color": "fg"
+   },
+   {
+    "alpha": 1,
+    "glow": 0.5,
+    "anim": {
+     "kind": "bob",
+     "speed": 0.8
+    },
+    "bind": [],
+    "repeat": {
+     "by": "panel",
+     "panel": "docker",
+     "spread": true,
+     "from": 0.35,
+     "to": 0.65,
+     "stateColors": true
+    },
+    "id": "fish",
+    "type": "image",
+    "name": "fish",
+    "asset": "fish",
+    "tint": true,
+    "x": 0.35,
+    "y": 0.6,
+    "w": 0.034,
+    "h": 0.044,
+    "color": "accent",
+    "click": "{name} · {state}"
+   },
+   {
+    "alpha": 0.55,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "label",
+    "type": "text",
+    "name": "label",
+    "x": 0.5,
+    "y": 0.765,
+    "w": 0.2,
+    "h": 0.03,
+    "text": "docker",
+    "size": 0.017,
+    "color": "fg"
+   }
+  ],
+  "assets": {
+   "fish": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMTAgODAiIHdpZHRoPSIxMTAiIGhlaWdodD0iODAiPjxwYXRoIGQ9Ik04IDQwIEMyNCAxNCA2MiAxMCA4NCAzMCBMMTA0IDE0IEwxMDAgNDAgTDEwNCA2NiBMODQgNTAgQzYyIDcwIDI0IDY2IDggNDAgWiIgZmlsbD0iI2ZmZmZmZiIvPjxjaXJjbGUgY3g9IjMwIiBjeT0iMzQiIHI9IjQiIGZpbGw9IiMwMDAwMDAiIGZpbGwtb3BhY2l0eT0iMC41NSIvPjwvc3ZnPg=="
+  },
+  "actions": [
+   {
+    "id": "a1",
+    "when": {
+     "type": "event",
+     "event": "row-crit"
+    },
+    "do": [
+     {
+      "type": "flash",
+      "shape": "glass",
+      "color": "crit",
+      "secs": 6
+     },
+     {
+      "type": "fx",
+      "fx": "lightning",
+      "text": "a container is down"
+     }
+    ],
+    "cooldown": 120
+   },
+   {
+    "id": "a2",
+    "when": {
+     "type": "event",
+     "event": "row-ok"
+    },
+    "do": [
+     {
+      "type": "fx",
+      "fx": "shooting",
+      "text": "containers all up"
+     }
+    ],
+    "cooldown": 120
+   }
+  ]
+ },
+ "preview": "data:image/webp;base64,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"
+}

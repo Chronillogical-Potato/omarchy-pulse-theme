@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "community/**"
+      - "!community/scenes/**"
       - ".github/workflows/community-sources.yml"
   push:
     branches: [main]
     paths:
       - "community/**"
+      - "!community/scenes/**"
       - ".github/workflows/community-sources.yml"
 
 permissions:
@@ -36,6 +38,7 @@ jobs:
           for dir in "$root"/*/; do
             name=$(basename "$dir")
             [[ "$name" == .* ]] && continue
+            [[ "$name" == "scenes" ]] && continue   # scenes have their own check (community-scenes.yml)
             script="$dir/pulse-$name"
             toml="$dir/source.toml"
             readme="$dir/README.md"
@@ -60,16 +63,8 @@ jobs:
               fi
             fi
             if [[ -f "$toml" ]]; then
-              python3 -c "
-import sys
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
-with open(sys.argv[1], 'rb') as f:
-    tomllib.load(f)
-print('toml ok:', sys.argv[1])
-" "$toml" || { echo "invalid TOML: $toml"; fail=1; }
+              python3 -c "import sys, tomllib; tomllib.load(open(sys.argv[1], 'rb')); print('toml ok:', sys.argv[1])" "$toml" \
+                || { echo "invalid TOML: $toml"; fail=1; }
             fi
           done
           if [[ "$fail" -ne 0 ]]; then

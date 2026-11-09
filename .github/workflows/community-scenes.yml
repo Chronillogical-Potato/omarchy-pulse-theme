@@ -1,0 +1,73 @@
+name: community-scenes
+
+# A scene for the Community gallery is a .pulse package in community/scenes/NAME/. This checks it with Pulse's own
+# rules (the same ones as importing it in the editor), checks that the folder has nothing else (no scripts, no
+# commands), that index.json and the previews are up to date, and runs the 1.7 tests.
+
+on:
+  pull_request:
+    paths:
+      - "community/scenes/**"
+      - "tools/scene-index.py"
+      - "extras/pulse/omarchy-pulse"
+      - "extras/pulse/web/scene-design.js"
+      - "tests/test_pulse17.py"
+      - ".github/workflows/community-scenes.yml"
+  push:
+    branches: [main]
+    paths:
+      - "community/scenes/**"
+      - "tools/scene-index.py"
+      - ".github/workflows/community-scenes.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: What the pull request changes
+        if: github.event_name == 'pull_request'
+        env:
+          # who opened it, as GitHub says (it cannot be changed from the pull request): the owner and the maintainers
+          # and the collaborators with write access may add several scenes at once (a release); everyone else, one scene
+          # per pull request
+          ASSOCIATION: ${{ github.event.pull_request.author_association }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)
+          echo "$changed"
+          scenes=$(echo "$changed" | grep '^community/scenes/[^/]*/' | cut -d/ -f3 | sort -u || true)
+          n=$(echo "$scenes" | grep -c . || true)
+          echo "scenes in this pull request: $n"
+          if [[ "$n" -gt 1 ]]; then
+            if [[ "$ASSOCIATION" == "OWNER" || "$ASSOCIATION" == "MEMBER" || "$ASSOCIATION" == "COLLABORATOR" ]]; then
+              echo "::notice::$n scenes in one pull request, opened by the maintainer ($ASSOCIATION)"
+            else
+              echo "::error::one scene per pull request"
+              exit 1
+            fi
+          fi
+          outside=$(echo "$changed" | grep -v '^community/scenes/' || true)
+          if [[ "$n" -eq 1 && -n "$outside" ]]; then
+            echo "::warning::this pull request adds a scene and also changes files outside community/scenes: review them on their own"
+          fi
+
+      - name: Check the scenes and the index
+        run: python3 tools/scene-index.py --check
+
+      - name: The 1.7 tests
+        run: python3 -m unittest tests.test_pulse17 -v

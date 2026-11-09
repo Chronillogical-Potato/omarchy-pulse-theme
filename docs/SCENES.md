@@ -1,8 +1,9 @@
 # Creating scenes for Omarchy Pulse
 
-**No code? Use the scene editor** (1.6): `omarchy-pulse scene editor` lets you draw a scene with the mouse and link
-every shape to your data: [EDITOR.md](EDITOR.md) is its guide; [section 12](#12-the-scene-editor-16) explains the file
-it writes.
+**No code? Use the scene editor** (1.6, 1.7): `omarchy-pulse scene editor` lets you draw a scene with the mouse, with
+your own pictures, animations and actions, and link every shape to your data: [EDITOR.md](EDITOR.md) is its guide;
+[section 12](#12-the-scene-editor-16-and-17) explains the file it writes. To share a scene as one file, or install one
+from the Community gallery: [PACKAGES.md](PACKAGES.md).
 
 A **scene** is a whole world on the wallpaper, drawn from your real data: a pond where every AI agent is a fish, a
 garage where your agents are mechanics, a forest that grows with your commits, your own room. You write it in one
@@ -14,14 +15,14 @@ try it and share it.
 - [2. How a scene works](#2-how-a-scene-works)
 - [3. What your scene gets: the state](#3-what-your-scene-gets-the-state)
 - [4. Drawing: the canvas, the box, the horizon](#4-drawing-the-canvas-the-box-the-horizon)
-- [5. Clicks](#5-clicks)
+- [5. Clicks, and Pulse's effects](#5-clicks-and-pulses-effects)
 - [6. The scene lab](#6-the-scene-lab)
 - [7. Rules for a scene in the repo](#7-rules-for-a-scene-in-the-repo)
 - [8. Performance](#8-performance)
 - [9. Safety: what a scene cannot do](#9-safety-what-a-scene-cannot-do)
 - [10. Sharing your scene](#10-sharing-your-scene)
 - [11. Recipes](#11-recipes)
-- [12. The scene editor (1.6)](#12-the-scene-editor-16)
+- [12. The scene editor (1.6 and 1.7)](#12-the-scene-editor-16-and-17)
 
 ---
 
@@ -98,9 +99,13 @@ user shares the screen or is in privacy mode: always draw something that works w
 | `state.events` | the last effects: `[{ kind, text, t }]`, kinds such as `commit`, `push`, `fireworks`, `burst` (a CI back to green), `launch`, `quake`, `banner` |
 | `state.season` | `xmas: { day, snow }` (8 Dec to 6 Jan), `newYear: { left, year, party }` (the last hour, and midnight), `eclipse: {...}` during an eclipse |
 | `state.layout` | `{ horizon: 0.745 }`: Pulse's horizon as a fraction of the height |
+| `state.music` | 1.7: true while music is playing |
+| `state.space` | 1.7: the sky over the user: `{ sun, moon, planes, list, iss, starlink, kp, launchIn }`: the Sun's height in degrees (below 0 at night), the Moon lit in %, how many planes are overhead and `list: [{ az, el, flight }]` (direction and height in degrees; `flight` empty in privacy), the ISS's height (0 when it is not up), Starlink satellites up, the aurora Kp, seconds to the next rocket launch (or null) |
+| `state.panels` | 1.7: the user's panels, a `[[source]]`, a push, Home Assistant...: `{ ID: { value, unit, min, max } }` for a number (min and max for gauges), `{ ID: { rows: [{ name, level, value }] } }` for a list, a status or a table (`level` is `ok`, `info`, `warn`, `crit` or `""`; `name` empty in privacy). Never their notes or text; private panels and Pulse's own (system, notifications, the car...) are never in it. A scene that follows one says which ID it expects |
 
-What a scene never gets: the user's location or city, their network devices or addresses, the calendar, the
-notifications, the cameras, the car, the token. That is on purpose: a scene can be installed from anyone.
+What a scene never gets: the user's location or city (`state.space` has heights and directions, no position), their
+network devices or addresses, the calendar, the notifications, the cameras, the car, the token, the text of their
+panels. That is on purpose: a scene can be installed from anyone.
 
 React to an event only once: remember the last `t` you saw (see `pond.js`, `this.seen`).
 
@@ -122,11 +127,22 @@ PulseScene.mix([0, 0, 0], [255, 255, 255], 0.25)   // a colour between two
 var r = PulseScene.rand(42); r(); r();       // a random generator with a seed: the same world every time
 ```
 
-## 5. Clicks
+## 5. Clicks, and Pulse's effects
 
 When the user clicks the desktop where your scene is, `click(x, y, state)` gets the position in your canvas'
 pixels. Return a string (or `{ title, text }`) and Pulse shows it as a line over the city for a few seconds; return
 nothing to stay silent. Keep the positions of what you drew in `this` during `draw`, then look them up in `click`.
+
+**Pulse's effects** (1.7). A scene can ask Pulse for one of its own effects over the whole wallpaper:
+
+```js
+PulseScene.fx("launch", "deploy ok");   // fireworks | banner | lightning | shooting | tip | launch | flare | chime
+PulseScene.say("the tower is busy");    // a line of text over the city, like a click's
+```
+
+Pulse decides: only those kinds, at most one every 4 seconds and the same one every 15, none while a window covers the
+desktop, only the text with reduced motion. Ask for them when something happens (in `update`, comparing with the state
+before), not in `draw`.
 
 ## 6. The scene lab
 
@@ -147,7 +163,7 @@ From a terminal, without the browser: `omarchy-pulse scene check NAME`.
 
 To be merged into `community/scenes/` (or shipped with Pulse), a scene must:
 
-1. **Be yours.** Your own code and your own art, MIT like the rest of the repo. No logos, characters, brands or
+1. **Be yours.** Your own code and your own art, under MIT (like the rest of the repo), CC0, CC-BY or CC-BY-SA (1.7). No logos, characters, brands or
    assets from anyone else (no real car brands, no game or film characters, no fonts you cannot redistribute). An
    idea or a mood can be shared; a recognisable work cannot.
 2. **Respect `state.ui.motion === "reduced"`**: nothing runs, swings or flashes; the scene still shows the data.
@@ -180,27 +196,30 @@ A scene runs in a sandboxed frame of its own, served with a strict Content Secur
 - **no network**: `fetch`, XHR, WebSocket, images or fonts from the internet are blocked;
 - **no token** and no way to call Pulse's API (the frame is loaded with a ticket that only opens scenes);
 - **no access** to the page, the panels, the user's files, cookies or storage; no popups, forms or navigation;
-- **only a copy** of the state in section 3, nothing more.
+- **only a copy** of the state in section 3, nothing more;
+- the only things it can ask of Pulse are a line of text (a click, `PulseScene.say`) and an effect from a short list
+  (`PulseScene.fx`), with Pulse's own limits.
 
 That is why users can install scenes from anyone, and why your scene must bring everything it needs in its file.
 
 ## 10. Sharing your scene
 
-1. Put it in a fork of [piermark/omarchy-pulse-theme](https://github.com/piermark/omarchy-pulse-theme):
-   `community/scenes/NAME/NAME.js`, a `README.md` (what each thing means, a screenshot with demo data) and
-   nothing else.
-2. `omarchy-pulse scene check NAME` must say ✓ ready to share.
-3. Open a pull request with one scene. The maintainer reviews it, tries it in the lab and merges it if it follows
-   section 7.
-
-Users install it with:
+1.7: a scene is shared as a **.pulse file**, one file with the code (or the design), a preview, the author and a
+licence:
 
 ```bash
-mkdir -p ~/.config/omarchy-pulse/scenes
-cp community/scenes/NAME/NAME.js ~/.config/omarchy-pulse/scenes/
+omarchy-pulse scene check NAME                                   # ✓ ready to share
+omarchy-pulse scene export NAME --author "Your Name" --license MIT --title "My scene"
 ```
 
-and `scene = "NAME"` in `[pulse]`.
+Anyone opens it with **Import…** in the editor or `omarchy-pulse scene import NAME.pulse`. For the **Community
+gallery**: `community/scenes/NAME/NAME.pulse` in a fork of
+[piermark/omarchy-pulse-theme](https://github.com/piermark/omarchy-pulse-theme), a `README.md` (what each thing means),
+`python3 tools/scene-index.py` (it makes the preview and the index), and a pull request with one scene. The maintainer
+reviews it, tries it and merges it if it follows section 7. Everything about it: [PACKAGES.md](PACKAGES.md).
+
+A scene in code gets its preview from a picture: export a PNG from the lab (with demo data) and add
+`--preview lanterns.png` to `scene export`.
 
 ## 11. Recipes
 
@@ -235,7 +254,7 @@ var bob = still ? 0 : Math.sin(t * 2) * box.h * 0.005;
 
 **The holidays**: `state.season.xmas` (lights, a tree), `state.season.newYear.left` (seconds to midnight).
 
-## 12. The scene editor (1.6)
+## 12. The scene editor (1.6 and 1.7)
 
 ```bash
 omarchy-pulse scene editor [NAME]
@@ -253,7 +272,7 @@ it, whether it repeats once per agent, repo or core, and what a click on it show
 
 ```js
 // my-world: a scene made with the Pulse scene editor (omarchy-pulse scene editor my-world). MIT.
-var DESIGN = /*DESIGN*/{ "v": 1, "sky": "none", "city": false, "shapes": [ ... ] }/*END*/;
+var DESIGN = /*DESIGN*/{ "v": 2, "sky": "none", "city": false, "shapes": [ ... ], "assets": { ... }, "actions": [ ... ] }/*END*/;
 var PulseDesign = (function () { ... })();          // the engine that draws a design (web/scene-design.js)
 PulseScene.register("my-world", PulseDesign.scene(DESIGN));
 ```
@@ -267,19 +286,40 @@ name), and from then on it is yours like any scene.
 
 | Key | Meaning |
 |---|---|
-| `type` | `rect`, `ellipse`, `line`, `star`, `text`, `ring` (a gauge), `bars`, `tower` (a building), `wave`, `particles` |
+| `type` | `rect`, `ellipse`, `line`, `star`, `text`, `ring` (a gauge), `bars`, `tower` (a building), `wave`, `particles`, `image` (1.7) |
 | `x`, `y`, `w`, `h` | centre and size, as fractions of the screen (0 to 1) |
 | `color`, `color2` | a theme colour (`accent`, `accent2`, `ok`, `warn`, `crit`, `fg`, `dim`, `bg`) or `#rrggbb` |
 | `alpha`, `glow`, `rot`, `fill`, `line` | opacity, glow, rotation in degrees, filled or outline, line width |
 | `anim` | `{ kind: none \| pulse \| bob \| sway \| spin \| blink \| breathe \| drift, speed }` |
-| `bind` | `[{ prop, src, from, to }]`: `src` from its low to its high moves `prop` from `from` to `to` |
-| `repeat` | `{ by: none \| agents \| repos \| cores \| count, n, spread, from, to, dx, dy, stateColors }` |
-| `click` | the text a click shows, with `{cpu}`, `{name}`... |
+| `bind` | `[{ prop, src, from, to, lo, hi }]`: `src` from its low to its high moves `prop` from `from` to `to`; `lo`/`hi` set the range of a panel |
+| `repeat` | `{ by: none \| agents \| repos \| cores \| planes \| panel \| count, panel, n, spread, from, to, dx, dy, stateColors }` (`panel`: the ID whose rows it repeats over) |
+| `click` | the text a click shows, with `{cpu}`, `{name}`, `{panel:ID}`... |
+| `asset`, `tint`, `flip` | 1.7, `image`: the picture's id in `assets`, painted in `color` or not, mirrored |
+| `keys` | 1.7: `{ start: loop \| action, loop, dur, ease: smooth \| linear, frames: [{ t, dx, dy, scale, alpha, rot }] }` |
+| `hidden` | not drawn until an action shows it |
 
 `prop` is one of `x`, `y`, `w`, `h`, `alpha`, `rot`, `glow`, `heat` (the colour towards `color2`), `speed`, `level`,
 `count`, `amp`; `src` one of `cpu`, `ram`, `gpu`, `temp`, `disk`, `net`, `hour`, `second`, `outside`, `rain`, `wind`,
 `cloud`, `daylight`, `agents`, `working`, `waiting`, `failed`, `commits`, `cifail`, `focus`, `away`, `item` (the
-agent, repo or core of a copy).
+agent, repo or core of a copy); 1.7: `minute`, `weekday`, `sun`, `moon`, `planes`, `iss`, `starlink`, `kp`, `launch`
+(minutes to it), `music`, `meeting`, and `panel:ID` for a panel of the user.
 
-**Sharing.** Like any scene (section 10): put `NAME.js` in `community/scenes/NAME/` with a README and a screenshot made
-with demo data. The editor's preview uses demo data unless you tick *my live data*.
+**The rest of a design** (1.7):
+
+| Key | Meaning |
+|---|---|
+| `assets` | `{ id: "data:image/png;base64,..." }`: PNG, JPEG, WebP or SVG (no scripts, no links), 2 MB each, 3 MB together, 40 at most |
+| `background` | `{ asset, fit: cover \| contain, alpha, dim, y }` |
+| `palette` | `{ bg, fg, accent, accent2, ok, warn, crit, dim }` as `#rrggbb`, instead of the theme's |
+| `actions` | `[{ id, when, do, cooldown, off }]`, 40 at most |
+
+An action's `when` is `{ type: "event", event }` (`agent-waiting`, `agent-done`, `agent-failed`, `agent-new`,
+`ci-fail`, `ci-ok`, `commit`, `hour`, `plane`, `iss`, `launch`, `rain`, `focus`, `back`, `music`, `row-crit`, `row-ok`, `click` with an
+optional `shape`, `start`, `every` with `secs` ≥ 5) or `{ type: "above" | "below", src, value }` (it fires on the way
+across). Its `do` is a list of `{ type: "fx", fx, text }` (`fx` one of Pulse's effects or `text`), `{ type: "play" |
+"show" | "hide" | "toggle", shape }` and `{ type: "flash", shape, color, secs }`. `cooldown` is in seconds (10 by
+default). Everything is data: Pulse checks it and writes it again when it saves, and the engine only does what this
+table says.
+
+**Sharing.** **Export .pulse** in the editor, then section 10. The editor's preview uses demo data unless you tick
+*my live data*.

@@ -97,7 +97,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -3832,7 +3832,57 @@ class Hub:
                    "fps": self.conf("pulse", "fps", default=20)},
             "events": [{"kind": x["kind"], "text": "" if priv else x["text"], "t": x["t"]} for x in list(self.fx)[-12:]],
             "season": self.season_state(),
+            "music": bool(self.audio) and time.time() - self.audio_t < 1,
+            "space": self.scene_space(priv),
+            "panels": self.scene_panels(priv),
         }
+
+    def scene_space(self, priv: bool) -> dict:
+        """1.7: the sky a scene can follow: the Sun's height, the Moon, the planes, the ISS, Starlink, Kp, the next launch.
+        Only heights, directions and counts (no position of yours); flight numbers hidden while private."""
+        n = self.night or {}
+        planes = self.sky.get("planes", []) if time.time() - self.sky.get("t", 0) < 120 else []
+        sats = [x for x in ((self.starlink or {}).get("sats") or []) if (x or {}).get("el", 0) > 0]
+        iss = (self.space or {}).get("iss") or {}
+        la = (self.space or {}).get("launch") or {}
+        return {"sun": (n.get("sun") or {}).get("el"), "moon": round(((n.get("moon") or {}).get("lit") or 0) * 100) if n.get("moon") else None,
+                "planes": len(planes), "list": [{"az": x.get("az"), "el": x.get("el"), "flight": "" if priv else x.get("flight", "")} for x in planes[:12]],
+                "iss": iss.get("el") or 0, "starlink": len(sats), "kp": (self.space or {}).get("kp"),
+                "launchIn": round(la["net"] - time.time()) if la.get("net") else None}
+
+    ROWS_SKIP = BUILTIN_IDS | {"car", "doorbell", "pulse.toml", "motion"}
+
+    def scene_panels(self, priv: bool = False) -> dict:
+        """1.7: your panels ([[source]], push, Home Assistant...), so a shape can follow them: the number of a stat or a
+        gauge {id: {value, min, max, unit}}, and the rows of a list, a status or a table {id: {rows: [{name, level,
+        value}]}} so a shape can repeat once per row (a tower per VM). Never their notes or text; names empty while
+        private; a panel marked private, and Pulse's own (system, notifications, the car...), are never in it."""
+        out = {}
+        for w in list(self.widgets.values())[:64]:
+            d = w.get("data") or {}
+            wid = str(w.get("id", ""))[:40]
+            if w.get("private") or not isinstance(d, dict):
+                continue
+            if w.get("type") in ("stat", "gauge") and isinstance(d.get("value"), (int, float)):
+                e = {"value": d["value"], "unit": str(d.get("unit") or w.get("unit_override") or "")[:8]}
+                if isinstance(d.get("min"), (int, float)) and isinstance(d.get("max"), (int, float)):
+                    e["min"], e["max"] = d["min"], d["max"]
+                out[wid] = e
+            elif wid not in self.ROWS_SKIP and (isinstance(d.get("items"), list) or isinstance(d.get("rows"), list)):
+                rows = []
+                for it in (d.get("items") or d.get("rows") or [])[:32]:
+                    if isinstance(it, dict):
+                        v = it.get("value")
+                        rows.append({"name": "" if priv else str(it.get("title") or "")[:40], "level": it.get("level") if it.get("level") in LEVELS else "",
+                                     "value": v if isinstance(v, (int, float)) and not isinstance(v, bool) else None})
+                    elif isinstance(it, (list, tuple)) and it:   # a table row [name, status]: "up 3d" is green, "exited" red
+                        st = str(it[1] if len(it) > 1 else "").lower()
+                        lv = ("warn" if "unhealthy" in st or "restarting" in st or "paused" in st else "ok" if st.startswith(("up", "running", "ok", "online"))
+                              else "crit" if st.startswith(("exited", "dead", "down", "stopped", "failed", "offline", "error")) else "")
+                        rows.append({"name": "" if priv else str(it[0])[:40], "level": lv, "value": None})
+                if rows:
+                    out[wid] = {"rows": rows}
+        return out
 
     def skyline(self) -> str:
         """The real city behind the towers: "auto" follows the weather's city (not while sharing the screen)."""
@@ -4382,7 +4432,7 @@ def power_w(v, unit: str = "") -> float | None:
 SCENE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 BUILTIN_SCENES = ("sphere", "skyline", "orbit", "calm", "hacker", "noir")
 USER_SCENES = CONF_DIR / "scenes"
-SCENE_MAX = 512 * 1024
+SCENE_MAX = 4 * 1024 * 1024   # 1.7: room for the pictures a scene carries (data: URLs)
 # a scene runs alone: no network, no forms, no popups, no way out of its frame
 SCENE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; "
              "media-src data: blob:; sandbox allow-scripts")
@@ -4429,13 +4479,70 @@ def scene_page(name: str) -> bytes | None:
 DESIGN_RE = re.compile(r"/\*DESIGN\*/(.*?)/\*END\*/", re.S)
 
 
+ASSET_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+ASSET_URL = re.compile(r"^data:image/(png|jpeg|webp|svg\+xml);base64,([A-Za-z0-9+/=]+)$")
+ASSET_MAX = 2 * 1024 * 1024        # one picture, decoded
+ASSETS_MAX = 3 * 1024 * 1024       # all the pictures of a design, as written
+SVG_BAD = re.compile(r"<\s*script|<\s*foreignObject|\bon[a-z]+\s*=|javascript:|(?:href|src)\s*=\s*[\"']?\s*(?:https?:|//|file:)", re.I)
+PALETTE_KEYS = ("bg", "fg", "accent", "accent2", "ok", "warn", "crit", "dim")
+
+
+def asset_clean(url) -> str:
+    """1.7: a picture in a design: a data: URL of a PNG, JPEG, WebP or SVG (an SVG with no scripts and no links out)."""
+    m = ASSET_URL.match(url if isinstance(url, str) else "")
+    if not m:
+        raise ValueError("a picture must be a PNG, JPEG, WebP or SVG data: URL")
+    try:
+        raw = base64.b64decode(m.group(2), validate=True)
+    except ValueError:
+        raise ValueError("a picture is not valid base64") from None
+    if len(raw) > ASSET_MAX:
+        raise ValueError(f"a picture is bigger than {ASSET_MAX // (1024 * 1024)} MB")
+    magic = {"png": raw[:8] == b"\x89PNG\r\n\x1a\n", "jpeg": raw[:3] == b"\xff\xd8\xff",
+             "webp": raw[:4] == b"RIFF" and raw[8:12] == b"WEBP", "svg+xml": b"<svg" in raw[:4096].lower()}
+    if not magic[m.group(1)]:
+        raise ValueError("a picture is not what it says it is")
+    if m.group(1) == "svg+xml" and SVG_BAD.search(raw.decode("utf-8", "replace")):
+        raise ValueError("an SVG with scripts, events or links out")
+    return url
+
+
+def _num01(v, d):
+    try:
+        return max(0.0, min(1.0, float(v)))
+    except (TypeError, ValueError):
+        return d
+
+
 def design_clean(d) -> dict:
-    """A design from the scene editor, checked: plain data only (it is drawn by scene-design.js, never run)."""
+    """A design from the scene editor, checked: plain data only (it is drawn by scene-design.js, never run).
+    1.7: pictures (assets), a background, a palette of its own and actions; nothing in it is ever run."""
     if not isinstance(d, dict) or not isinstance(d.get("shapes", []), list) or len(d.get("shapes", [])) > 200:
         raise ValueError("not a design")
-    out = {"v": 1, "sky": str(d.get("sky") or "none")[:16], "city": bool(d.get("city")),
+    out = {"v": 2, "sky": str(d.get("sky") or "none")[:16], "city": bool(d.get("city")),
            "shapes": [x for x in d.get("shapes", []) if isinstance(x, dict)]}
-    if len(json.dumps(out)) > 300_000:
+    assets = d.get("assets") or {}
+    if not isinstance(assets, dict) or len(assets) > 40:
+        raise ValueError("at most 40 pictures")
+    out["assets"] = {}
+    for k, v in assets.items():
+        if not ASSET_ID.match(str(k)):
+            raise ValueError("a picture's name: letters, digits, - and _")
+        out["assets"][str(k)] = asset_clean(v)
+    if sum(len(v) for v in out["assets"].values()) > ASSETS_MAX:
+        raise ValueError(f"the pictures are more than {ASSETS_MAX // (1024 * 1024)} MB together")
+    bg = d.get("background")
+    if isinstance(bg, dict) and bg.get("asset") in out["assets"]:
+        out["background"] = {"asset": bg["asset"], "fit": "contain" if bg.get("fit") == "contain" else "cover",
+                             "alpha": _num01(bg.get("alpha", 1), 1.0), "dim": _num01(bg.get("dim", 0), 0.0), "y": _num01(bg.get("y", 0.5), 0.5)}
+    pal = d.get("palette")
+    if isinstance(pal, dict):
+        out["palette"] = {k: v for k, v in pal.items() if k in PALETTE_KEYS and isinstance(v, str) and re.match(r"^#[0-9a-fA-F]{6}$", v)}
+    acts = d.get("actions") or []
+    if not isinstance(acts, list) or len(acts) > 40:
+        raise ValueError("at most 40 actions")
+    out["actions"] = [a for a in acts if isinstance(a, dict) and isinstance(a.get("when"), dict) and isinstance(a.get("do"), list)][:40]
+    if len(json.dumps({k: v for k, v in out.items() if k != "assets"})) > 300_000:
         raise ValueError("the design is too big")
     return out
 
@@ -4478,6 +4585,174 @@ def scene_check(src: str) -> list:
     if not out:
         out.append(("ok", "ready to share"))
     return out
+
+
+# ---------------------------------------------------------------------------- 1.7: packages (.pulse files)
+# A package is what people share: one JSON file with a scene (made in the editor, or written by hand), its pictures, its
+# actions, a preview and who made it under which licence. Importing one is safe: a scene runs in its sandbox (no network,
+# no token, no files) and its actions only ask Pulse for its own effects. What could run on your computer (commands,
+# [[source]] scripts) is never part of a package: they are shared as pull requests, reviewed by a person.
+PKG_FORMAT = "omarchy-pulse-scene"
+PKG_MAX = 6 * 1024 * 1024
+PKG_LICENSES = ("MIT", "CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0")
+PKG_KEYS = {"format", "v", "name", "title", "author", "license", "description", "pulse", "kind", "design", "js", "preview", "tags", "created"}
+PKG_TAG = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+GALLERY_RAW = os.environ.get("PULSE_GALLERY", "https://raw.githubusercontent.com/piermark/omarchy-pulse-theme/main/community/scenes")
+
+
+def _txt(v, n: int) -> str:
+    return re.sub(r"[\x00-\x1f\x7f]", " ", str(v or "")).strip()[:n]
+
+
+def package_check(pkg) -> tuple[list, dict | None]:
+    """Is this a package Pulse can install? ([(level, message)...], the cleaned package or None)."""
+    out = []
+    if not isinstance(pkg, dict) or pkg.get("format") != PKG_FORMAT:
+        return [("crit", "not a Pulse scene package (.pulse)")], None
+    extra = sorted(set(pkg) - PKG_KEYS)
+    if extra:   # commands, sources, scripts... have no place in a package
+        out.append(("crit", "not allowed in a package: " + ", ".join(extra[:6])))
+    name = str(pkg.get("name") or "")
+    if not SCENE_NAME.match(name) or name in BUILTIN_SCENES:
+        out.append(("crit", "a name: a-z, 0-9 and -, up to 32, not a built-in scene"))
+    title, author = _txt(pkg.get("title") or name, 60), _txt(pkg.get("author"), 60)
+    if not author:
+        out.append(("crit", "who made it: author"))
+    lic = str(pkg.get("license") or "")
+    if lic not in PKG_LICENSES:
+        out.append(("crit", "a licence that lets others use it: " + ", ".join(PKG_LICENSES)))
+    kind = "js" if pkg.get("js") else "design"
+    clean = {"format": PKG_FORMAT, "v": 1, "name": name, "title": title, "author": author, "license": lic,
+             "description": _txt(pkg.get("description"), 400), "pulse": _txt(pkg.get("pulse") or VERSION, 16), "kind": kind,
+             "tags": [t for t in (pkg.get("tags") or []) if isinstance(t, str) and PKG_TAG.match(t)][:6] if isinstance(pkg.get("tags"), list) else [],
+             "created": _txt(pkg.get("created"), 32)}
+    if kind == "design":
+        try:
+            clean["design"] = design_clean(pkg.get("design"))
+        except (ValueError, TypeError) as e:
+            out.append(("crit", "the scene: " + str(e)))
+    else:
+        src = pkg.get("js")
+        if not isinstance(src, str):
+            out.append(("crit", "the scene's code is not text"))
+        else:
+            res = scene_check(src)
+            out += [r for r in res if r[0] != "ok"]
+            clean["js"] = src
+            out.append(("info", "a scene written in code: it runs in Pulse's sandbox, no network and no files"))
+    pv = pkg.get("preview")
+    if pv:
+        try:
+            if not str(pv).startswith("data:image/png;") and not str(pv).startswith("data:image/webp;") and not str(pv).startswith("data:image/jpeg;"):
+                raise ValueError("x")
+            clean["preview"] = asset_clean(pv)
+        except ValueError:
+            out.append(("warn", "the preview is not a picture: left out"))
+    else:
+        out.append(("warn", "no preview picture"))
+    if len(json.dumps(clean)) > PKG_MAX:
+        out.append(("crit", f"bigger than {PKG_MAX // (1024 * 1024)} MB"))
+    if not any(lv == "crit" for lv, _ in out):
+        out.append(("ok", "ready to install and to share"))
+    return out, (None if any(lv == "crit" for lv, _ in out) else clean)
+
+
+def package_src(clean: dict, name: str) -> str:
+    """The scene file a package becomes, with who made it on top."""
+    head = (f"// {name}: {clean['title']}, by {clean['author']} ({clean['license']}). Installed from a Pulse package.\n")
+    if clean["kind"] == "design":
+        return head + design_scene(name, clean["design"])
+    js = clean["js"]
+    m = re.search(r"PulseScene\.register\(\s*([\"'])([a-z0-9-]+)\1", js)
+    if m and m.group(2) != name:   # installed under another name: the scene registers with that one
+        js = js[:m.start(2)] + name + js[m.end(2):]
+    return head + js
+
+
+def package_install(pkg, name: str = "", force: bool = False) -> dict:
+    """Install a package into your scenes; {path, name, checks} or {error}."""
+    checks, clean = package_check(pkg)
+    if not clean:
+        return {"error": "; ".join(m for lv, m in checks if lv == "crit"), "checks": checks}
+    name = name or clean["name"]
+    if not SCENE_NAME.match(name) or name in BUILTIN_SCENES or (WEB / "scenes" / f"{name}.js").exists():
+        return {"error": "choose another name: this one belongs to Pulse", "checks": checks}
+    f = USER_SCENES / f"{name}.js"
+    if f.exists() and not force:
+        return {"error": "exists", "name": name, "checks": checks}
+    src = package_src(clean, name)
+    if len(src.encode()) > SCENE_MAX:
+        return {"error": "too big", "checks": checks}
+    USER_SCENES.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".js.tmp")
+    tmp.write_text(src, encoding="utf-8")
+    tmp.replace(f)
+    meta = {k: clean[k] for k in ("title", "author", "license", "description", "tags", "pulse", "created")}
+    (USER_SCENES / f"{name}.meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+    shown = "~/" + str(f.relative_to(HOME)) if HOME in f.parents else str(f)
+    return {"path": shown, "name": name, "checks": checks}
+
+
+def scene_meta(name: str) -> dict:
+    try:
+        m = json.loads((USER_SCENES / f"{name}.meta.json").read_text(encoding="utf-8"))
+        return m if isinstance(m, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def package_build(name: str, meta: dict | None = None, preview: str = "") -> dict:
+    """A package of one of your scenes, to share: the design (or the code), the credits and a preview."""
+    f = scene_path(name)
+    if not f:
+        raise ValueError(f"no scene called {name!r}")
+    src = f.read_text(encoding="utf-8", errors="replace")
+    m = {**scene_meta(name), **{k: v for k, v in (meta or {}).items() if v not in (None, "")}}
+    pkg = {"format": PKG_FORMAT, "v": 1, "name": name, "title": m.get("title") or name, "author": m.get("author") or "",
+           "license": m.get("license") or "MIT", "description": m.get("description") or "", "pulse": VERSION,
+           "tags": m.get("tags") or [], "created": m.get("created") or time.strftime("%Y-%m-%d")}
+    d = design_of(src)
+    if d is not None:
+        pkg["kind"], pkg["design"] = "design", d
+    else:
+        pkg["kind"], pkg["js"] = "js", re.sub(r"^// [^\n]*Installed from a Pulse package\.\n", "", src)
+    if preview:
+        pkg["preview"] = preview
+    return pkg
+
+
+_gallery = {"t": 0.0, "items": []}
+
+
+def gallery_index(fetch=None) -> list:
+    """The scenes people shared in community/scenes (index.json made by tools/scene-index.py), kept for 30 minutes."""
+    if time.time() - _gallery["t"] < 1800 and _gallery["items"]:
+        return _gallery["items"]
+    j = (fetch or http_json)(GALLERY_RAW + "/index.json")
+    items = [x for x in (j.get("scenes") if isinstance(j, dict) else []) or [] if isinstance(x, dict) and SCENE_NAME.match(str(x.get("name") or ""))]
+    _gallery.update(t=time.time(), items=items[:500])
+    return _gallery["items"]
+
+
+def gallery_package(name: str, fetch=None, index=None) -> dict:
+    """A package from the gallery, checked against the index (its size and sha256: what was reviewed is what you get)."""
+    if not SCENE_NAME.match(name or ""):
+        raise ValueError("a scene name")
+    entry = next((x for x in (index if index is not None else gallery_index()) if x.get("name") == name), None)
+    if not entry:
+        raise ValueError(f"{name} is not in the gallery")
+    url = f"{GALLERY_RAW}/{name}/{name}.pulse"
+    if fetch:
+        raw = fetch(url)
+    else:
+        req = urllib.request.Request(url, headers={"User-Agent": "omarchy-pulse/" + VERSION})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read(PKG_MAX + 1)
+    if len(raw) > PKG_MAX:
+        raise ValueError("too big")
+    if entry.get("sha256") and hashlib.sha256(raw).hexdigest() != entry["sha256"]:
+        raise ValueError("it does not match the gallery's index: try again later")
+    return json.loads(raw)
 
 
 SCENE_TEMPLATE = """// NAME: a scene for Omarchy Pulse (docs/SCENES.md). MIT, your own art and code.
@@ -6483,7 +6758,17 @@ def make_handler(hub: Hub, tok: str, port: int):
                     self._send(200, b"{}")
                     return
                 d = design_of(f.read_text(encoding="utf-8", errors="replace"))
-                self._send(200, json.dumps({"design": d, "path": str(f)} if d else {"error": "handwritten", "path": str(f)}).encode())
+                self._send(200, json.dumps({"design": d, "path": str(f), "meta": scene_meta(q.get("name", ""))} if d else {"error": "handwritten", "path": str(f)}).encode())
+                return
+            if path == "/api/gallery":   # 1.7: the scenes people shared (the editor's Community tab)
+                if not self._authed(q):
+                    return
+                try:
+                    items = gallery_index()
+                    mine = scene_list()
+                    self._send(200, json.dumps({"base": GALLERY_RAW, "scenes": [{**x, "installed": x.get("name") in mine} for x in items]}).encode())
+                except Exception as e:   # noqa: BLE001 - offline, GitHub down
+                    self._send(200, json.dumps({"scenes": [], "error": f"the gallery is not reachable now ({type(e).__name__})"}).encode())
                 return
             if path in ("/api/scenes", "/api/scene-src", "/api/scene-state"):   # the scene lab
                 if not self._authed(q):
@@ -6637,6 +6922,61 @@ def make_handler(hub: Hub, tok: str, port: int):
                 tmp.replace(f)
                 shown = "~/" + str(f.relative_to(HOME)) if HOME in f.parents else str(f)
                 self._send(200, json.dumps({"path": shown, "checks": scene_check(src)}).encode())
+                return
+            if u.path in ("/api/package-check", "/api/package-install"):   # 1.7: a .pulse file opened in the editor
+                try:
+                    pkg = json.loads(body or b"{}")
+                except ValueError:
+                    self._send(400, b'{"error":"not a .pulse file"}')
+                    return
+                if u.path == "/api/package-check":
+                    checks, clean = package_check(pkg)
+                    self._send(200, json.dumps({"checks": checks, "ok": bool(clean), "name": (clean or {}).get("name") or pkg.get("name", "") if isinstance(pkg, dict) else "",
+                                                "kind": (clean or {}).get("kind"), "design": (clean or {}).get("design"),
+                                                "meta": {k: (clean or {}).get(k) for k in ("title", "author", "license", "description", "tags")},
+                                                "exists": bool(clean) and (USER_SCENES / f"{clean['name']}.js").exists()}).encode())
+                    return
+                res = package_install(pkg, q.get("name", ""), q.get("force") == "1")
+                self._send(200 if "path" in res else 409 if res.get("error") == "exists" else 400, json.dumps(res).encode())
+                return
+            if u.path == "/api/package-export":   # 1.7: a package of one of your scenes, to share
+                try:
+                    j = json.loads(body or b"{}")
+                    pkg = package_build(q.get("name", ""), j.get("meta") or {}, str(j.get("preview") or ""))
+                except (ValueError, TypeError, AttributeError) as e:
+                    self._send(400, json.dumps({"error": str(e)}).encode())
+                    return
+                checks, clean = package_check(pkg)
+                self._send(200, json.dumps({"package": clean or pkg, "checks": checks, "ok": bool(clean)}).encode())
+                return
+            if u.path == "/api/gallery-install":   # 1.7: install a scene from the gallery
+                try:
+                    pkg = gallery_package(q.get("name", ""))
+                except ValueError as e:
+                    self._send(502, json.dumps({"error": str(e)}).encode())
+                    return
+                except Exception as e:   # noqa: BLE001
+                    self._send(502, json.dumps({"error": f"cannot fetch it now ({type(e).__name__})"}).encode())
+                    return
+                res = package_install(pkg, q.get("name", ""), q.get("force") == "1")
+                self._send(200 if "path" in res else 409 if res.get("error") == "exists" else 400, json.dumps(res).encode())
+                return
+            if u.path == "/api/scene-meta":   # 1.7: who made it, under which licence (kept next to the scene)
+                name = q.get("name", "")
+                if not SCENE_NAME.match(name) or not (USER_SCENES / f"{name}.js").exists():
+                    self._send(404, b'{"error":"no such scene of yours"}')
+                    return
+                try:
+                    j = json.loads(body or b"{}")
+                    meta = {"title": _txt(j.get("title"), 60), "author": _txt(j.get("author"), 60),
+                            "license": j.get("license") if j.get("license") in PKG_LICENSES else "MIT",
+                            "description": _txt(j.get("description"), 400),
+                            "tags": [t for t in (j.get("tags") or []) if isinstance(t, str) and PKG_TAG.match(t)][:6]}
+                except (ValueError, TypeError, AttributeError):
+                    self._send(400, b'{"error":"bad"}')
+                    return
+                (USER_SCENES / f"{name}.meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+                self._send(200, json.dumps({"meta": meta}).encode())
                 return
             if u.path == "/api/scene-try":   # 1.6: the editor shows its scene on the wallpaper (until a restart)
                 name = q.get("name", "")
@@ -7343,7 +7683,7 @@ def cmd_term() -> int:
 
 
 def cmd_scene(args: list) -> int:
-    """omarchy-pulse scene list | new NAME | check NAME | lab [NAME] | editor [NAME]"""
+    """omarchy-pulse scene list | new NAME | check NAME | lab [NAME] | editor [NAME] | export NAME | import FILE | gallery | get NAME"""
     sub = args[0] if args else "list"
     if sub == "list":
         cur = str((load_config().get("pulse") or {}).get("scene") or "sphere")
@@ -7391,7 +7731,62 @@ def cmd_scene(args: list) -> int:
         if shutil.which("xdg-open"):
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return 0
-    print("usage: omarchy-pulse scene list | new NAME | check NAME | lab [NAME] | editor [NAME]")
+    opt = lambda k: args[args.index(k) + 1] if k in args and args.index(k) + 1 < len(args) else ""   # noqa: E731
+    if sub == "export":   # 1.7: one of your scenes as a .pulse file, to share
+        try:
+            pv = ""
+            if opt("--preview"):   # a PNG, WebP or JPEG (the scene lab's PNG export, a screenshot with demo data)
+                raw = Path(opt("--preview")).expanduser().read_bytes()
+                kind = "png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else "webp" if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP" else "jpeg" if raw[:3] == b"\xff\xd8\xff" else ""
+                if not kind:
+                    raise ValueError("--preview: a PNG, WebP or JPEG picture")
+                pv = f"data:image/{kind};base64," + base64.b64encode(raw).decode()
+            pkg = package_build(name, {"author": opt("--author"), "license": opt("--license"), "title": opt("--title"),
+                                       "description": opt("--description")}, pv)
+        except (ValueError, OSError) as e:
+            print(e)
+            return 1
+        checks, clean = package_check(pkg)
+        for lv, msg in checks:
+            print({"ok": "  ✓", "warn": "  !", "crit": "  ✗", "info": "  ·"}[lv], msg)
+        if not clean:
+            print("\n  add what is missing: --author \"Your Name\" --license MIT (or CC0-1.0, CC-BY-4.0, CC-BY-SA-4.0)")
+            return 1
+        out = Path(opt("-o") or f"{name}.pulse")
+        out.write_text(json.dumps(clean, indent=1), encoding="utf-8")
+        print(f"\n  {out}: share it, or put it in community/scenes/{name}/ for the gallery (docs/PACKAGES.md)")
+        return 0
+    if sub in ("import", "get"):   # 1.7: a .pulse file, or a scene from the gallery
+        try:
+            pkg = json.loads(Path(name).read_text(encoding="utf-8")) if sub == "import" else gallery_package(name)
+        except (OSError, ValueError) as e:
+            print(f"cannot read it: {e}")
+            return 1
+        except Exception as e:   # noqa: BLE001
+            print(f"cannot fetch it from the gallery now: {type(e).__name__}")
+            return 1
+        res = package_install(pkg, opt("--name"), "--force" in args)
+        for lv, msg in res.get("checks", []):
+            print({"ok": "  ✓", "warn": "  !", "crit": "  ✗", "info": "  ·"}[lv], msg)
+        if res.get("error") == "exists":
+            print(f"\n  you already have a scene called {res['name']!r}: --force to replace it, or --name another")
+            return 1
+        if "error" in res:
+            print("\n  not installed: " + res["error"])
+            return 1
+        print(f"\n  installed {res['path']}\n  use it: [pulse] scene = \"{res['name']}\" · change it: omarchy-pulse scene editor {res['name']}")
+        return 0
+    if sub == "gallery":
+        try:
+            for x in gallery_index():
+                print(f"  {x.get('name', ''):24} {x.get('title', '')} · {x.get('author', '')} ({x.get('license', '')})")
+        except Exception as e:   # noqa: BLE001
+            print(f"the gallery is not reachable now: {type(e).__name__}")
+            return 1
+        print("\n  install one: omarchy-pulse scene get NAME")
+        return 0
+    print("usage: omarchy-pulse scene list | new NAME | check NAME | lab [NAME] | editor [NAME]\n"
+          "                           export NAME [--author A --license MIT --preview PNG] | import FILE.pulse | gallery | get NAME")
     return 2
 
 

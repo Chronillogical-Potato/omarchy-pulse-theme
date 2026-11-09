@@ -1,0 +1,226 @@
+{
+ "format": "omarchy-pulse-scene",
+ "v": 1,
+ "name": "moonlit-garden",
+ "title": "Moonlit garden",
+ "author": "Marco Porro",
+ "license": "MIT",
+ "description": "A night garden: a flower for every repo, its colour the CI, its size the commits of the week; fireflies for the agents at work; a Moon as bright as the real one; stars when the Sun is down. Fireworks at midnight, a shooting star when the ISS passes over.",
+ "pulse": "1.7.0",
+ "kind": "design",
+ "tags": [
+  "night",
+  "git",
+  "sky"
+ ],
+ "created": "2026-11-09",
+ "design": {
+  "v": 2,
+  "sky": "none",
+  "city": false,
+  "shapes": [
+   {
+    "alpha": 1,
+    "glow": 0.8,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [
+     {
+      "prop": "alpha",
+      "src": "moon",
+      "from": 0.25,
+      "to": 1
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "moon",
+    "type": "image",
+    "name": "moon",
+    "asset": "moon",
+    "x": 0.27,
+    "y": 0.36,
+    "w": 0.045,
+    "h": 0.08,
+    "click": "the Moon, {moon}% lit"
+   },
+   {
+    "alpha": 0.75,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [
+     {
+      "prop": "count",
+      "src": "sun",
+      "from": 120,
+      "to": 0
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "stars",
+    "type": "particles",
+    "name": "stars",
+    "x": 0.5,
+    "y": 0.48,
+    "w": 0.44,
+    "h": 0.24,
+    "dir": "fireflies",
+    "count": 60,
+    "dot": 1.5,
+    "color": "fg"
+   },
+   {
+    "alpha": 0.18,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "ground",
+    "type": "rect",
+    "name": "ground",
+    "x": 0.5,
+    "y": 0.8,
+    "w": 0.46,
+    "h": 0.1,
+    "round": 1,
+    "color": "ok"
+   },
+   {
+    "alpha": 1,
+    "glow": 0.5,
+    "anim": {
+     "kind": "sway",
+     "speed": 0.5
+    },
+    "bind": [
+     {
+      "prop": "w",
+      "src": "item",
+      "from": 0.014,
+      "to": 0.04
+     },
+     {
+      "prop": "h",
+      "src": "item",
+      "from": 0.025,
+      "to": 0.07
+     }
+    ],
+    "repeat": {
+     "by": "repos",
+     "spread": true,
+     "from": 0.36,
+     "to": 0.64,
+     "stateColors": true
+    },
+    "id": "flower",
+    "type": "star",
+    "name": "flower",
+    "x": 0.35,
+    "y": 0.76,
+    "w": 0.026,
+    "h": 0.046,
+    "points": 6,
+    "inner": 0.4,
+    "color": "accent2",
+    "click": "{name} · {state}"
+   },
+   {
+    "alpha": 1,
+    "glow": 1,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [
+     {
+      "prop": "count",
+      "src": "working",
+      "from": 3,
+      "to": 50
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "fireflies",
+    "type": "particles",
+    "name": "fireflies",
+    "x": 0.5,
+    "y": 0.68,
+    "w": 0.44,
+    "h": 0.14,
+    "dir": "fireflies",
+    "count": 6,
+    "dot": 3,
+    "color": "warn"
+   }
+  ],
+  "assets": {
+   "moon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAgMTIwIiB3aWR0aD0iMTIwIiBoZWlnaHQ9IjEyMCI+PGRlZnM+PHJhZGlhbEdyYWRpZW50IGlkPSJnIiBjeD0iNDAlIiBjeT0iMzglIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmYmY2ZTIiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNkOWQyYjQiLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48Y2lyY2xlIGN4PSI2MCIgY3k9IjYwIiByPSI1NiIgZmlsbD0idXJsKCNnKSIvPjxjaXJjbGUgY3g9IjQyIiBjeT0iNDQiIHI9IjkiIGZpbGw9IiNjOWMxYTAiLz48Y2lyY2xlIGN4PSI3NCIgY3k9IjcyIiByPSIxMyIgZmlsbD0iI2NmYzdhNiIvPjxjaXJjbGUgY3g9Ijc2IiBjeT0iMzYiIHI9IjUiIGZpbGw9IiNjOWMxYTAiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjgyIiByPSI2IiBmaWxsPSIjY2ZjN2E2Ii8+PC9zdmc+"
+  },
+  "actions": [
+   {
+    "id": "a1",
+    "when": {
+     "type": "below",
+     "src": "hour",
+     "value": 0.1
+    },
+    "do": [
+     {
+      "type": "fx",
+      "fx": "fireworks",
+      "text": "midnight"
+     }
+    ],
+    "cooldown": 600
+   },
+   {
+    "id": "a2",
+    "when": {
+     "type": "event",
+     "event": "iss"
+    },
+    "do": [
+     {
+      "type": "fx",
+      "fx": "shooting",
+      "text": "the ISS is passing over"
+     }
+    ],
+    "cooldown": 600
+   },
+   {
+    "id": "a3",
+    "when": {
+     "type": "event",
+     "event": "commit"
+    },
+    "do": [
+     {
+      "type": "flash",
+      "shape": "flower",
+      "color": "warn",
+      "secs": 2
+     }
+    ],
+    "cooldown": 10
+   }
+  ]
+ },
+ "preview": "data:image/webp;base64,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"
+}

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pulse scene editor</title>
 <!-- Omarchy Pulse 1.6: the scene editor. Draw a world with the mouse, make it move with your data, save it as a scene.
+     1.7 "Creator": pictures and backgrounds, keyframe animations, actions (when this happens, do that), any value of the
+     engine (your own panels too), and .pulse packages: export to share, import, and the Community gallery.
      (c) 2026 Marco Porro (x.com/MarcoPorro), MIT. -->
 <style>
 :root { --bg: #0d0f17; --panel: #121522; --fg: #d8dee9; --dim: #6b7389; --line: #232838; --ac: #7aa2f7; --ac2: #bb9af7; --ok: #9ece6a; --warn: #e0af68; --crit: #f7768e; }
@@ -41,7 +43,7 @@ h3:first-child { margin-top: 0; }
 #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 #overlay { cursor: default; }
 .hint { color: var(--dim); font-size: 12px; }
-#status { min-height: 1.4em; color: var(--ac); max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status { min-height: 1.4em; color: var(--ac); max-width: 42vw; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #status.err { color: var(--crit); }
 .row { display: flex; gap: .45rem; align-items: center; margin: .32rem 0; flex-wrap: wrap; }
 .row > label { min-width: 6.5ch; color: var(--dim); }
@@ -66,7 +68,43 @@ h3:first-child { margin-top: 0; }
 dialog { background: var(--panel); color: var(--fg); border: 1px solid var(--ac); border-radius: 8px; max-width: 760px; }
 dialog::backdrop { background: rgba(0,0,0,.6); }
 kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-size: 11px; }
+@media (min-width: 1250px) { header { flex-wrap: nowrap; } header > * { flex-shrink: 0; } header #status { flex-shrink: 1; } }
 @media (max-width: 1100px) { main { grid-template-columns: 170px 1fr 260px; } }
+/* 1.7 */
+#pics { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem; }
+#pics .pic { position: relative; border: 1px solid var(--line); border-radius: 4px; background: #0a0c12 center/contain no-repeat; aspect-ratio: 16/10; cursor: pointer; }
+#pics .pic:hover { border-color: var(--ac); }
+#pics .pic .bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; background: rgba(0,0,0,.6); }
+#pics .pic .bar button { padding: 0 .3rem; font-size: 10px; border: 0; background: none; }
+#acts { list-style: none; margin: 0; padding: 0; }
+#acts li { display: flex; gap: .3rem; align-items: flex-start; padding: .25rem .3rem; border: 1px solid var(--line); border-radius: 4px; margin-bottom: .3rem; font-size: 11px; }
+#acts li .tx { flex: 1; }
+#acts li.off .tx { opacity: .45; text-decoration: line-through; }
+#acts li button { padding: 0 .3rem; font-size: 11px; }
+.frames { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; }
+.frames th:last-child, .frames td:last-child { width: 1.6rem; }
+.frames td, .frames th { padding: .1rem; text-align: center; color: var(--dim); font-weight: normal; }
+.frames input { width: 100%; min-width: 0; padding: .1rem .15rem; box-sizing: border-box; }
+.presets { display: flex; flex-wrap: wrap; gap: .25rem; }
+.presets button { font-size: 11px; padding: .1rem .4rem; }
+#fxl { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); pointer-events: none; padding: .5rem 1rem; border-radius: 6px;
+       background: rgba(13,15,23,.78); border: 1px solid var(--ac); color: var(--fg); font-size: 15px; opacity: 0; transition: opacity .3s; white-space: nowrap; }
+#fxl.on { opacity: 1; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .7rem; max-height: 60vh; overflow: auto; }
+.card { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #0f1220; }
+.card .im { aspect-ratio: 16/9; background: #05060a center/cover no-repeat; }
+.card .bd { padding: .4rem .55rem; }
+.card .bd b { color: var(--ac); display: block; }
+.checks { list-style: none; padding: 0; margin: .4rem 0; }
+.checks li::before { content: "✓ "; color: var(--ok); }
+.checks li.warn::before { content: "! "; color: var(--warn); }
+.checks li.crit::before { content: "✗ "; color: var(--crit); }
+.checks li.info::before { content: "· "; color: var(--dim); }
+.dlgrow { display: flex; gap: .5rem; align-items: center; margin: .35rem 0; }
+.dlgrow > label { min-width: 9ch; color: var(--dim); }
+.dlgrow input[type=text], .dlgrow textarea, .dlgrow select { flex: 1; }
+.do { border: 1px solid var(--line); border-radius: 5px; padding: .3rem .4rem; margin: .3rem 0; display: flex; gap: .35rem; flex-wrap: wrap; align-items: center; }
+body.drop::after { content: "drop a .pulse file to open it"; position: fixed; inset: 1rem; border: 2px dashed var(--ac); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--ac); background: rgba(13,15,23,.75); }
 </style>
 </head>
 <body>
@@ -78,7 +116,11 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
   <span class="grow"></span>
   <span id="status"></span>
   <button id="lab" title="open the saved scene in the scene lab">Lab</button>
-  <button id="export" title="download the scene file">Export .js</button>
+  <button id="import" title="open a .pulse file (or drop one on the page)">Import…</button>
+  <button id="community" title="scenes people shared: try them, install them, change them">Community</button>
+  <button id="export" title="download the scene as a .js file (for the scene lab, or to write it on by hand)">.js</button>
+  <button id="exportPkg" title="a .pulse file to share: the scene, its pictures and actions, your name and licence">Export .pulse</button>
+  <input type="file" id="pkgFile" accept=".pulse,application/json" hidden><input type="file" id="picFile" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple hidden>
   <button id="try" title="show it on your wallpaper now (until Pulse restarts)">Try on wallpaper</button>
   <button id="save" class="primary" title="Ctrl+S">Save</button>
 </header>
@@ -91,10 +133,23 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
     <h3>scene</h3>
     <div class="row"><label>sky</label><select id="sky"><option value="none">Pulse's real sky</option><option value="accent">its own, accent</option><option value="accent2">its own, accent 2</option><option value="ok">its own, green</option><option value="crit">its own, red</option></select></div>
     <div class="row"><label>city</label><select id="city"><option value="0">no city behind</option><option value="1">Pulse's far city behind</option></select></div>
+    <div class="row"><label>picture</label><select id="bg"></select></div>
+    <div class="row" id="bgOpts"><label>fit</label><select id="bgFit"><option value="cover">fill the screen</option><option value="contain">whole picture</option></select>
+      <label>dim</label><input type="range" id="bgDim" min="0" max="0.9" step="0.05" value="0" style="width:5rem"></div>
+    <div class="row" id="bgOpts2"><label>opacity</label><input type="range" id="bgAlpha" min="0.1" max="1" step="0.05" value="1" style="width:5rem">
+      <label title="which part of the picture shows when it is cut to fit">top ↕ bottom</label><input type="range" id="bgY" min="0" max="1" step="0.05" value="0.5" style="width:5rem"></div>
+    <div class="row"><label>colours</label><select id="pal"><option value="theme">the Omarchy theme's</option><option value="own">its own palette</option></select></div>
+    <div class="row" id="palOpts"></div>
+    <h3>pictures <span class="hint">(PNG, JPEG, WebP, SVG)</span></h3>
+    <div id="pics"></div>
+    <div class="row"><button id="addPic">+ import pictures</button></div>
+    <h3>actions <span class="hint">(when… do…)</span></h3>
+    <ul id="acts"></ul>
+    <div class="row"><button id="addAct">+ action</button></div>
     <p class="hint">Keys: <kbd>Del</kbd> remove · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · arrows move (<kbd>Shift</kbd> more) · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save</p>
   </aside>
   <section class="center">
-    <div id="stage"><canvas id="sky-c"></canvas><canvas id="scene-c"></canvas><canvas id="overlay"></canvas></div>
+    <div id="stage"><canvas id="sky-c"></canvas><canvas id="scene-c"></canvas><canvas id="overlay"></canvas><div id="fxl"></div></div>
     <div class="row" style="justify-content:space-between">
       <span class="hint">Drag to move · drag a corner to resize · the dashed zones are under Pulse's panels · the line is the horizon</span>
       <span class="hint" id="perf"></span>
@@ -107,6 +162,9 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
       <span><label for="d-hour">hour</label><input type="range" id="d-hour" min="0" max="23.9" step=".1" value="21"></span>
       <span><label for="d-agents">agents</label><input type="range" id="d-agents" min="0" max="8" value="3"></span>
       <span><label for="d-rain">rain</label><input type="range" id="d-rain" min="0" max="5" step=".1" value="0"></span>
+      <span><label for="d-planes">planes</label><input type="range" id="d-planes" min="0" max="10" value="2"></span>
+      <span><label for="d-iss">ISS</label><input type="range" id="d-iss" min="0" max="90" value="0"></span>
+      <span><label for="d-panel">your panels</label><input type="range" id="d-panel" min="0" max="100" value="40"></span>
       <span><label for="d-motion">motion</label><select id="d-motion"><option>full</option><option>reduced</option></select></span>
       <span><label for="d-priv">privacy</label><select id="d-priv"><option value="0">off</option><option value="1">on</option></select></span>
     </div>
@@ -120,6 +178,44 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
   <p class="hint">Everything is drawn from the theme's colours, so it fits every Omarchy theme. Demo data only in the editor: what you see is safe to share.</p>
   <div class="row" style="justify-content:flex-end"><button id="dlgClose">Close</button></div>
 </dialog>
+<dialog id="expDlg">
+  <h3>export a .pulse file</h3>
+  <p class="hint">One file with the scene, its pictures and its actions, who made it and how others may use it. Anyone can open it in their editor; to put it in the Community gallery, open a pull request (docs/PACKAGES.md).</p>
+  <div class="dlgrow"><label>title</label><input type="text" id="mTitle" maxlength="60"></div>
+  <div class="dlgrow"><label>author</label><input type="text" id="mAuthor" maxlength="60" placeholder="your name or handle"></div>
+  <div class="dlgrow"><label>licence</label><select id="mLicense"><option>MIT</option><option>CC0-1.0</option><option>CC-BY-4.0</option><option>CC-BY-SA-4.0</option></select></div>
+  <div class="dlgrow"><label>about it</label><textarea id="mDesc" rows="3" maxlength="400" placeholder="what each shape means, what the actions do"></textarea></div>
+  <div class="dlgrow"><label>tags</label><input type="text" id="mTags" placeholder="homelab, agents, night"></div>
+  <p class="hint">Only pictures you made, or ones whose licence lets you share them. The preview is made from the stage, with demo data.</p>
+  <ul class="checks" id="expChecks"></ul>
+  <div class="row" style="justify-content:flex-end"><button id="expCancel">Cancel</button><button id="expGo" class="primary">Export</button></div>
+</dialog>
+<dialog id="pkgDlg">
+  <h3 id="pkgTitle">a .pulse file</h3>
+  <div style="display:flex;gap:.8rem;align-items:flex-start;flex-wrap:wrap"><img id="pkgPrev" alt="" style="width:320px;max-width:100%;border-radius:5px;border:1px solid var(--line);background:#000">
+    <div style="flex:1;min-width:220px"><div id="pkgMeta" class="hint"></div><ul class="checks" id="pkgChecks"></ul></div></div>
+  <div class="dlgrow"><label>install as</label><input type="text" id="pkgName" maxlength="32"></div>
+  <div class="row" style="justify-content:flex-end"><button id="pkgCancel">Close</button><button id="pkgOpen">Open in the editor</button><button id="pkgInstall" class="primary">Install</button></div>
+</dialog>
+<dialog id="galDlg" style="width:min(1000px,94vw)">
+  <h3>community scenes</h3>
+  <p class="hint">Scenes people made and shared in the repository's community/ folder. Each one runs in Pulse's sandbox (no network, no files): install it, use it, open it in the editor to make it yours.</p>
+  <div class="row"><input type="text" id="galQ" placeholder="search" style="flex:1"></div>
+  <div class="cards" id="galList"><p class="hint">loading…</p></div>
+  <div class="row" style="justify-content:flex-end"><button id="galClose">Close</button></div>
+</dialog>
+<dialog id="actDlg" style="width:min(720px,94vw)">
+  <h3>action</h3>
+  <div class="dlgrow"><label>when</label><select id="aType"><option value="event">something happens</option><option value="above">a value rises above</option><option value="below">a value falls below</option></select></div>
+  <div class="dlgrow" id="aEvRow"><label></label><select id="aEvent"></select><span id="aExtra"></span></div>
+  <div class="dlgrow" id="aSrcRow"><label></label><select id="aSrc"></select><input type="number" step="any" id="aVal" style="width:6rem"></div>
+  <h3>do</h3>
+  <div id="aDos"></div>
+  <div class="row"><button id="aAddDo">+ do something else</button></div>
+  <div class="dlgrow"><label>at most</label><span>once every</span><input type="number" id="aCool" min="1" max="3600" value="10" style="width:5rem"><span>seconds</span></div>
+  <p class="hint">Pulse's effects play over your whole wallpaper (a few a minute at most). The rest happens in your scene: an animation, a colour, a shape that shows up.</p>
+  <div class="row" style="justify-content:flex-end"><button id="aTest">Try it</button><span class="grow"></span><button id="aCancel">Cancel</button><button id="aOk" class="primary">OK</button></div>
+</dialog>
 <script src="scene-design.js"></script>
 <script>
 (function () {
@@ -127,7 +223,7 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
   var Q = new URLSearchParams(location.search), TOKEN = Q.get("token") || "", $ = function (s) { return document.querySelector(s); };
   var api = function (p, opt) { return fetch(p + (p.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(TOKEN), opt).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); }); };
   var PD = window.PulseDesign, SOURCES = PD.SOURCES, PROPS = PD.PROPS;
-  var design = { v: 1, sky: "none", city: false, shapes: [] }, sel = null, live = null, theme = PD.THEME, dirty = false;
+  var design = { v: 2, sky: "none", city: false, shapes: [], assets: {}, actions: [] }, sel = null, live = null, theme = PD.THEME, dirty = false, meta = {}, panelIds = [], panelRowIds = [];
   var hist = [], fut = [], mem = { hits: [] }, t0 = performance.now();
   var NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -142,7 +238,8 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
     ["bars", "▮▮", "bars", { w: 0.22, h: 0.12, series: "cores" }],
     ["tower", "▥", "building", { w: 0.05, h: 0.25, bind: [{ prop: "level", src: "ram", from: 0, to: 1 }] }],
     ["wave", "∿", "wave", { w: 0.5, h: 0.1, fill: false, line: 3, freq: 3, bind: [{ prop: "amp", src: "net", from: 0.1, to: 1 }] }],
-    ["particles", "⁘", "particles", { w: 0.4, h: 0.4, dir: "down", count: 60, dot: 2.5 }]
+    ["particles", "⁘", "particles", { w: 0.4, h: 0.4, dir: "down", count: 60, dot: 2.5 }],
+    ["image", "▣", "picture", { w: 0.14, h: 0.22, glow: 0 }]
   ];
   var uid = function () { return "s" + Math.random().toString(36).slice(2, 8); };
   function add(type, extra) {
@@ -152,7 +249,11 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
     snapshot(); design.shapes.push(sh); select(sh.id); changed();
   }
   $("#tools").innerHTML = TOOLS.map(function (t) { return '<button data-t="' + t[0] + '"><span>' + t[1] + "</span>" + t[2] + "</button>"; }).join("");
-  $("#tools").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b) add(b.dataset.t); });
+  $("#tools").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.t === "image") { var ids = Object.keys(design.assets || {}); if (!ids.length) { picFor = "shape"; $("#picFile").click(); return; } addPic(ids[ids.length - 1]); return; }
+    add(b.dataset.t);
+  });
 
   // ---------------------------------------------------------------- templates: a world to start from
   var TEMPLATES = {
@@ -171,13 +272,37 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
     garden: ["Night garden", "fireflies for your agents, flowers for your repos", { sky: "ok", shapes: [
       { id: "g1", type: "particles", name: "fireflies", x: 0.5, y: 0.6, w: 0.5, h: 0.25, dir: "fireflies", count: 12, dot: 3, color: "warn", alpha: 1, glow: 1, anim: { kind: "none", speed: 1 }, bind: [{ prop: "count", src: "working", from: 3, to: 60 }], repeat: { by: "none" } },
       { id: "g2", type: "star", name: "flower", x: 0.35, y: 0.82, w: 0.03, h: 0.053, points: 6, inner: 0.4, color: "accent2", alpha: 0.95, glow: 0.5, anim: { kind: "sway", speed: 0.6 }, bind: [{ prop: "w", src: "item", from: 0.015, to: 0.05 }, { prop: "h", src: "item", from: 0.027, to: 0.09 }], repeat: { by: "repos", spread: true, from: 0.35, to: 0.65, stateColors: true }, click: "{name} · {state}" },
-      { id: "g3", type: "rect", name: "ground", x: 0.5, y: 0.9, w: 0.5, h: 0.06, round: 1, color: "ok", alpha: 0.25, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } }] }]
+      { id: "g3", type: "rect", name: "ground", x: 0.5, y: 0.9, w: 0.5, h: 0.06, round: 1, color: "ok", alpha: 0.25, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } }] }],
+    // 1.7: the new things in two templates: one copy per row of a panel, a picture with an animation, actions
+    homelab: ["Homelab city", "a building per row of your homelab panel, green, amber or red with it; lightning when one goes down", { sky: "none", shapes: [
+      { id: "h1", type: "tower", name: "server", x: 0.32, y: 0.66, w: 0.03, h: 0.17, color: "accent", alpha: 1, glow: 0.3, anim: { kind: "none", speed: 1 }, bind: [{ prop: "level", src: "item", from: 0.2, to: 1 }], repeat: { by: "panel", panel: "homelab", spread: true, from: 0.32, to: 0.68, stateColors: true }, click: "{name} · {state}" },
+      { id: "h2", type: "text", name: "label", x: 0.5, y: 0.785, w: 0.2, h: 0.03, text: "homelab", size: 0.018, color: "fg", alpha: 0.6, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } }],
+      actions: [{ id: "t1", when: { type: "event", event: "row-crit" }, do: [{ type: "fx", fx: "lightning", text: "homelab: something is down" }, { type: "flash", shape: "h1", color: "crit", secs: 4 }], cooldown: 60 },
+                { id: "t2", when: { type: "event", event: "row-ok" }, do: [{ type: "fx", fx: "shooting", text: "homelab: back to green" }], cooldown: 60 }] }],
+    rocket: ["Launch pad", "a rocket of your own that lifts off when CI passes again, or when you click it", { sky: "none", assets: { rocket: "@rocket" }, shapes: [
+      { id: "k1", type: "rect", name: "tower", x: 0.535, y: 0.62, w: 0.012, h: 0.25, color: "dim", alpha: 0.9, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } },
+      { id: "k2", type: "image", name: "rocket", asset: "rocket", x: 0.5, y: 0.645, w: 0.034, h: 0.2, color: "accent", alpha: 1, glow: 0.2, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" }, click: "{commits} commits this week",
+        keys: { start: "action", loop: false, dur: 4, ease: "smooth", frames: [{ t: 0 }, { t: 0.15, dx: 0.002 }, { t: 0.25, dx: -0.002 }, { t: 1, dy: -0.75, alpha: 0 }] } },
+      { id: "k3", type: "particles", name: "smoke", x: 0.5, y: 0.73, w: 0.08, h: 0.04, dir: "fireflies", count: 14, dot: 4, color: "dim", alpha: 0.6, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } }],
+      actions: [{ id: "t3", when: { type: "event", event: "ci-ok" }, do: [{ type: "play", shape: "k2" }, { type: "fx", fx: "launch", text: "deploy ok" }], cooldown: 30 },
+                { id: "t4", when: { type: "event", event: "click", shape: "k2" }, do: [{ type: "play", shape: "k2" }], cooldown: 6 },
+                { id: "t5", when: { type: "event", event: "ci-fail" }, do: [{ type: "flash", shape: "k2", color: "crit", secs: 5 }], cooldown: 30 }] }]
   };
+  var ROCKET = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 200" width="60" height="200">' +
+    '<path d="M30 4 C44 24 48 52 48 84 L48 150 L12 150 L12 84 C12 52 16 24 30 4 Z" fill="#e8ecf6" stroke="#56607f" stroke-width="2"/>' +
+    '<circle cx="30" cy="70" r="9" fill="#7aa2f7" stroke="#56607f" stroke-width="2"/>' +
+    '<path d="M12 112 L0 160 L12 150 Z M48 112 L60 160 L48 150 Z" fill="#f7768e"/>' +
+    '<rect x="18" y="150" width="24" height="12" fill="#565f89"/><path d="M20 162 L30 196 L40 162 Z" fill="#e0af68"/></svg>';
   $("#templates").innerHTML = Object.keys(TEMPLATES).map(function (k) { return '<button data-k="' + k + '"><b>' + TEMPLATES[k][0] + "</b>" + TEMPLATES[k][1] + "</button>"; }).join("");
   $("#templates").addEventListener("click", function (e) {
     var b = e.target.closest("button"); if (!b) return;
-    snapshot(); var d = JSON.parse(JSON.stringify(TEMPLATES[b.dataset.k][2]));
-    design = { v: 1, sky: d.sky || "none", city: false, shapes: d.shapes.map(function (s) { s.id = uid(); return s; }) };
+    snapshot(); var d = JSON.parse(JSON.stringify(TEMPLATES[b.dataset.k][2])), ids = {};
+    var shapes = d.shapes.map(function (s) { var n = uid(); ids[s.id] = n; s.id = n; return s; });
+    var assets = {}; Object.keys(d.assets || {}).forEach(function (k) { assets[k] = d.assets[k] === "@rocket" ? "data:image/svg+xml;base64," + btoa(ROCKET) : d.assets[k]; });
+    var actions = (d.actions || []).map(function (a) {   // the actions point at the new shapes
+      if (a.when.shape) a.when.shape = ids[a.when.shape]; (a.do || []).forEach(function (x) { if (x.shape) x.shape = ids[x.shape]; }); a.id = "a" + Math.random().toString(36).slice(2, 8); return a;
+    });
+    design = { v: 2, sky: d.sky || "none", city: false, shapes: shapes, assets: assets, actions: actions };
     sel = null; $("#dlg").close(); changed(); syncScene();
   });
   $("#new").onclick = function () { $("#dlg").showModal(); };
@@ -189,11 +314,11 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
   function redo() { if (!fut.length) return; hist.push(JSON.stringify(design)); design = JSON.parse(fut.pop()); changed(); syncScene(); }
   $("#undo").onclick = undo; $("#redo").onclick = redo;
   function changed() {
-    dirty = true; layers(); inspector();
+    dirty = true; layers(); inspector(); pics(); acts(); scenePanel();
     $("#undo").disabled = !hist.length; $("#redo").disabled = !fut.length;
     try { localStorage.setItem("pulse-editor:" + ($("#name").value || "_"), JSON.stringify(design)); } catch (e) {}
   }
-  function syncScene() { $("#sky").value = design.sky || "none"; $("#city").value = design.city ? "1" : "0"; }
+  function syncScene() { $("#sky").value = design.sky || "none"; $("#city").value = design.city ? "1" : "0"; scenePanel(); }
   $("#sky").onchange = function () { snapshot(); design.sky = this.value; changed(); };
   $("#city").onchange = function () { snapshot(); design.city = this.value === "1"; changed(); };
   function cur() { return design.shapes.filter(function (s) { return s.id === sel; })[0] || null; }
@@ -240,9 +365,12 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
         '<b>Repeat</b> makes one copy per agent, repo or CPU core. <b>Click text</b> is what Pulse shows when you click it on the wallpaper; <span class="chip">{cpu}</span> <span class="chip">{name}</span> are filled in live.</p>';
       return;
     }
-    var srcOpts = Object.keys(SOURCES).map(function (k) { return [k, SOURCES[k].label]; });
+    var srcOpts = srcList();
     var propOpts = Object.keys(PROPS).map(function (k) { return [k, PROPS[k]]; });
     var h = "<h3>" + esc(s.type) + '</h3><div class="row"><label>name</label><input type="text" data-k="name" value="' + esc(s.name) + '"></div>';
+    if (s.type === "image") h += '<div class="row"><label>picture</label><select data-k="asset">' + opts(Object.keys(design.assets || {}).map(function (k) { return [k, k]; }), s.asset) + "</select></div>" +
+      '<div class="row"><label>tint</label><select data-k="tint">' + opts([["0", "its own colours"], ["1", "painted in the colour below"]], s.tint ? "1" : "0") + "</select></div>" +
+      '<div class="row"><label>mirror</label><input type="checkbox" data-k="flip"' + (s.flip ? " checked" : "") + "></div>";
     if (s.type === "text") h += '<div class="row"><label>text</label><input type="text" data-k="text" value="' + esc(s.text) + '"></div>' + rng("size", s.size || 0.04, 0.01, 0.15, 0.002, "size") +
       '<div class="row"><label>bold</label><input type="checkbox" data-k="bold"' + (s.bold ? " checked" : "") + "></div>";
     h += "<h3>place</h3>" + rng("x", s.x, -0.1, 1.1, 0.001, "x") + rng("y", s.y, -0.1, 1.1, 0.001, "y") + rng("w", s.w, 0, 1, 0.001, "width") + rng("h", s.h, 0, 1, 0.001, "height") + rng("rot", s.rot || 0, -180, 180, 1, "rotate");
@@ -261,14 +389,19 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
     if (s.fill === false || s.type === "line" || s.type === "wave") h += rng("line", s.line || 2, 1, 20, 0.5, "line");
     h += "<h3>motion</h3>" + '<div class="row"><label>move</label><select data-k="anim.kind">' + opts(ANIMS, (s.anim || {}).kind || "none") + "</select></div>" + rng("anim.speed", (s.anim || {}).speed || 1, 0.1, 4, 0.1, "speed") +
       '<p class="hint">With motion = reduced Pulse keeps every shape still, by itself.</p>';
+    h += keysPanel(s);
     h += '<h3>follows your data</h3><div id="binds">' + (s.bind || []).map(function (b, i) {
       return '<div class="bind" data-i="' + i + '"><div class="row"><select data-b="prop">' + opts(propOpts, b.prop) + '</select><button data-b="del" title="remove">×</button></div>' +
         '<div class="row"><label>with</label><select data-b="src">' + opts(srcOpts, b.src) + "</select></div>" +
-        '<div class="row"><label>from</label><input type="number" step="any" data-b="from" value="' + b.from + '"><label>to</label><input type="number" step="any" data-b="to" value="' + b.to + '"></div></div>';
+        '<div class="row"><label>from</label><input type="number" step="any" data-b="from" value="' + b.from + '"><label>to</label><input type="number" step="any" data-b="to" value="' + b.to + '"></div>' +
+        (/^panel:/.test(b.src || "") ? '<div class="row"><label>its range</label><input type="number" step="any" data-b="lo" placeholder="low" value="' + (b.lo == null ? "" : b.lo) + '"><input type="number" step="any" data-b="hi" placeholder="high" value="' + (b.hi == null ? "" : b.hi) + '"></div>' : "") + "</div>";
     }).join("") + '</div><button id="addBind">+ follow data</button>' +
       '<p class="hint">The data goes from its low to its high (CPU 0 → 100%, the hour 0 → 24): the property goes from “from” to “to”.</p>';
     var r = s.repeat || { by: "none" };
-    h += '<h3>repeat</h3><div class="row"><label>one per</label><select data-k="repeat.by">' + opts([["none", "— just one"], ["agents", "AI agent"], ["repos", "Git repo"], ["cores", "CPU core"], ["count", "a fixed number"]], r.by) + "</select></div>";
+    h += '<h3>repeat</h3><div class="row"><label>one per</label><select data-k="repeat.by">' + opts([["none", "— just one"], ["agents", "AI agent"], ["repos", "Git repo"], ["cores", "CPU core"], ["planes", "plane overhead"], ["panel", "row of your panel"], ["count", "a fixed number"]], r.by) + "</select></div>";
+    if (r.by === "panel") { var pr = panelRowIds.slice(); if (r.panel && pr.indexOf(r.panel) < 0) pr.push(r.panel); if (!pr.length) pr = ["homelab"];
+      h += '<div class="row"><label>panel</label><select data-k="repeat.panel">' + opts(pr.map(function (k) { return [k, k]; }), r.panel || "") + "</select></div>" +
+        '<p class="hint">One copy per row of that panel: a VM, a container, an access point. “By state” colours it green, amber or red with the row.</p>'; }
     if (r.by && r.by !== "none") {
       if (r.by === "count") h += rng("repeat.n", r.n || 3, 1, 64, 1, "how many");
       h += '<div class="row"><label>layout</label><select data-k="repeat.spread">' + opts([["1", "spread across"], ["0", "a step each"]], r.spread ? "1" : "0") + "</select></div>";
@@ -278,7 +411,7 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
       h += '<p class="hint">“each copy\'s own value” in “follows your data” is that agent, repo or core.</p>';
     }
     h += '<h3>click</h3><div class="row"><input type="text" data-k="click" placeholder="e.g. {name} · {state}" value="' + esc(s.click || "") + '"></div>' +
-      '<p class="hint"><span class="chip">{cpu}</span> <span class="chip">{ram}</span> <span class="chip">{net}</span> <span class="chip">{time}</span> <span class="chip">{outside}</span> <span class="chip">{agents}</span> <span class="chip">{working}</span> <span class="chip">{commits}</span> <span class="chip">{name}</span> <span class="chip">{state}</span> <span class="chip">{item}</span></p>' +
+      '<p class="hint"><span class="chip">{cpu}</span> <span class="chip">{ram}</span> <span class="chip">{net}</span> <span class="chip">{time}</span> <span class="chip">{outside}</span> <span class="chip">{agents}</span> <span class="chip">{working}</span> <span class="chip">{commits}</span> <span class="chip">{name}</span> <span class="chip">{state}</span> <span class="chip">{item}</span> <span class="chip">{planes}</span> <span class="chip">{kp}</span> <span class="chip">{moon}</span> <span class="chip">{panel:NAME}</span></p>' +
       '<div class="row"><button id="dup">Duplicate</button><button id="del">Delete</button></div>';
     box.innerHTML = h;
   }
@@ -289,15 +422,19 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
     if (!editSnap) { snapshot(); editSnap = true; }
     if (el.dataset.b) {
       var bi = +el.closest(".bind").dataset.i, b = s.bind[bi];
-      b[el.dataset.b] = el.type === "number" ? +el.value : el.value;
+      b[el.dataset.b] = el.type === "number" ? (el.value === "" ? null : +el.value) : el.value;
       if (el.dataset.b === "prop" || el.dataset.b === "src") { var dflt = defaults(b.prop, s); b.from = dflt[0]; b.to = dflt[1]; inspector(); }
       changed2(); return;
     }
     var k = el.dataset.k; if (!k) return;
     var v = el.type === "checkbox" ? el.checked : el.type === "range" ? +el.value : el.value;
     if (el.dataset.color && v === "#") { v = "#ff8800"; setPath(s, k, v); inspector(); changed2(); return; }
-    if (k === "fill") v = v === "1";
+    if (k === "fill" || k === "tint") v = v === "1";
+    if (el.dataset.kf != null) { var kk = s.keys.frames[+el.dataset.kf]; if (el.value === "" || isNaN(+el.value)) delete kk[el.dataset.kk]; else kk[el.dataset.kk] = +el.value; changed2(); return; }
+    if (k === "keys.start") { if (v === "none") { delete s.keys; } else { s.keys = s.keys || { dur: 2, ease: "smooth", frames: [{ t: 0 }, { t: 0.5, dy: -0.04 }, { t: 1 }] }; s.keys.start = v; s.keys.loop = v === "loop"; } inspector(); changed2(); return; }
+    if (k === "keys.loop") v = v === "1";
     if (k === "repeat.spread" || k === "repeat.stateColors") v = v === "1";
+    if (k === "repeat.by" && v === "panel" && !(s.repeat || {}).panel) { s.repeat = s.repeat || {}; s.repeat.panel = panelRowIds[0] || "homelab"; s.repeat.spread = true; s.repeat.stateColors = true; }
     setPath(s, k, v);
     if (el.type === "range") { var sp = el.parentNode.querySelector(".v"); if (sp) sp.textContent = (+v).toFixed(+el.step < 1 ? 2 : 0); }
     if (el.tagName === "SELECT") inspector();
@@ -312,6 +449,10 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
   }
   $("#inspector").addEventListener("click", function (e) {
     var s = cur(); if (!s) return;
+    if (e.target.dataset.preset) { snapshot(); var pr = PRESETS[e.target.dataset.preset]; s.keys = Object.assign({ start: (s.keys || {}).start || "loop", loop: (s.keys || {}).start !== "action" }, JSON.parse(JSON.stringify(pr))); changed(); return; }
+    if (e.target.id === "kfAdd") { snapshot(); s.keys.frames.push({ t: 1 }); changed(); return; }
+    if (e.target.dataset.kfdel != null) { snapshot(); s.keys.frames.splice(+e.target.dataset.kfdel, 1); changed(); return; }
+    if (e.target.id === "kfPlay") { mem.played = mem.played || {}; mem.played[s.id] = (performance.now() - t0) / 1000; return; }
     if (e.target.id === "addBind") { snapshot(); s.bind = s.bind || []; var p = s.type === "ring" || s.type === "tower" ? "level" : "h"; var d = defaults(p, s); s.bind.push({ prop: p, src: "cpu", from: d[0], to: d[1] }); changed(); }
     else if (e.target.dataset.b === "del") { snapshot(); s.bind.splice(+e.target.closest(".bind").dataset.i, 1); changed(); }
     else if (e.target.id === "dup") duplicate();
@@ -322,10 +463,11 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
 
   // ---------------------------------------------------------------- the data the preview runs on
   var agentNames = ["claude", "codex", "grok", "opencode", "aider", "hermes", "gemini", "qwen"], agentStates = ["working", "waiting", "working", "done", "failed", "working", "idle", "working"];
+  var demoBase = Math.floor(Date.now() / 1000);   // the demo agents keep their start time (an agent that changes it is a new one)
   function demoState() {
     var v = function (id) { return +$("#d-" + id).value; }, now = Date.now() / 1000, priv = $("#d-priv").value === "1", hr = v("hour"), cpu = v("cpu");
     var cores = []; for (var i = 0; i < 12; i++) cores.push(Math.max(0, Math.min(100, cpu + Math.sin(now * 0.7 + i * 1.9) * 18)));
-    var ag = []; for (i = 0; i < v("agents"); i++) ag.push({ name: priv ? "" : agentNames[i], state: agentStates[i], since: now - 300 * (i + 1), text: "" });
+    var ag = []; for (i = 0; i < v("agents"); i++) ag.push({ name: priv ? "" : agentNames[i], state: agentStates[i], since: demoBase - 300 * (i + 1), text: "" });
     return { t: now, demo: true, privacy: priv,
       time: { hour: Math.floor(hr), minute: Math.floor((hr % 1) * 60), second: Math.floor(now % 60), weekday: 1, day: 9, month: 11, year: 2026 },
       sys: { cpu: cpu, cores: cores, ram: v("ram"), gpu: 20, temp: 40 + cpu / 2, disk: 61, rx: v("net") * 0.8e6, tx: v("net") * 0.2e6, load: ["1.2"] },
@@ -333,10 +475,27 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
       git: [{ name: priv ? "" : "omarchy-pulse-theme", week: 23, ci: "ok" }, { name: priv ? "" : "dotfiles", week: 6, ci: "run" }, { name: priv ? "" : "homelab", week: 2, ci: "fail" }],
       weather: { code: v("rain") > 0 ? 61 : 0, temp: 9, day: hr >= 7 && hr < 17 ? 1 : 0, wind: 12, cloud: v("rain") > 0 ? 90 : 10, rain: v("rain") },
       focus: null, away: false, meeting: false, theme: theme,
-      ui: { quality: "full", motion: $("#d-motion").value, fps: 30 }, events: [], layout: { horizon: 0.745 } };
+      ui: { quality: "full", motion: $("#d-motion").value, fps: 30 }, events: [], layout: { horizon: 0.745 }, music: false,
+      space: { sun: hr >= 7 && hr < 17 ? 30 : -20, moon: 64, planes: v("planes"), iss: v("iss"), starlink: 0, kp: 3, launchIn: null,
+               list: Array.apply(null, Array(v("planes"))).map(function (x, i) { return { az: i * 40, el: 20 + i * 7, flight: priv ? "" : "DEMO" + (i + 1) }; }) },
+      panels: demoPanels(v("panel")) };
   }
   $("#live").onchange = function () { if (!this.checked) live = null; else pull(); };
   function pull() { if (!$("#live").checked) return; api("/api/scene-state").then(function (s) { live = s; theme = s.theme && s.theme.accent ? s.theme : theme; }).catch(function () {}); setTimeout(pull, 1000); }
+  function demoPanels(v) {   // the slider is 0-100% of each panel's range (the one a shape gives it, or 0-100)
+    var o = {}, ids = panelIds.slice(), rng = {};
+    design.shapes.forEach(function (s) { (s.bind || []).forEach(function (b) { var m = /^panel:(.+)$/.exec(b.src || ""); if (!m) return; if (ids.indexOf(m[1]) < 0) ids.push(m[1]); if (typeof b.lo === "number" && typeof b.hi === "number" && !rng[m[1]]) rng[m[1]] = [b.lo, b.hi]; }); });
+    (design.actions || []).forEach(function (a) { var m = /^panel:(.+)$/.exec((a.when || {}).src || ""); if (m && ids.indexOf(m[1]) < 0) ids.push(m[1]); });
+    (ids.length ? ids : ["power"]).forEach(function (id) { var r = rng[id] || [0, 100]; o[id] = { value: Math.round((r[0] + (r[1] - r[0]) * v / 100) * 100) / 100, min: r[0], max: r[1], unit: "" }; });
+    var rids = panelRowIds.slice();   // panels with rows: six demo rows; past 80% one goes red, past 60% one goes amber
+    design.shapes.forEach(function (s) { var r = s.repeat || {}; if (r.by === "panel" && r.panel && rids.indexOf(r.panel) < 0) rids.push(r.panel); });
+    rids.forEach(function (id) {
+      o[id] = { rows: ["proxmox", "nas", "pihole", "immich", "jellyfin", "n8n"].map(function (n, i) {
+        return { name: $("#d-priv").value === "1" ? "" : n, level: v > 80 && i === 2 ? "crit" : v > 60 && i === 4 ? "warn" : "ok", value: Math.round(v * (0.4 + i * 0.12)) };
+      }) };
+    });
+    return o;
+  }
 
   // ---------------------------------------------------------------- the stage: Pulse's sky, the scene, your selection
   var skyC = $("#sky-c"), scC = $("#scene-c"), ov = $("#overlay"), g = scC.getContext("2d"), o = ov.getContext("2d"), W = 0, H = 0;
@@ -373,15 +532,16 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
     o.save(); o.strokeStyle = "#7aa2f7"; o.lineWidth = 1.5; o.setLineDash([5, 4]);
     o.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2); o.setLineDash([]);
     handles(b).forEach(function (h) { o.fillStyle = "#0d0f17"; o.fillRect(h[0] - 5, h[1] - 5, 10, 10); o.strokeRect(h[0] - 5, h[1] - 5, 10, 10); });
-    if ((s.repeat || {}).by && s.repeat.by !== "none") { o.fillStyle = "#7aa2f7"; o.font = "12px ui-monospace, monospace"; o.fillText("× one per " + ({ agents: "agent", repos: "repo", cores: "core", count: "copy" }[s.repeat.by]), b.x, b.y - 10); }
+    if ((s.repeat || {}).by && s.repeat.by !== "none") { o.fillStyle = "#7aa2f7"; o.font = "12px ui-monospace, monospace"; o.fillText("× one per " + ({ agents: "agent", repos: "repo", cores: "core", planes: "plane", panel: "row of " + (s.repeat.panel || "a panel"), count: "copy" }[s.repeat.by]), b.x, b.y - 10); }
     o.restore();
   }
   function handles(b) { var p = 4; return [[b.x - p, b.y - p, "nw"], [b.x + b.w + p, b.y - p, "ne"], [b.x - p, b.y + b.h + p, "sw"], [b.x + b.w + p, b.y + b.h + p, "se"]]; }
-  var costs = [], lastPerf = 0;
+  var costs = [], lastPerf = 0, lastReact = 0;
   function frame(now) {
     requestAnimationFrame(frame);
     var st = live || demoState(), a = performance.now();
     g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+    if (now - lastReact > 500) { lastReact = now; try { PD.react(design, st, mem, (now - t0) / 1000).forEach(showFx); } catch (e) {} }
     try { PD.draw(g, (now - t0) / 1000, st, { w: W, h: H, horizon: H * 0.745 }, design, mem); $("#status").classList.remove("err"); }
     catch (e) { $("#status").textContent = "error: " + e.message; $("#status").classList.add("err"); }
     costs.push(performance.now() - a); if (costs.length > 60) costs.shift();
@@ -407,6 +567,7 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
       if (hd) { snapshot(); drag = { s: s, mode: hd[2], p: p, o: { x: s.x, y: s.y, w: s.w, h: s.h } }; ov.setPointerCapture(e.pointerId); return; } }
     var t = hit(p);
     var said = PD.click(mem, p[0], p[1]); $("#clicked").textContent = said ? "click → " + said : "";
+    var cid = PD.clickedId(mem, p[0], p[1]); if (cid) PD.react(design, live || demoState(), mem, (performance.now() - t0) / 1000, cid).forEach(showFx);
     if (!t) { select(null); return; }
     if (t.id !== sel) select(t.id);
     snapshot(); drag = { s: t, mode: "move", p: p, o: { x: t.x, y: t.y, w: t.w, h: t.h }, moved: false };
@@ -473,18 +634,405 @@ kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-
   $("#lab").onclick = function () { var n = name(); if (n) save().then(function () { open("lab.html?token=" + encodeURIComponent(TOKEN) + "&scene=" + encodeURIComponent(n), "_blank"); }).catch(function () {}); };
   addEventListener("beforeunload", function (e) { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
+  // ================================================================ 1.7 "Creator"
+  // ---------------------------------------------------------------- the data a shape can follow: Pulse's, and your own panels
+  function srcList() {
+    var l = Object.keys(SOURCES).map(function (k) { return [k, SOURCES[k].label]; }), seen = {};
+    panelIds.forEach(function (id) { seen["panel:" + id] = 1; l.push(["panel:" + id, "your panel: " + id]); });
+    design.shapes.forEach(function (s) { (s.bind || []).forEach(function (b) { if (/^panel:/.test(b.src || "") && !seen[b.src]) { seen[b.src] = 1; l.push([b.src, "your panel: " + b.src.slice(6)]); } }); });
+    (design.actions || []).forEach(function (a) { var s = (a.when || {}).src; if (/^panel:/.test(s || "") && !seen[s]) { seen[s] = 1; l.push([s, "your panel: " + s.slice(6)]); } });
+    return l;
+  }
+
+  // ---------------------------------------------------------------- keyframe animations
+  var PRESETS = {
+    jump: { dur: 1, ease: "smooth", frames: [{ t: 0 }, { t: 0.3, dy: -0.06, scale: 1.06 }, { t: 0.6 }, { t: 1 }] },
+    fly: { dur: 6, ease: "linear", frames: [{ t: 0, dx: -0.6 }, { t: 1, dx: 0.6 }] },
+    fade: { dur: 3, ease: "smooth", frames: [{ t: 0, alpha: 0 }, { t: 0.5, alpha: 1 }, { t: 1, alpha: 0 }] },
+    grow: { dur: 2, ease: "smooth", frames: [{ t: 0, scale: 1 }, { t: 0.5, scale: 1.3 }, { t: 1, scale: 1 }] },
+    shake: { dur: 0.6, ease: "linear", frames: [{ t: 0 }, { t: 0.2, dx: -0.006, rot: -4 }, { t: 0.4, dx: 0.006, rot: 4 }, { t: 0.6, dx: -0.004 }, { t: 0.8, dx: 0.004 }, { t: 1 }] },
+    spin: { dur: 3, ease: "linear", frames: [{ t: 0, rot: 0 }, { t: 1, rot: 360 }] }
+  };
+  var KF = [["t", "at"], ["dx", "→"], ["dy", "↓"], ["scale", "size"], ["alpha", "opac."], ["rot", "°"]];
+  function keysPanel(s) {
+    var k = s.keys, st = k ? (k.start || "loop") : "none";
+    var h = '<h3>animation</h3><div class="row"><label>play</label><select data-k="keys.start">' +
+      opts([["none", "— no animation"], ["loop", "all the time"], ["action", "when an action says so"]], st) + "</select></div>";
+    if (!k) return h + '<p class="hint">An animation is a few moments (frames): where the shape is, how big, how visible. Pulse moves it smoothly from one to the next.</p>';
+    h += rng("keys.dur", k.dur || 2, 0.2, 20, 0.1, "seconds") +
+      '<div class="row"><label>ease</label><select data-k="keys.ease">' + opts([["smooth", "smooth"], ["linear", "steady"]], k.ease || "smooth") + "</select>" +
+      (st === "action" ? '<select data-k="keys.loop">' + opts([["0", "once"], ["1", "then keep going"]], k.loop ? "1" : "0") + "</select>" : "") + "</div>" +
+      '<div class="presets">' + Object.keys(PRESETS).map(function (p) { return '<button data-preset="' + p + '">' + p + "</button>"; }).join("") + "</div>" +
+      '<table class="frames"><tr>' + KF.map(function (c) { return "<th>" + c[1] + "</th>"; }).join("") + "<th></th></tr>" +
+      (k.frames || []).map(function (f, i) {
+        return "<tr>" + KF.map(function (c) { return '<td><input type="number" step="any" data-k="keyframe" data-kf="' + i + '" data-kk="' + c[0] + '" value="' + (f[c[0]] == null ? "" : f[c[0]]) + '"></td>'; }).join("") +
+          '<td><button data-kfdel="' + i + '" title="remove">×</button></td></tr>';
+      }).join("") + "</table>" +
+      '<div class="row"><button id="kfAdd">+ frame</button>' + (st === "action" ? '<button id="kfPlay">▶ play it</button>' : "") + "</div>" +
+      '<p class="hint">“at” goes from 0 (start) to 1 (end); → and ↓ are a share of the screen (0.1 = a tenth); size 1 is as drawn; empty = as drawn.</p>';
+    return h;
+  }
+
+  // ---------------------------------------------------------------- pictures: import, use as a shape or as the background
+  var picFor = "";
+  function picId(fname) {
+    var b = String(fname || "pic").replace(/\.[^.]*$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "pic", id = b, n = 2;
+    while ((design.assets || {})[id]) id = b + "-" + n++;
+    return id;
+  }
+  function readPic(file) {
+    return new Promise(function (ok, bad) {
+      var fr = new FileReader();
+      fr.onerror = function () { bad(new Error("cannot read " + file.name)); };
+      if (file.type === "image/svg+xml") {
+        fr.onload = function () { ok(String(fr.result).replace(/^data:image\/svg\+xml;[^,]*,/, "data:image/svg+xml;base64,")); };
+        fr.readAsDataURL(file); return;
+      }
+      fr.onload = function () {   // re-encoded: no metadata (GPS, camera) and at most 1920 px
+        var im = new Image();
+        im.onload = function () {
+          var k = Math.min(1, 1920 / Math.max(im.width, im.height)), c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(im.width * k)); c.height = Math.max(1, Math.round(im.height * k));
+          c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+          var u = c.toDataURL("image/webp", 0.86); if (u.indexOf("data:image/webp") !== 0) u = c.toDataURL("image/png");
+          ok(u);
+        };
+        im.onerror = function () { bad(new Error(file.name + " is not a picture")); };
+        im.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+  function addPic(id) {   // a picture shape with the picture's own proportions (on a 16:9 screen)
+    var im = new Image();
+    im.onload = function () { var a = im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : 1, h = 0.22, w = h * a * 9 / 16;
+      if (w > 0.5) { h = h * 0.5 / w; w = 0.5; } add("image", { asset: id, name: id, w: +w.toFixed(4), h: +h.toFixed(4) }); };
+    im.onerror = function () { add("image", { asset: id, name: id }); };
+    im.src = design.assets[id];
+  }
+  function assetBytes() { return Object.keys(design.assets || {}).reduce(function (n, k) { return n + design.assets[k].length; }, 0); }
+  $("#addPic").onclick = function () { picFor = ""; $("#picFile").click(); };
+  $("#picFile").onchange = function () {
+    var files = Array.prototype.slice.call(this.files || []), want = picFor; this.value = ""; picFor = "";
+    if (!files.length) return;
+    Promise.all(files.slice(0, 10).map(readPic)).then(function (urls) {
+      snapshot(); design.assets = design.assets || {};
+      var ids = urls.map(function (u, i) { var id = picId(files[i].name); design.assets[id] = u; return id; });
+      if (want === "shape") addPic(ids[0]);
+      else if (want === "bg") { design.background = { asset: ids[0], fit: "cover", alpha: 1, dim: 0.2, y: 0.5 }; scenePanel(); }
+      changed();
+      var mb = assetBytes() / 1048576;
+      status(ids.length + " picture" + (ids.length > 1 ? "s" : "") + " added · " + (mb < 0.1 ? Math.ceil(mb * 1024) + " KB" : mb.toFixed(1) + " MB") + " of 3 MB" + (mb > 3 ? " · too many: Save will refuse, remove some" : ""), mb > 3);
+    }).catch(function (e) { status(e.message, true); });
+  };
+  function pics() {
+    var ids = Object.keys(design.assets || {});
+    $("#pics").innerHTML = ids.length ? ids.map(function (id) {
+      return '<div class="pic" title="' + esc(id) + '" data-id="' + esc(id) + '" style="background-image:url(\'' + design.assets[id] + '\')"><div class="bar">' +
+        '<button data-pa="shape" title="add it to the stage">+</button><button data-pa="bg" title="the background">▭</button><button data-pa="del" title="remove">×</button></div></div>';
+    }).join("") : '<p class="hint" style="grid-column:1/-1">Your own drawings and photos: a cat on the roof, a tower, a whole background.</p>';
+  }
+  $("#pics").addEventListener("click", function (e) {
+    var p = e.target.closest(".pic"); if (!p) return;
+    var id = p.dataset.id, a = e.target.dataset.pa;
+    if (a === "bg") { snapshot(); design.background = Object.assign({ fit: "cover", alpha: 1, dim: 0.2, y: 0.5 }, design.background || {}, { asset: id }); changed(); scenePanel(); return; }
+    if (a === "del") {
+      var used = design.shapes.filter(function (s) { return s.asset === id; }).length;
+      if (used && !confirm(used + " shape" + (used > 1 ? "s use" : " uses") + " this picture: remove them too?")) return;
+      snapshot(); delete design.assets[id];
+      design.shapes = design.shapes.filter(function (s) { return s.asset !== id; });
+      if ((design.background || {}).asset === id) delete design.background;
+      sel = cur() ? sel : null; changed(); scenePanel(); return;
+    }
+    addPic(id);
+  });
+
+  // ---------------------------------------------------------------- the scene: background picture, its own colours
+  function scenePanel() {
+    var bg = design.background || null, ids = Object.keys(design.assets || {});
+    $("#bg").innerHTML = '<option value="">— none</option>' + ids.map(function (id) { return '<option value="' + esc(id) + '"' + (bg && bg.asset === id ? " selected" : "") + ">" + esc(id) + "</option>"; }).join("") + '<option value="+">import one…</option>';
+    $("#bgOpts").style.display = $("#bgOpts2").style.display = bg ? "" : "none";
+    if (bg) { $("#bgFit").value = bg.fit || "cover"; $("#bgDim").value = bg.dim || 0; $("#bgAlpha").value = bg.alpha == null ? 1 : bg.alpha; $("#bgY").value = bg.y == null ? 0.5 : bg.y; }
+    var own = !!design.palette;
+    $("#pal").value = own ? "own" : "theme";
+    $("#palOpts").style.display = own ? "" : "none";
+    if (own) $("#palOpts").innerHTML = Object.keys(PD.THEME).map(function (k) {
+      return '<label title="' + k + '" style="display:flex;flex-direction:column;align-items:center;font-size:10px;min-width:0">' + k.replace("accent", "acc") +
+        '<input type="color" data-pal="' + k + '" value="' + esc(design.palette[k] || theme[k] || PD.THEME[k]) + '" style="width:1.8rem"></label>';
+    }).join("");
+  }
+  $("#bg").onchange = function () {
+    if (this.value === "+") { picFor = "bg"; $("#picFile").click(); scenePanel(); return; }
+    snapshot();
+    if (!this.value) delete design.background; else design.background = Object.assign({ fit: "cover", alpha: 1, dim: 0.2, y: 0.5 }, design.background || {}, { asset: this.value });
+    changed(); scenePanel();
+  };
+  $("#bgFit").onchange = function () { snapshot(); design.background.fit = this.value; changed(); };
+  var bgSnap = false;   // one undo step for a whole slider drag
+  [["bgDim", "dim"], ["bgAlpha", "alpha"], ["bgY", "y"]].forEach(function (p) {
+    $("#" + p[0]).oninput = function () { if (!bgSnap) { snapshot(); bgSnap = true; } design.background[p[1]] = +this.value; changed2(); };
+    $("#" + p[0]).onchange = function () { bgSnap = false; changed(); };
+  });
+  $("#pal").onchange = function () {
+    snapshot();
+    if (this.value === "own") { design.palette = {}; Object.keys(PD.THEME).forEach(function (k) { design.palette[k] = /^#[0-9a-f]{6}$/i.test(theme[k] || "") ? theme[k] : PD.THEME[k]; }); }
+    else delete design.palette;
+    changed(); scenePanel();
+  };
+  $("#palOpts").addEventListener("input", function (e) { var k = e.target.dataset.pal; if (!k) return; design.palette[k] = e.target.value; changed2(); });
+  $("#palOpts").addEventListener("change", function () { snapshot(); changed(); });
+
+  // ---------------------------------------------------------------- actions: when something happens, do something
+  function shapeName(id) { var s = design.shapes.filter(function (x) { return x.id === id; })[0]; return s ? (s.name || s.type) : "a shape"; }
+  function srcLabel(src) { var l = srcList().filter(function (o) { return o[0] === src; })[0]; return l ? l[1] : src; }
+  function actText(a) {
+    var w = a.when || {}, wt;
+    if (w.type === "event") wt = w.event === "click" ? "you click " + (w.shape ? shapeName(w.shape) : "a shape") : w.event === "every" ? "every " + (w.secs || 60) + " s" : (PD.EVENTS[w.event] || w.event);
+    else wt = srcLabel(w.src) + (w.type === "below" ? " falls below " : " rises above ") + w.value;
+    var dt = (a.do || []).map(function (d) {
+      if (d.type === "fx") return (PD.FX[d.fx] || d.fx) + (d.text ? " “" + d.text + "”" : "");
+      var n = shapeName(d.shape);
+      return { play: "play " + n + "'s animation", flash: "flash " + n + " " + (d.color || "warn"), show: "show " + n, hide: "hide " + n, toggle: "show or hide " + n }[d.type] || d.type;
+    }).join(", ");
+    return "<b>when</b> " + esc(wt) + " <b>→</b> " + esc(dt || "nothing yet");
+  }
+  function acts() {
+    var l = design.actions || [];
+    $("#acts").innerHTML = l.length ? l.map(function (a, i) {
+      return '<li data-i="' + i + '" class="' + (a.off ? "off" : "") + '"><span class="tx">' + actText(a) + "</span>" +
+        '<button data-aa="edit" title="change">✎</button><button data-aa="off" title="on / off">' + (a.off ? "○" : "●") + '</button><button data-aa="del" title="remove">×</button></li>';
+    }).join("") : '<li class="hint" style="border:0">A rocket when CI passes, the tower shakes when the power goes over 500 W, fireworks at midnight…</li>';
+  }
+  $("#acts").addEventListener("click", function (e) {
+    var li = e.target.closest("li[data-i]"); if (!li) return;
+    var i = +li.dataset.i, a = e.target.dataset.aa;
+    if (a === "del") { snapshot(); design.actions.splice(i, 1); changed(); }
+    else if (a === "off") { snapshot(); design.actions[i].off = !design.actions[i].off; changed(); }
+    else actEdit(i);
+  });
+  var adraft = null, aIndex = -1;
+  function shapeOpts(v, any) { return (any ? '<option value="">' + any + "</option>" : "") + opts(design.shapes.map(function (s) { return [s.id, s.name || s.type]; }), v); }
+  function actEdit(i) {
+    aIndex = i;
+    adraft = i >= 0 ? JSON.parse(JSON.stringify(design.actions[i])) : { when: { type: "event", event: "ci-ok" }, do: [{ type: "fx", fx: "launch", text: "" }], cooldown: 10 };
+    $("#aType").value = adraft.when.type || "event";
+    $("#aEvent").innerHTML = opts(Object.keys(PD.EVENTS).map(function (k) { return [k, PD.EVENTS[k]]; }), adraft.when.event || "ci-ok");
+    $("#aSrc").innerHTML = opts(srcList(), adraft.when.src || "cpu");
+    $("#aVal").value = adraft.when.value == null ? 80 : adraft.when.value;
+    $("#aCool").value = adraft.cooldown || 10;
+    actWhen(); actDos(); $("#actDlg").showModal();
+  }
+  function actWhen() {
+    var w = adraft.when, ev = w.type === "event";
+    $("#aEvRow").style.display = ev ? "" : "none"; $("#aSrcRow").style.display = ev ? "none" : "";
+    $("#aExtra").innerHTML = ev && w.event === "click" ? '<select id="aShape">' + shapeOpts(w.shape || "", "any shape") + "</select>"
+      : ev && w.event === "every" ? '<input type="number" id="aSecs" min="5" max="86400" value="' + (w.secs || 60) + '" style="width:5rem"> seconds' : "";
+  }
+  function actDos() {
+    var COLS = COLORS.map(function (c) { return [c[0], c[1]]; });
+    $("#aDos").innerHTML = adraft.do.map(function (d, i) {
+      var h = '<div class="do" data-i="' + i + '"><select data-d="type">' + opts(Object.keys(PD.DOS).map(function (k) { return [k, PD.DOS[k]]; }), d.type) + "</select>";
+      if (d.type === "fx") h += '<select data-d="fx">' + opts(Object.keys(PD.FX).map(function (k) { return [k, PD.FX[k]]; }), d.fx || "fireworks") + "</select>" +
+        '<input type="text" data-d="text" maxlength="60" placeholder="text (optional): {cpu}% · {panel:power}" value="' + esc(d.text || "") + '" style="flex:1;min-width:10rem">';
+      else h += '<select data-d="shape">' + shapeOpts(d.shape || "", design.shapes.length ? "" : "no shapes yet") + "</select>";
+      if (d.type === "flash") h += '<select data-d="color">' + opts(COLS, d.color || "warn") + '</select><input type="number" data-d="secs" min="0.3" max="30" step="0.1" value="' + (d.secs || 3) + '" style="width:4rem">s';
+      if (d.type === "play") { var s = design.shapes.filter(function (x) { return x.id === d.shape; })[0]; if (s && !(s.keys && s.keys.start === "action")) h += '<span class="hint">its animation must play “when an action says so”</span>'; }
+      return h + (adraft.do.length > 1 ? '<button data-d="del">×</button>' : "") + "</div>";
+    }).join("");
+  }
+  $("#aType").onchange = function () { adraft.when.type = this.value; if (this.value !== "event" && !adraft.when.src) adraft.when.src = $("#aSrc").value; actWhen(); };
+  $("#aEvent").onchange = function () { adraft.when.event = this.value; actWhen(); };
+  $("#aSrc").onchange = function () { adraft.when.src = this.value; };
+  $("#aVal").oninput = function () { adraft.when.value = +this.value; };
+  $("#aExtra").addEventListener("input", function (e) { if (e.target.id === "aShape") adraft.when.shape = e.target.value || undefined; if (e.target.id === "aSecs") adraft.when.secs = Math.max(5, +e.target.value || 60); });
+  $("#aDos").addEventListener("input", function (e) {
+    var row = e.target.closest(".do"); if (!row) return;
+    var d = adraft.do[+row.dataset.i], k = e.target.dataset.d;
+    if (!k || k === "del") return;
+    d[k] = e.target.type === "number" ? +e.target.value : e.target.value;
+    if (k === "type") { if (d.type === "fx") { d.fx = d.fx || "fireworks"; delete d.shape; } else { d.shape = d.shape || (cur() || design.shapes[design.shapes.length - 1] || {}).id; } actDos(); }
+    if (k === "shape") actDos();
+  });
+  $("#aDos").addEventListener("click", function (e) { if (e.target.dataset.d === "del") { adraft.do.splice(+e.target.closest(".do").dataset.i, 1); actDos(); } });
+  $("#aAddDo").onclick = function () { if (adraft.do.length < 8) { adraft.do.push({ type: "fx", fx: "fireworks", text: "" }); actDos(); } };
+  function draftOk() {
+    var w = adraft.when;
+    if (w.type === "event") { delete w.src; delete w.value; if (w.event !== "click") delete w.shape; if (w.event !== "every") delete w.secs; else w.secs = Math.max(5, +w.secs || 60); }
+    else { w.src = $("#aSrc").value; w.value = +$("#aVal").value; delete w.event; delete w.shape; delete w.secs; }
+    adraft.do = adraft.do.filter(function (d) { return d.type === "fx" ? !!d.fx : !!d.shape; });
+    adraft.cooldown = Math.max(1, Math.min(3600, +$("#aCool").value || 10));
+    return adraft.do.length > 0;
+  }
+  $("#aTest").onclick = function () {
+    if (!draftOk()) { status("the action does nothing yet", true); return; }
+    var tmp = { shapes: design.shapes, actions: [{ id: "_try", when: { type: "event", event: "click" }, do: adraft.do, cooldown: 1 }] };
+    if (mem.last) delete mem.last._try;
+    PD.react(tmp, live || demoState(), mem, (performance.now() - t0) / 1000, "_try").forEach(showFx);
+  };
+  $("#aCancel").onclick = function () { $("#actDlg").close(); };
+  $("#aOk").onclick = function () {
+    if (!draftOk()) { status("the action does nothing yet: add something to do", true); return; }
+    snapshot(); design.actions = design.actions || [];
+    adraft.id = adraft.id || "a" + Math.random().toString(36).slice(2, 8);
+    if (aIndex >= 0) design.actions[aIndex] = adraft; else design.actions.push(adraft);
+    $("#actDlg").close(); changed();
+  };
+  $("#addAct").onclick = function () { if ((design.actions || []).length >= 40) { status("at most 40 actions", true); return; } actEdit(-1); };
+
+  // ---------------------------------------------------------------- the effects an action asks for, shown over the stage
+  var fxTimer = 0;
+  function showFx(f) {
+    var ic = { fireworks: "✺", banner: "⚑", lightning: "ϟ", shooting: "☄", tip: "◓", launch: "🚀", flare: "☀", chime: "♪", say: "❝" }[f.kind] || "✦";
+    var tx = f.kind === "say" ? PD.text(f.text, live || demoState()) : (PD.FX[f.kind] || f.kind) + (f.text ? " · " + PD.text(f.text, live || demoState()) : "");
+    var el = $("#fxl"); el.textContent = ic + " " + tx; el.classList.add("on");
+    clearTimeout(fxTimer); fxTimer = setTimeout(function () { el.classList.remove("on"); }, 2600);
+    if (f.kind === "chime") try { var ac = new (window.AudioContext || window.webkitAudioContext)(); [659, 784, 988].forEach(function (hz, i) { var os = ac.createOscillator(), gn = ac.createGain(); os.frequency.value = hz; gn.gain.setValueAtTime(0.0001, ac.currentTime + i * 0.12); gn.gain.exponentialRampToValueAtTime(0.08, ac.currentTime + i * 0.12 + 0.02); gn.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + i * 0.12 + 0.6); os.connect(gn).connect(ac.destination); os.start(ac.currentTime + i * 0.12); os.stop(ac.currentTime + i * 0.12 + 0.7); }); } catch (e) {}
+  }
+
+  // ---------------------------------------------------------------- export a .pulse file
+  function previewPic() {   // 640×360 from the stage: Pulse's sky and the scene (no guides, no selection)
+    var c = document.createElement("canvas"); c.width = 640; c.height = 360;
+    var x = c.getContext("2d"); x.drawImage(skyC, 0, 0, 640, 360); x.drawImage(scC, 0, 0, 640, 360);
+    var u = c.toDataURL("image/webp", 0.82); return u.indexOf("data:image/webp") === 0 ? u : c.toDataURL("image/png");
+  }
+  function checksHtml(list) { return (list || []).map(function (c) { return '<li class="' + c[0] + '">' + esc(c[1]) + "</li>"; }).join(""); }
+  function lsGet(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  $("#exportPkg").onclick = function () {
+    var n = name(); if (!n) return;
+    $("#mTitle").value = meta.title || n; $("#mAuthor").value = meta.author || lsGet("pulse-editor:author");
+    $("#mLicense").value = meta.license || lsGet("pulse-editor:license") || "MIT"; $("#mDesc").value = meta.description || "";
+    $("#mTags").value = (meta.tags || []).join(", "); $("#expChecks").innerHTML = ""; $("#expDlg").showModal();
+  };
+  $("#expCancel").onclick = function () { $("#expDlg").close(); };
+  $("#expGo").onclick = function () {
+    var n = name(); if (!n) return;
+    var m = { title: $("#mTitle").value.trim() || n, author: $("#mAuthor").value.trim(), license: $("#mLicense").value, description: $("#mDesc").value.trim(),
+              tags: $("#mTags").value.toLowerCase().split(/[,\s]+/).filter(function (t) { return /^[a-z0-9][a-z0-9-]{0,23}$/.test(t); }).slice(0, 6) };
+    if (!m.author) { $("#expChecks").innerHTML = checksHtml([["crit", "who made it: your name or handle"]]); $("#mAuthor").focus(); return; }
+    lsSet("pulse-editor:author", m.author); lsSet("pulse-editor:license", m.license);
+    var pv = previewPic();
+    save().then(function () { return api("/api/scene-meta?name=" + encodeURIComponent(n), { method: "POST", body: JSON.stringify(m) }); })
+      .then(function () { meta = m; return api("/api/package-export?name=" + encodeURIComponent(n), { method: "POST", body: JSON.stringify({ meta: m, preview: pv }) }); })
+      .then(function (j) {
+        $("#expChecks").innerHTML = checksHtml(j.checks);
+        if (!j.ok) return;
+        var a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(j.package, null, 1)], { type: "application/json" })); a.download = n + ".pulse"; a.click();
+        status("exported " + n + ".pulse · share it, or send it to the Community with a pull request (docs/PACKAGES.md)");
+      }).catch(function (e) { if (e) $("#expChecks").innerHTML = checksHtml([["crit", e.message || String(e)]]); });
+  };
+
+  // ---------------------------------------------------------------- import a .pulse file (the button, or drop it on the page)
+  var pkgRaw = null, pkgInfo = null;
+  $("#import").onclick = function () { $("#pkgFile").click(); };
+  $("#pkgFile").onchange = function () { var f = this.files && this.files[0]; this.value = ""; if (f) openPkg(f); };
+  function openPkg(file) {
+    if (file.size > 6.5 * 1048576) { status(file.name + " is too big for a .pulse file", true); return; }
+    file.text().then(function (txt) {
+      var pkg; try { pkg = JSON.parse(txt); } catch (e) { throw new Error(file.name + " is not a .pulse file"); }
+      pkgRaw = txt;
+      return api("/api/package-check", { method: "POST", body: txt }).then(function (j) { pkgInfo = j; showPkg(pkg, j); });
+    }).catch(function (e) { status(e.message, true); });
+  }
+  function showPkg(pkg, j) {
+    var m = j.meta || {};
+    $("#pkgTitle").textContent = (m.title || j.name || "a scene") + (m.author ? " · by " + m.author : "");
+    var pv = String(pkg.preview || "");
+    $("#pkgPrev").src = /^data:image\/(png|webp|jpeg);base64,/.test(pv) ? pv : "";
+    $("#pkgPrev").style.display = $("#pkgPrev").src ? "" : "none";
+    $("#pkgMeta").innerHTML = esc(m.description || "") + "<br>" + (m.license ? "licence " + esc(m.license) + " · " : "") + (j.kind === "js" ? "written in code" : "made in the editor") +
+      ((m.tags || []).length ? " · " + m.tags.map(function (t) { return '<span class="chip">' + esc(t) + "</span>"; }).join(" ") : "");
+    $("#pkgChecks").innerHTML = checksHtml(j.checks);
+    $("#pkgName").value = j.name || "";
+    $("#pkgOpen").style.display = j.ok && j.kind === "design" ? "" : "none";
+    $("#pkgInstall").disabled = !j.ok;
+    $("#pkgDlg").showModal();
+  }
+  $("#pkgCancel").onclick = function () { $("#pkgDlg").close(); };
+  $("#pkgOpen").onclick = function () {
+    if (!pkgInfo || !pkgInfo.design) return;
+    if (dirty && !confirm("Open it? What you have on the stage and did not save is lost.")) return;
+    snapshot(); design = pkgInfo.design; design.assets = design.assets || {}; design.actions = design.actions || [];
+    meta = pkgInfo.meta || {}; sel = null;
+    var n = $("#pkgName").value.trim().toLowerCase(); if (NAME_RE.test(n)) $("#name").value = n;
+    $("#pkgDlg").close(); syncScene(); changed();
+    status("opened " + (meta.title || n) + (meta.author ? " by " + meta.author : "") + " · Save keeps it in your scenes; keep the credits if you share it");
+  };
+  function installed(j, n) {
+    status("installed: " + j.path + " · scene = \"" + n + "\" in [pulse], or Try on wallpaper");
+    $("#pkgDlg").close();
+  }
+  $("#pkgInstall").onclick = function () {
+    var n = $("#pkgName").value.trim().toLowerCase();
+    if (!NAME_RE.test(n)) { status("a name: a-z, 0-9 and -", true); return; }
+    var go = function (force) { return api("/api/package-install?name=" + encodeURIComponent(n) + (force ? "&force=1" : ""), { method: "POST", body: pkgRaw }); };
+    go(false).then(function (j) { installed(j, n); }).catch(function (e) {
+      if (e.message === "exists" && confirm("You already have a scene called " + n + ": replace it?")) go(true).then(function (j) { installed(j, n); }).catch(function (e2) { status(e2.message, true); });
+      else if (e.message !== "exists") status(e.message, true);
+    });
+  };
+  var dragN = 0;
+  addEventListener("dragenter", function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") >= 0) { dragN++; document.body.classList.add("drop"); } });
+  addEventListener("dragleave", function () { if (--dragN <= 0) { dragN = 0; document.body.classList.remove("drop"); } });
+  addEventListener("dragover", function (e) { e.preventDefault(); });
+  addEventListener("drop", function (e) {
+    e.preventDefault(); dragN = 0; document.body.classList.remove("drop");
+    var fl = Array.prototype.slice.call((e.dataTransfer || {}).files || []); if (!fl.length) return;
+    var pk = fl.filter(function (f) { return /\.pulse$|\.json$/i.test(f.name); })[0];
+    if (pk) { openPkg(pk); return; }
+    var im = fl.filter(function (f) { return /^image\/(png|jpeg|webp|svg\+xml)$/.test(f.type); });
+    if (im.length) { var dt = new DataTransfer(); im.forEach(function (f) { dt.items.add(f); }); picFor = ""; $("#picFile").files = dt.files; $("#picFile").onchange(); }
+  });
+
+  // ---------------------------------------------------------------- the Community gallery
+  var gal = null;
+  $("#community").onclick = function () {
+    $("#galDlg").showModal();
+    if (gal && gal.scenes && gal.scenes.length) { galList(); return; }
+    $("#galList").innerHTML = '<p class="hint">loading…</p>';
+    api("/api/gallery").then(function (j) { gal = j; galList(); }).catch(function (e) { $("#galList").innerHTML = '<p class="hint">' + esc(e.message) + "</p>"; });
+  };
+  $("#galClose").onclick = function () { $("#galDlg").close(); };
+  $("#galQ").oninput = function () { galList(); };
+  function galList() {
+    var q = $("#galQ").value.toLowerCase().trim(), base = (gal.base || "").replace(/\/$/, "");
+    var l = (gal.scenes || []).filter(function (x) { return !q || JSON.stringify([x.name, x.title, x.author, x.description, x.tags]).toLowerCase().indexOf(q) >= 0; });
+    if (!l.length) { $("#galList").innerHTML = '<p class="hint">' + esc(gal.error || (q ? "nothing like that" : "no scenes yet: be the first, docs/PACKAGES.md says how")) + "</p>"; return; }
+    $("#galList").innerHTML = l.map(function (x) {
+      var pv = /^[a-z0-9-]+\/[a-z0-9._-]+\.(webp|png|jpe?g)$/.test(x.preview || "") ? base + "/" + x.preview : base + "/" + x.name + "/preview.webp";
+      return '<div class="card" data-n="' + esc(x.name) + '"><div class="im" style="background-image:url(\'' + esc(pv) + '\')"></div><div class="bd"><b>' + esc(x.title || x.name) + "</b>" +
+        '<span class="hint">by ' + esc(x.author || "?") + " · " + esc(x.license || "") + (x.kind === "js" ? " · code" : "") + "</span><p class=\"hint\" style=\"margin:.3rem 0\">" + esc(x.description || "") + "</p>" +
+        '<div class="row"><button data-g="install">' + (x.installed ? "Installed ✓ (again)" : "Install") + '</button><button data-g="edit"' + (x.kind === "js" ? " disabled title=\"written in code: open it in the lab\"" : "") + ">Install & edit</button></div></div></div>";
+    }).join("");
+  }
+  $("#galList").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-g]"); if (!b) return;
+    var n = b.closest(".card").dataset.n, edit = b.dataset.g === "edit";
+    var go = function (force) { return api("/api/gallery-install?name=" + encodeURIComponent(n) + (force ? "&force=1" : ""), { method: "POST" }); };
+    var done = function () {
+      (gal.scenes || []).forEach(function (x) { if (x.name === n) x.installed = true; });
+      if (edit) { if (!dirty || confirm("Open " + n + "? What you did not save is lost.")) { dirty = false; location.href = "?token=" + encodeURIComponent(TOKEN) + "&scene=" + encodeURIComponent(n); } }
+      else { status("installed " + n + " · scene = \"" + n + "\" in [pulse]"); galList(); }
+    };
+    b.disabled = true;
+    go(false).then(done).catch(function (er) {
+      if (er.message === "exists" && confirm("You already have a scene called " + n + ": replace it with the Community's?")) go(true).then(done).catch(function (e2) { status(e2.message, true); });
+      else if (er.message !== "exists") status(er.message, true);
+    }).then(function () { b.disabled = false; });
+  });
+
   // ---------------------------------------------------------------- start: open the scene in the address, or a template
   addEventListener("resize", resize); resize();
-  api("/api/scene-state").then(function (s) { if (s.theme && s.theme.accent) { theme = s.theme; sky(); } }).catch(function () {});
+  api("/api/scene-state").then(function (s) { if (s.theme && s.theme.accent) { theme = s.theme; sky(); } var P = s.panels || {}; panelIds = Object.keys(P).filter(function (k) { return typeof P[k].value === "number"; }); panelRowIds = Object.keys(P).filter(function (k) { return (P[k].rows || []).length; }); inspector(); }).catch(function () {});
   var start = Q.get("scene") || "";
   $("#name").value = start;
   function fresh() {
     var d = null; try { d = JSON.parse(localStorage.getItem("pulse-editor:" + (start || "_")) || "null"); } catch (e) {}
-    if (d && d.shapes) { design = d; status("your unsaved draft is back"); } else $("#dlg").showModal();
+    if (d && d.shapes) { design = d; design.assets = design.assets || {}; design.actions = design.actions || []; status("your unsaved draft is back"); } else $("#dlg").showModal();
     syncScene(); changed(); dirty = !!(d && d.shapes);
   }
   if (start) api("/api/scene-design?name=" + encodeURIComponent(start)).then(function (j) {
-    if (j.design) { design = j.design; syncScene(); changed(); dirty = false; status("opened " + j.path); }
+    if (j.design) { design = j.design; design.assets = design.assets || {}; design.actions = design.actions || []; meta = j.meta || {}; syncScene(); changed(); dirty = false; status("opened " + j.path); }
     else if (j.error === "handwritten") { status(start + " is written by hand: open it in the lab; the editor makes a new one", true); $("#name").value = ""; start = ""; fresh(); }
     else fresh();
   }).catch(function () { status("cannot reach Pulse: open this from omarchy-pulse scene editor", true); fresh(); });

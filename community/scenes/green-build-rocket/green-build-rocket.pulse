@@ -1,0 +1,275 @@
+{
+ "format": "omarchy-pulse-scene",
+ "v": 1,
+ "name": "green-build-rocket",
+ "title": "Green build rocket",
+ "author": "Marco Porro",
+ "license": "MIT",
+ "description": "A rocket of your own on its launch pad. CI passes again: it lifts off with Pulse's own rocket. CI fails: it flashes red, and the light on the tower turns red while a build is failing. Smoke follows your agents at work; stars come out when the Sun goes down. Click it to launch it.",
+ "pulse": "1.7.0",
+ "kind": "design",
+ "tags": [
+  "ci",
+  "git",
+  "rocket"
+ ],
+ "created": "2026-11-09",
+ "design": {
+  "v": 2,
+  "sky": "none",
+  "city": true,
+  "shapes": [
+   {
+    "alpha": 0.7,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [
+     {
+      "prop": "count",
+      "src": "sun",
+      "from": 90,
+      "to": 0
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "stars",
+    "type": "particles",
+    "name": "stars",
+    "x": 0.5,
+    "y": 0.45,
+    "w": 0.4,
+    "h": 0.22,
+    "dir": "fireflies",
+    "count": 40,
+    "dot": 1.6,
+    "color": "fg"
+   },
+   {
+    "alpha": 0.9,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "pad",
+    "type": "rect",
+    "name": "pad",
+    "x": 0.5,
+    "y": 0.737,
+    "w": 0.09,
+    "h": 0.016,
+    "round": 0.3,
+    "color": "dim"
+   },
+   {
+    "alpha": 0.9,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "tower",
+    "type": "rect",
+    "name": "tower",
+    "x": 0.527,
+    "y": 0.62,
+    "w": 0.01,
+    "h": 0.235,
+    "color": "dim"
+   },
+   {
+    "alpha": 0.9,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "arm",
+    "type": "rect",
+    "name": "arm",
+    "x": 0.517,
+    "y": 0.56,
+    "w": 0.02,
+    "h": 0.006,
+    "color": "dim"
+   },
+   {
+    "alpha": 1,
+    "glow": 0.25,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "rocket",
+    "type": "image",
+    "name": "rocket",
+    "asset": "rocket",
+    "x": 0.5,
+    "y": 0.635,
+    "w": 0.032,
+    "h": 0.19,
+    "color": "accent",
+    "click": "{commits} commits this week",
+    "keys": {
+     "start": "action",
+     "loop": false,
+     "dur": 4.5,
+     "ease": "smooth",
+     "frames": [
+      {
+       "t": 0
+      },
+      {
+       "t": 0.12,
+       "dx": 0.002
+      },
+      {
+       "t": 0.22,
+       "dx": -0.002
+      },
+      {
+       "t": 1,
+       "dy": -0.8,
+       "alpha": 0
+      }
+     ]
+    }
+   },
+   {
+    "alpha": 0.5,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [
+     {
+      "prop": "count",
+      "src": "working",
+      "from": 4,
+      "to": 40
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "smoke",
+    "type": "particles",
+    "name": "smoke",
+    "x": 0.5,
+    "y": 0.73,
+    "w": 0.1,
+    "h": 0.035,
+    "dir": "fireflies",
+    "count": 10,
+    "dot": 5,
+    "color": "dim"
+   },
+   {
+    "alpha": 1,
+    "glow": 1.4,
+    "anim": {
+     "kind": "blink",
+     "speed": 0.6
+    },
+    "bind": [
+     {
+      "prop": "heat",
+      "src": "cifail",
+      "from": 0,
+      "to": 1
+     }
+    ],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "ci",
+    "type": "ellipse",
+    "name": "ci light",
+    "x": 0.527,
+    "y": 0.497,
+    "w": 0.006,
+    "h": 0.011,
+    "color": "ok",
+    "color2": "crit"
+   }
+  ],
+  "assets": {
+   "rocket": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2MCAyMDAiIHdpZHRoPSI2MCIgaGVpZ2h0PSIyMDAiPjxwYXRoIGQ9Ik0zMCA0IEM0NCAyNCA0OCA1MiA0OCA4NCBMNDggMTUwIEwxMiAxNTAgTDEyIDg0IEMxMiA1MiAxNiAyNCAzMCA0IFoiIGZpbGw9IiNlOGVjZjYiIHN0cm9rZT0iIzU2NjA3ZiIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iMzAiIGN5PSI3MCIgcj0iOSIgZmlsbD0iIzdhYTJmNyIgc3Ryb2tlPSIjNTY2MDdmIiBzdHJva2Utd2lkdGg9IjIiLz48cGF0aCBkPSJNMTIgMTEyIEwwIDE2MCBMMTIgMTUwIFogTTQ4IDExMiBMNjAgMTYwIEw0OCAxNTAgWiIgZmlsbD0iI2Y3NzY4ZSIvPjxyZWN0IHg9IjE4IiB5PSIxNTAiIHdpZHRoPSIyNCIgaGVpZ2h0PSIxMiIgZmlsbD0iIzU2NWY4OSIvPjxwYXRoIGQ9Ik0yMCAxNjIgTDMwIDE5NiBMNDAgMTYyIFoiIGZpbGw9IiNlMGFmNjgiLz48L3N2Zz4="
+  },
+  "actions": [
+   {
+    "id": "a1",
+    "when": {
+     "type": "event",
+     "event": "ci-ok"
+    },
+    "do": [
+     {
+      "type": "play",
+      "shape": "rocket"
+     },
+     {
+      "type": "fx",
+      "fx": "launch",
+      "text": "build green"
+     }
+    ],
+    "cooldown": 30
+   },
+   {
+    "id": "a2",
+    "when": {
+     "type": "event",
+     "event": "ci-fail"
+    },
+    "do": [
+     {
+      "type": "flash",
+      "shape": "rocket",
+      "color": "crit",
+      "secs": 6
+     }
+    ],
+    "cooldown": 30
+   },
+   {
+    "id": "a3",
+    "when": {
+     "type": "event",
+     "event": "click",
+     "shape": "rocket"
+    },
+    "do": [
+     {
+      "type": "play",
+      "shape": "rocket"
+     }
+    ],
+    "cooldown": 8
+   }
+  ]
+ },
+ "preview": "data:image/webp;base64,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"
+}

@@ -1,0 +1,237 @@
+{
+ "format": "omarchy-pulse-scene",
+ "v": 1,
+ "name": "agent-bell",
+ "title": "Agent bell",
+ "author": "Marco Porro",
+ "license": "MIT",
+ "description": "A lantern for each AI agent, coloured by its state. When one starts waiting for you, a bell appears, rings and chimes; click it (or answer the agent) and it goes away. Lightning when an agent fails, a shooting star when one finishes.",
+ "pulse": "1.7.0",
+ "kind": "design",
+ "tags": [
+  "agents",
+  "ai"
+ ],
+ "created": "2026-11-09",
+ "design": {
+  "v": 2,
+  "sky": "none",
+  "city": true,
+  "shapes": [
+   {
+    "alpha": 0.3,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "wire",
+    "type": "line",
+    "name": "wire",
+    "x": 0.5,
+    "y": 0.6,
+    "w": 0.42,
+    "h": 0,
+    "fill": false,
+    "line": 2,
+    "color": "fg"
+   },
+   {
+    "alpha": 0.95,
+    "glow": 1,
+    "anim": {
+     "kind": "bob",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "agents",
+     "spread": true,
+     "from": 0.32,
+     "to": 0.68,
+     "stateColors": true
+    },
+    "id": "lantern",
+    "type": "ellipse",
+    "name": "lantern",
+    "x": 0.3,
+    "y": 0.635,
+    "w": 0.024,
+    "h": 0.055,
+    "color": "accent",
+    "click": "{name} · {state}"
+   },
+   {
+    "alpha": 1,
+    "glow": 0.6,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "bell",
+    "type": "image",
+    "name": "bell",
+    "asset": "bell",
+    "x": 0.5,
+    "y": 0.48,
+    "w": 0.04,
+    "h": 0.074,
+    "hidden": true,
+    "click": "an agent is waiting for you",
+    "keys": {
+     "start": "action",
+     "loop": false,
+     "dur": 1.2,
+     "ease": "linear",
+     "frames": [
+      {
+       "t": 0
+      },
+      {
+       "t": 0.15,
+       "rot": -18
+      },
+      {
+       "t": 0.3,
+       "rot": 16
+      },
+      {
+       "t": 0.45,
+       "rot": -12
+      },
+      {
+       "t": 0.6,
+       "rot": 9
+      },
+      {
+       "t": 0.8,
+       "rot": -4
+      },
+      {
+       "t": 1
+      }
+     ]
+    }
+   },
+   {
+    "alpha": 0.65,
+    "glow": 0,
+    "anim": {
+     "kind": "none",
+     "speed": 1
+    },
+    "bind": [],
+    "repeat": {
+     "by": "none"
+    },
+    "id": "count",
+    "type": "text",
+    "name": "count",
+    "x": 0.5,
+    "y": 0.75,
+    "w": 0.25,
+    "h": 0.03,
+    "text": "{working} working · {waiting} waiting",
+    "size": 0.018,
+    "color": "fg"
+   }
+  ],
+  "assets": {
+   "bell": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTA0IiB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwNCI+PHBhdGggZD0iTTUwIDggQzMwIDggMjAgMjYgMjAgNDggTDIwIDcwIEwxMCA4NCBMOTAgODQgTDgwIDcwIEw4MCA0OCBDODAgMjYgNzAgOCA1MCA4IFoiIGZpbGw9IiNlMGFmNjgiIHN0cm9rZT0iIzhhNmEzMiIgc3Ryb2tlLXdpZHRoPSIzIi8+PHJlY3QgeD0iNDQiIHk9IjIiIHdpZHRoPSIxMiIgaGVpZ2h0PSI5IiByeD0iMyIgZmlsbD0iIzhhNmEzMiIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iOTIiIHI9IjgiIGZpbGw9IiM4YTZhMzIiLz48cGF0aCBkPSJNMzIgMzAgQzM0IDIyIDQwIDE4IDQ2IDE3IiBzdHJva2U9IiNmZmYzY2YiIHN0cm9rZS13aWR0aD0iNCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+"
+  },
+  "actions": [
+   {
+    "id": "a1",
+    "when": {
+     "type": "event",
+     "event": "agent-waiting"
+    },
+    "do": [
+     {
+      "type": "show",
+      "shape": "bell"
+     },
+     {
+      "type": "play",
+      "shape": "bell"
+     },
+     {
+      "type": "fx",
+      "fx": "chime",
+      "text": "an agent needs you"
+     }
+    ],
+    "cooldown": 20
+   },
+   {
+    "id": "a2",
+    "when": {
+     "type": "event",
+     "event": "click",
+     "shape": "bell"
+    },
+    "do": [
+     {
+      "type": "hide",
+      "shape": "bell"
+     }
+    ],
+    "cooldown": 1
+   },
+   {
+    "id": "a3",
+    "when": {
+     "type": "below",
+     "src": "waiting",
+     "value": 1
+    },
+    "do": [
+     {
+      "type": "hide",
+      "shape": "bell"
+     }
+    ],
+    "cooldown": 1
+   },
+   {
+    "id": "a4",
+    "when": {
+     "type": "event",
+     "event": "agent-failed"
+    },
+    "do": [
+     {
+      "type": "fx",
+      "fx": "lightning",
+      "text": "an agent failed"
+     }
+    ],
+    "cooldown": 60
+   },
+   {
+    "id": "a5",
+    "when": {
+     "type": "event",
+     "event": "agent-done"
+    },
+    "do": [
+     {
+      "type": "fx",
+      "fx": "shooting",
+      "text": "{working} still working"
+     }
+    ],
+    "cooldown": 60
+   }
+  ]
+ },
+ "preview": "data:image/webp;base64,UklGRroKAABXRUJQVlA4WAoAAAAwAAAAfwIAZwEASUNDUMgBAAAAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADZBTFBIewAAAAF3oKBtG4Y/11L4G4iISMOmLX8wqW1bym9BGxxlaEINNA3+UOCv9RxqsDPcFOhJnYj+p8N//Md//Md//Md//Md//Md//Md//Md//Md//Md//EdiPYlVs2w6c+rKlHobLOtWrFIcvWprx8a8sh7F4T/+4z/+4z/+4/9fBABWUDggSAgAAFBkAJ0BKoACaAE+YTCWSKQjIiIg1hgogAwJaW7hdc8H4vh/7t3gBX/yuLKVZDr4yw7VQtfmAx07ebsioiDNJSszvADCcJyicqyQJyicqyQKlWa0cYA3lctAHCwBUKQwBR+xKWpyGAN5VkgTgXwX6uvlrpJ+F8OYWb9nKST/tMWWFNjTnMWKVAOsUUUvt9LLjJLlWSBOLwuV3J92KkMAkUtTncm8qyQJwL4L9XXy10oUhgDeVZIE4F4A9XXy10oUhgDeVZIE4F8F+rr5a6UKDQDeVZIE4F8F+rr5a6UKQwBvKskCcCQWerr5a6UKQwBvKskCcC+C/V18tdKCwwBvKskCcC+C/V18tdKFIYA3lWSBN5qPfV18tdKFIYAo/YAg3aerNRQnAvgv1dfLVqTkMAbyrJAnAvb5WV7ZqkwSbzrVHPOskCcC+C/V18tWrY8KCGdpZdZVEJWdaeUsNyef49EtNOb5BWpyht2THCaNQ44enkl4j8bLpQpDAG8qyQJwLYlyYA3lWSBOBfBfp2NvlrpQnUD4AJLO0DEgZvBic3tIZD1POHbRNyA/XRVN0AGsJafxDqDORX68GwLyW+364wEeIjBOZ31dfLXST8MAbyrIqj0g6df2XcJUnsnEZSEcHWbiErCgONHNBVZg0LwLv9zSlaQ8T9xcCTmiG+K8hUoB6ucV6D7r3JxECRm3SP2gnBPp/sU/lWRrQdYsyf9nKGHcL2KkrjVdeOIzag6VFkeJnEiG5NiRnui6RNayDQsc4NyN3CofdiBWcC+C/Vv3TXb/CEnJLMrUOazaxktqNFii2beM1vYlIPKjhcuDVh7KrIQk5JZl2CKWelv3LULfLXdx1hQB4/1ehncoyHGTRoO0Z54Ek5mop63Z1dfLXShSRrp18g4nD0VTmYgmcxQ/5s4F8GCVZcff0wztFIU80Lf4Qk5JZl2CKWemu3+EJOSWZdggUUMctBRdv8G8m8qyQJwL4L9XXy10oUhgDeVZIE4F39dYn2db6TuYOBlGTgdohMEsT7Ot8RR0XVvuYOBj0ps2wprspRVXb+/0w46JVlx0Sq0TUVVHjq39AGwA/v+l/LamUrlby+2k1Hk/g3O9wgRY+X+9GHgW2oLd8DiQDx68nrjuC3KfYX+06WeCTMRYO4AGsC12p4kAAAAm2RmC12p4o5p76LS8bIQd/bgoHdnZ2doD2OBR94yic3ABB5YABoXl/5gAAAAKwgAAAAGyuNDGAAAABEjdwAAABHrUwAEgJ4ySxyKlelqkMACz9XiCgATX+Fn7DXuTYaDI37e5hbaoY88U1pC1TltHT3c/vVkBQaP1kDWEDAP1PaeZQ/vcyzZl+5Lzr40SMqN4bhlLWnItXql33DaM7eLF4Q4mQL1ShngY8UbgA6bV9W40IS+ayLADbMO2lzdPbGvFxkrUnalLm6fE2kDOvjGuYF2ZNfS0YT9V+z9a9tApE3prpex2b2g+lrKqwBGDkfEgGquhcmCsEE267Sf4/4/2ku02QdvolxDZC/evdXm0zhLjZB9jKBm28L0oR5Yvn5hCFTfIRHzAAAAAAOFDaGMB5Phy8lmMOwLG/W1kvmsMGj7qXmb6bKceAPevqPkANjiLjuWPoO58IzOKxbBPwcL2drB+LXezS/EzA53B0MimUxwgfnMwMdZdRmizM81Q750LV+WTll1MJfztWpEbg0c2bMgT0xsno8WRuanmdiNfFJzFBAk2zLD5gl+FMoa/QzjoBn3sD01B4WaJM0didj9bKVbu7oauMOBk8cYZUDhE4yWAxPjKBZSkioL8zNA248sOKICb7/xvqJFxLxdzKSsjaFgJ9Nr8ork5O6rq3fmRIeTtE3yZCsS0WtWO6P5NRtnJpCuDmNiW1obQtrp5uabxi+UMKIdmPnHdvhKZ45o/vej7dy8MEK0DPMj3FXmDkLdJ4q/AaesmXL0fYnuYJvnqInZmz1vqaGz81ktmj/fOOxDF4orIOKxJOEqbEI49IFePIJT5QGFDeftuiCAu0sZayPPhzFLKe04oTJ/lunUmFheGmn/3PhtorSdyG6BLYuxKDafQNoms9BUpIV4RPvYTkBgty66X/2Nhn355x4wbA33OvIf331YKU+RezSQA9jZ32wAAP+jpd+PCd6/HZY5Lbow7qCRQSTkCB8IPFlUx2ueEaXMsSQIqS1mdJ4yZQAOo6d5IZj/EyuDigZqs7apbMtMwd3PjE4rz9Yu3ioJ/4kuhkaLcjZDmAT75r4UEWTY8fngCChBNKV/G/+E2EYEAAF4ZeRs3TifWBykmbjq4Qm7hAUdMh+bs38zLd1y4rcj5/xEvN+DG85ZzFZ+LGQsYfh6sIyttbmvTYcIj8FYf/ICJEqzgbOfgBFsmgVg7dP/GBLZkO5tccZRC6qNq/vO6VUhIt8zIJv5Ir8F4wF+O7syFQUQ4jhERKkmN3KwU2yWiTXHTNLZwWT7WzyNNHTMYUBaYlCMCAAG/ghJ2EHu87acfu1S5WfRXRyXaqPayI5LtU7o17lFPzDb+gmAU14qi17aTfD9/tWxTS6KS17Tqtdo8FB3tT9t3su7UAtx66hEdJ8DHaF9eLhNoqxKpFixwR/Yx8BwWb4MVJXfVg7910w6XLx5Nd6eIFkEn79VwAAAiNseOPapz3UCwM+FwKhMabODhl9nWps4OGX2damzg4ZfZ1qbODhl85xWIxps4OGX2damziQLJpx59V5VoiTWMoCqJcML9jQNM9jN3imbvFM3e268Uzd4pq+faRWWjkmpexjHGwXbLuyNbLozatQNYyhbrxTV8+0i6MY4+HNFRqxm21bF2kOQAAAAAAAAA"
+}

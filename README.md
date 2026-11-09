@@ -1,11 +1,24 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-**Version 1.6** · [what's new](#new-in-16) · [the scene editor](docs/EDITOR.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+**Version 1.7** · [what's new](#new-in-17) · [the scene editor](docs/EDITOR.md) · [share and install scenes](docs/PACKAGES.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
 
 ![Omarchy Pulse 1.5: the noir scene, a futuristic megacity at night with the agent's face on the big screen, candles for what expires, the energy river, robots on the floor (demo data)](preview.png)
 
+> [!TIP]
+> **🎨 Make a scene, and everyone gets it.** Draw your world in the scene editor (`omarchy-pulse scene editor`):
+> your pictures, your homelab, your agents, your sky. **Export .pulse**, open a pull request that adds it to
+> [`community/scenes/`](community/scenes/), and once it is merged it is in **every Pulse user's Community gallery**,
+> with your name on it. One file, no code needed, and it runs in Pulse's sandbox.
+> **[How to send yours, in four steps →](docs/PACKAGES.md#4-put-your-scene-in-the-gallery)** · already there:
+> [the Community](community/scenes/)
+
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
+- **new in 1.7, "Creator"**: the scene editor makes **complete scenes**: your own **pictures** and **backgrounds**,
+  **animations**, **actions** ("when CI passes, launch a rocket"), shapes that follow **your own panels** (one per VM,
+  per container...) and the sky;
+  **.pulse files** to share a scene in one file, and a **Community gallery** to install other people's in one click
+  ([what's new](#new-in-17))
 - **new in 1.6: the scene editor**: draw your own world with the mouse and make it move with your data, no code.
   **Every AI agent Omarchy ships** (OpenCode, Claude Code, Codex, Gemini, Copilot, Pi) plus Grok and Hermes, with
   their **health** and **lines of light** when they work together; **move and hide the panels**; your **workspaces as a
@@ -43,6 +56,39 @@ or anything you push from a script. Camera feeds, AI briefs, Home Assistant, ser
 
 Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author of
 [OmarchyTV](https://github.com/piermark/omarchytv) (the Live screen of OmarchyTV, now on your desktop).
+
+## New in 1.7
+
+**Creator: make anything, share it, install other people's.** The scene editor
+([docs/EDITOR.md](docs/EDITOR.md)) now builds complete scenes:
+
+- **Your pictures and backgrounds.** Import PNG, JPEG, WebP or SVG: put them on the stage as shapes (tinted with the
+  theme or in their own colours, mirrored, moving with your data like any shape) or behind everything as the scene's
+  background. A scene can have its own palette too.
+- **Every value of the engine.** A shape can follow the Sun, the Moon, the planes overhead (one copy per plane), the
+  ISS, Starlink, the aurora, the next launch, music, meetings, and **your own panels**: anything a `[[source]]`, a push
+  or Home Assistant turns into a number. *A tower that grows with my homelab's power draw* is now three clicks.
+- **Your homelab as a city.** One copy of a shape for every row of your panels: a building per Proxmox VM, a fish
+  per Docker container, a lamp per light, green, amber or red with each one, and lightning when one goes down.
+- **Animations.** Keyframes: move, size, fade, turn; loop them, or play them when something happens. Presets: jump,
+  fly, fade, grow, shake, spin.
+- **Actions.** *When* an agent waits for you, CI fails or passes, a commit lands, a plane passes, the ISS rises, a
+  rocket launches, it rains, you click a shape, a value crosses a line... *do*: play an animation, flash, show or hide a
+  shape, or ask Pulse for one of its effects (fireworks, a banner, lightning, a shooting star, a balloon with your
+  text, a rocket, a solar flare, a chime). Pulse keeps them rare and quiet while you work.
+- **.pulse files.** **Export .pulse**: one file with the scene, its pictures, animations and actions, a preview, your
+  name and a licence. **Import…** (or drop it on the editor): open it, change it, install it.
+  `omarchy-pulse scene export | import` do the same from a terminal.
+- **The Community gallery.** The editor's **Community** button shows the scenes people shared in
+  [community/scenes/](community/scenes/), with **Install** and **Install & edit** (`omarchy-pulse scene gallery`,
+  `scene get NAME`). Five to start: *homelab tower*, *container aquarium*, *green build rocket*, *moonlit garden*,
+  *agent bell*. **Made something? Send it**: one pull request with your `.pulse`
+  file ([docs/PACKAGES.md](docs/PACKAGES.md#4-put-your-scene-in-the-gallery)).
+
+Safe by design: a package is data, or code that runs in Pulse's sandbox (no network, no files, no token). It never
+carries commands or `[[source]]` scripts; pictures are checked byte by byte; gallery packages must match the reviewed
+index; scenes see only the numbers of your panels and the names and states of their rows, never a private panel.
+([section 75](docs/GUIDE.md#75-creator-pictures-animations-actions-pulse-files-and-the-community-17))
 
 ## New in 1.6
 
@@ -308,7 +354,8 @@ sed -i 's/^scene = .*/scene = "noir"/' ~/.config/omarchy-pulse/pulse.toml    # s
 
 Or a **community scene**, a whole world someone made in one file: `pond` comes with Pulse, `omarchy-pulse scene list`
 shows the ones you have. **Make your own with the mouse** in the scene editor (1.6: `omarchy-pulse scene editor`,
-[docs/EDITOR.md](docs/EDITOR.md)), or in code ([docs/SCENES.md](docs/SCENES.md)).
+[docs/EDITOR.md](docs/EDITOR.md)), or in code ([docs/SCENES.md](docs/SCENES.md)). **Install other people's** from
+the editor's Community tab, or share yours as a `.pulse` file (1.7, [docs/PACKAGES.md](docs/PACKAGES.md)).
 
 Or **your own picture** under the widgets (1.5.1): `wallpaper = "~/Pictures/city.jpg"`, or `"omarchy"` for your theme's
 background; `wallpaper_mode = "live"` keeps the real weather, planes and fireworks on top, `"panels"` shows the panels
@@ -440,6 +487,10 @@ then paste `community/zabbix/source.toml` into `~/.config/omarchy-pulse/pulse.to
 keep secrets out of the files and talk only to the service they say. Wanted: Pi-hole,
 OctoPrint/Klipper, Uptime Kuma, Grafana, TrueNAS, Synology, Wazuh, Jellyfin, Tailscale.
 
+**Made a scene?** We want it. Export it as a `.pulse` file and send it as a pull request to
+[community/scenes/](community/scenes/): it appears in everyone's Community gallery
+([docs/PACKAGES.md](docs/PACKAGES.md#4-put-your-scene-in-the-gallery)).
+
 ## Built in
 
 System (CPU, every core, RAM, GPU, temperature, disk, battery), network, weather (Open-Meteo, no key), now
@@ -476,7 +527,11 @@ monitors calm and light (12 frames a second, no drones, planes or robots).
   `omarchy-pulse`, the page in `web/`, `pulse.toml`, `sources/` with `pulse-ai`, `pulse-feed`, `pulse-ping`,
   `pulse-systemd`, `pulse-table`; 1.6: the scene editor `web/editor.html` and its engine `web/scene-design.js`, the
   OpenCode and Pi plugins in `agents/`)
-- `docs/GUIDE.md`: the full guide · `docs/EDITOR.md`: the scene editor's guide · `docs/SCENES.md`: scenes in code
+- `docs/GUIDE.md`: the full guide · `docs/EDITOR.md`: the scene editor's guide · `docs/SCENES.md`: scenes in code ·
+  `docs/PACKAGES.md`: .pulse files and the Community gallery · `docs/REVIEWING.md`: how community pull requests are
+  reviewed
+- `community/`: sources and, in `community/scenes/`, the Community gallery (`index.json`, written by
+  `tools/scene-index.py`)
 
 ## Support
 
