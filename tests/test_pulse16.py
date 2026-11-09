@@ -245,6 +245,30 @@ class StaticTests(unittest.TestCase):
         self.assertIn("#layoutbar[hidden] { display: none; }", (WEB / "pulse.css").read_text())
 
     @unittest.skipUnless(shutil.which('node'), 'node')
+    def test_the_ivy_really_flowers_after_a_week(self):
+        # The flowers used to be six 4-pixel dots nobody could see. Now: real five-petal flowers, a dozen on the tower's
+        # ivy and a few on the city's, opening over the six hours after the seventh day; none before a week.
+        src = (WEB / "pulse.js").read_text()
+        for f in ("flower", "bloomOpen"):
+            self.assertIn("function " + f + "(", src)
+        self.assertIn("for (var p = 0; p < 5; p++)", src)
+        self.assertIn("op && i < 12", src)
+        a = src.index("    function bloomOpen()")
+        js = "var uptimeS = 0, reduced = false;\n" + src[a:src.index("\n    }\n", a) + 6] + r'''
+var out = [];
+[[2, false], [6.9, false], [7, false], [7.1, false], [7.25, false], [9, false], [7, true]].forEach(function (c) {
+  uptimeS = c[0] * 86400; reduced = c[1]; out.push(Math.round(bloomOpen() * 100) / 100);
+});
+console.log(JSON.stringify(out));
+'''
+        r = subprocess.run(['node', '-e', js], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        before2, before7, at7, mid, done, later, still = json.loads(r.stdout)
+        self.assertEqual((before2, before7), (0, 0), "no flowers before a week")
+        self.assertTrue(0 < at7 < mid < done, (at7, mid, done))
+        self.assertEqual((done, later, still), (1, 1, 1), "open after six hours; reduced motion: open at once")
+
+    @unittest.skipUnless(shutil.which('node'), 'node')
     def test_page_scripts_parse(self):
         for f in ("pulse.js", "scene-design.js"):
             r = subprocess.run(['node', '--check', str(WEB / f)], capture_output=True, text=True)
