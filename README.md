@@ -1,11 +1,17 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-**Version 1.5.2** · [what's new](#new-in-15) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+**Version 1.6** · [what's new](#new-in-16) · [the scene editor](docs/EDITOR.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
 
 ![Omarchy Pulse 1.5: the noir scene, a futuristic megacity at night with the agent's face on the big screen, candles for what expires, the energy river, robots on the floor (demo data)](preview.png)
 
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
+- **new in 1.6: the scene editor**: draw your own world with the mouse and make it move with your data, no code.
+  **Every AI agent Omarchy ships** (OpenCode, Claude Code, Codex, Gemini, Copilot, Pi) plus Grok and Hermes, with
+  their **health** and **lines of light** when they work together; **move and hide the panels**; your **workspaces as a
+  tower** with **ivy** that grows with your uptime; **Omarchy tips on a hot-air balloon**; **updates as parcels** and the
+  news before you update; your **friends' cities on the horizon**; the **colours of your music**; **a theme from your wallpaper**; your day's **diary** and your **week**; ask
+  the sphere with a **local AI**; **WLED** strips; **news that strikes** ([what's new](#new-in-16))
 - **new in 1.5: scenes anyone can make** (with a scene lab), a futuristic **noir** megacity, **the holidays and the
   eclipses** on your own clock and sky, **a construction site for your code**, candles for what **expires**, the
   **weather of your infrastructure**, your home's **energy** as a river, and in beta **your network as part of the
@@ -20,7 +26,7 @@ Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of
   talk to it ([what's new](#new-in-12))
 - **the LED sphere**: a giant LED globe in the middle of the city, turning, showing your clock, weather, CPU, news,
   cameras, alerts and the face of your AI agent; it lights the plaza and shines on the wet floor
-- **your AI agents are drones**: Claude Code, Codex, Grok Bot or any job fly over the city while they work, blink
+- **your AI agents are drones**: Claude Code, Codex, Gemini, OpenCode, Pi, Grok, Hermes or any job fly while they work, blink
   when they need you, land green (with fireworks) or red when they finish
 - **the city dances with your music**, fireworks celebrate what goes right, a **focus mode** quiets everything down
 - **it sees you**: the face's eyes follow your pointer, it falls asleep when you leave and, when you are back, tells
@@ -37,6 +43,61 @@ or anything you push from a script. Camera feeds, AI briefs, Home Assistant, ser
 
 Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author of
 [OmarchyTV](https://github.com/piermark/omarchytv) (the Live screen of OmarchyTV, now on your desktop).
+
+## New in 1.6
+
+**The scene editor.** Make your own wallpaper world with the mouse: `omarchy-pulse scene editor`. Add boxes, circles,
+stars, text, gauges, bars, buildings, waves and particles on a stage that shows Pulse's sky and horizon; give each one
+the theme's colours, a glow, a motion (pulse, float, sway, spin, blink, drift); make it **follow your data** (a
+building as tall as your RAM, rain as heavy as your network, a colour from green to red with the CPU) and **repeat** it
+once per AI agent, repo or CPU core, coloured by their state. A click on a shape on the wallpaper shows its line
+(`{cpu}% CPU`, `{name} · {state}`). Start from a template (*Agent lanterns*, *Core skyline*, *Packet rain*, *Night
+garden*), move the demo sliders to see it react, or watch it with your live data; undo, redo, duplicate; **Save**,
+**Try on wallpaper** in one click, **Export** to share it. What it makes is a normal community scene, in the same
+sandbox, with no code inside the design. **[The editor's guide](docs/EDITOR.md)**: your first scene in two minutes,
+every shape and option, recipes, sharing.
+
+**All your AI agents.** Every agent Omarchy 4.5 ships (OpenCode, Claude Code, Codex, Gemini CLI, Copilot CLI, Pi),
+Grok Build and Hermes Agent fly as drones through their own hooks: `omarchy-pulse hook setup` prints what to paste,
+`omarchy-pulse hook install opencode` (or `pi`) adds the plugin. Each one has its **health**: `ok 92%` on its tag, a
+bigger drone when its runs end well, flickering lights when it fails often. Agents working **in the same repo are
+linked by a line of light** with packets running between them. Claude Duet, Meta Muse and other cloud agents can join
+through their desktop notifications. Only the event, the tool's name and the folder reach Pulse.
+([section 62](docs/GUIDE.md#62-all-your-ai-agents-their-health-and-working-together-16))
+
+**Your desktop, your way.** `omarchy-pulse layout edit`: drag the panels where you want them, hide the ones you do not
+need, Save on screen. ([63](docs/GUIDE.md#63-move-and-hide-the-panels-16))
+
+**Omarchy in the city.** Your **Hyprland workspaces as a tower**, a lit window for each app and a lift on the one you
+are on; **ivy** climbs it while the PC stays on and flowers after a week. Now and then a **hot-air balloon** brings an
+**Omarchy tip** from your own key bindings (`[tips] enabled`, `every`; never in a meeting or a focus). **Pending
+updates pile up as parcels**, the kernel in red, and a road sign blinks when the **news** asks for manual intervention
+before an update (`omarchy-pulse news`). ([64-66](docs/GUIDE.md#64-the-workspaces-tower-and-the-ivy-16))
+
+**Colours.** `[music] colors = true`: while a song plays, the city takes the colours of its cover. `omarchy-pulse
+theme from-wallpaper PICTURE NAME`: a new Omarchy theme made from a picture's colours, for you to review and apply.
+([67-68](docs/GUIDE.md#67-the-colours-of-your-music-16))
+
+**Your day and your week.** The day's video is now a **diary**: its date, your day, its numbers (commits, agent tasks,
+focus, planes...), at midnight or at the hour you choose (`[timelapse] at = "18:00"`). On Sunday night, **your week in
+a minute** (`omarchy-pulse recap`). ([69](docs/GUIDE.md#69-your-days-diary-and-your-week-16))
+
+**A local AI, your LEDs, your news.** `[ai] ollama`: what the sphere does not know goes to a model on your PC, with what
+is on your wallpaper (`omarchy-pulse ask "is everything fine?"`, or by voice). `[wled]`: your WLED strips glow with
+the sphere, red on a critical alert, a rainbow for fireworks. `[[news.rule]]`: a headline with "CVE" strikes the city
+with lightning. ([70-72](docs/GUIDE.md#70-ask-the-sphere-with-a-local-ai-16))
+
+**The friends' neighbourhood.** With a crew code you exchanged by hand, your friends' cities stand on your horizon: a
+building each, as tall as their week of commits; a floor lights up when they commit, the light on top is their CI. Only
+numbers travel, and only if you both turn it on (`[crew] city = true`). ([74](docs/GUIDE.md#74-the-friends-neighbourhood-16))
+
+**And more.** Backups are trucks that drive to the vault and back, smoking when they fail; a calmer second monitor
+(`secondary = "simple"`); during a focus the towers come down and the drones rest; a new device pings on the hacker
+radar. ([73](docs/GUIDE.md#73-backups-as-trucks-a-calmer-second-monitor-focus-and-the-radar-16))
+
+Everything of 1.5 is still there and works as before. The sphere is the default scene, as the guide always said. Every
+new thing turns off with one line in `pulse.toml`; the ones that talk to other devices or services (Ollama, WLED,
+cloud agents, news rules) are off until you set them.
 
 ## New in 1.5
 
@@ -246,7 +307,8 @@ sed -i 's/^scene = .*/scene = "noir"/' ~/.config/omarchy-pulse/pulse.toml    # s
 ```
 
 Or a **community scene**, a whole world someone made in one file: `pond` comes with Pulse, `omarchy-pulse scene list`
-shows the ones you have, and [docs/SCENES.md](docs/SCENES.md) shows how to make your own.
+shows the ones you have. **Make your own with the mouse** in the scene editor (1.6: `omarchy-pulse scene editor`,
+[docs/EDITOR.md](docs/EDITOR.md)), or in code ([docs/SCENES.md](docs/SCENES.md)).
 
 Or **your own picture** under the widgets (1.5.1): `wallpaper = "~/Pictures/city.jpg"`, or `"omarchy"` for your theme's
 background; `wallpaper_mode = "live"` keeps the real weather, planes and fireworks on top, `"panels"` shows the panels
@@ -391,13 +453,20 @@ every `private = true` panel until you stop. By hand: `omarchy-pulse privacy on 
 key). The hub listens only on `127.0.0.1`, every request needs the token in `~/.config/omarchy-pulse/token`
 (mode 600), and camera addresses and passwords never reach the page.
 
+1.6: the agents' hooks send only the event, the tool's name and the folder (never prompts or code); agents in the same
+repo are matched by a hash of the folder, never its path. Ollama and WLED are reached only on this PC or your network.
+Your crew sees your city only if you set `[crew] city = true`, and then only numbers (commits this week, CI green or
+red). Pulse reads the update news from archlinux.org every few hours (`[updates] news = false` to stop it) and runs
+`checkupdates`, which never installs anything.
+
 ## Light on the PC
 
 The scene runs at 20 frames a second only while you look at an empty desktop; with windows open it drops to 8, with
 something full screen it stops, on battery it stays at 12 at most, and a PC that cannot keep up gets fewer frames by
 itself. Panels refresh once a second. Tune it in `[pulse]`: `fps`, `scene = "calm"` (still grid), `scene = "orbit"`
 (the cores become moons around the core), and `gpu = "never"` on a PC without a working GPU driver. It uses
-WebKitGTK: about 400 MB of memory with one monitor.
+WebKitGTK: about 400 MB of memory with one monitor. With two or more, `secondary = "simple"` (1.6) keeps the other
+monitors calm and light (12 frames a second, no drones, planes or robots).
 
 ## Files
 
@@ -405,8 +474,9 @@ WebKitGTK: about 400 MB of memory with one monitor.
 - `backgrounds/01-pulse-skyline.png`, `02-pulse-orbit.png`, `03-pulse-sphere.png`: the stills, under the live wallpaper
 - `extras/install-live`, `extras/pulse-live` (theme-set hook and login start), `extras/pulse/` (the engine:
   `omarchy-pulse`, the page in `web/`, `pulse.toml`, `sources/` with `pulse-ai`, `pulse-feed`, `pulse-ping`,
-  `pulse-systemd`, `pulse-table`)
-- `docs/GUIDE.md`: the full guide
+  `pulse-systemd`, `pulse-table`; 1.6: the scene editor `web/editor.html` and its engine `web/scene-design.js`, the
+  OpenCode and Pi plugins in `agents/`)
+- `docs/GUIDE.md`: the full guide · `docs/EDITOR.md`: the scene editor's guide · `docs/SCENES.md`: scenes in code
 
 ## Support
 

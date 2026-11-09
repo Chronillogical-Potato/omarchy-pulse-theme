@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse scene editor</title>
+<!-- Omarchy Pulse 1.6: the scene editor. Draw a world with the mouse, make it move with your data, save it as a scene.
+     (c) 2026 Marco Porro (x.com/MarcoPorro), MIT. -->
+<style>
+:root { --bg: #0d0f17; --panel: #121522; --fg: #d8dee9; --dim: #6b7389; --line: #232838; --ac: #7aa2f7; --ac2: #bb9af7; --ok: #9ece6a; --warn: #e0af68; --crit: #f7768e; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.45 ui-monospace, "JetBrainsMono Nerd Font", "CaskaydiaMono Nerd Font", monospace; display: flex; flex-direction: column; }
+header { display: flex; gap: .6rem; align-items: center; padding: .55rem .9rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header b { color: var(--ac); letter-spacing: .1em; margin-right: .4rem; }
+select, button, input, textarea { font: inherit; color: var(--fg); background: #151927; border: 1px solid var(--line); border-radius: 5px; padding: .25rem .5rem; }
+input[type=range] { padding: 0; accent-color: var(--ac); }
+input[type=color] { padding: 0; width: 2.2rem; height: 1.7rem; }
+button { cursor: pointer; } button:hover { border-color: var(--ac); }
+button.primary { background: var(--ac); color: var(--bg); border-color: var(--ac); font-weight: 700; }
+button:disabled { opacity: .4; cursor: default; }
+.grow { flex: 1; }
+main { flex: 1; display: grid; grid-template-columns: 210px 1fr 300px; min-height: 0; }
+aside { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; padding: .7rem; }
+aside.right { border-right: 0; border-left: 1px solid var(--line); }
+h3 { margin: .9rem 0 .45rem; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .14em; font-weight: normal; }
+h3:first-child { margin-top: 0; }
+.tools { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem; }
+.tools button { display: flex; flex-direction: column; align-items: center; gap: .15rem; padding: .45rem .2rem; font-size: 11px; }
+.tools button span { font-size: 18px; line-height: 1; color: var(--ac); }
+#layers { list-style: none; margin: 0; padding: 0; }
+#layers li { display: flex; align-items: center; gap: .3rem; padding: .25rem .35rem; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+#layers li:hover { border-color: var(--line); }
+#layers li.sel { background: rgba(122,162,247,.16); border-color: var(--ac); }
+#layers li .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#layers li .sw { width: .8rem; height: .8rem; border-radius: 2px; flex: none; }
+#layers li .live { color: var(--ok); font-size: 10px; }
+#layers li button { padding: 0 .3rem; font-size: 11px; }
+.center { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: .8rem; gap: .6rem; }
+#stage { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: calc(100vh - 230px); margin: 0 auto; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); background: #000; touch-action: none; }
+#stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+#overlay { cursor: default; }
+.hint { color: var(--dim); font-size: 12px; }
+#status { min-height: 1.4em; color: var(--ac); max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status.err { color: var(--crit); }
+.row { display: flex; gap: .45rem; align-items: center; margin: .32rem 0; flex-wrap: wrap; }
+.row > label { min-width: 6.5ch; color: var(--dim); }
+.row input[type=number] { width: 5.2rem; }
+.row input[type=text], .row textarea { flex: 1; min-width: 0; }
+.row .v { min-width: 4ch; color: var(--dim); text-align: right; }
+.bind { border: 1px solid var(--line); border-radius: 5px; padding: .35rem .45rem; margin: .35rem 0; }
+.bind .row { margin: .2rem 0; }
+.bind select { max-width: 100%; }
+.empty { color: var(--dim); padding: 1rem 0; }
+.demo { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .35rem .9rem; align-items: center; }
+.demo span { display: flex; align-items: center; gap: .5rem; }
+.demo span label { min-width: 7ch; color: var(--dim); }
+.demo span input[type=range] { flex: 1; min-width: 0; }
+.demo .lv label { color: var(--fg); }
+.bind .row select[data-b="prop"] { flex: 1; }
+.bind .row input[type=number] { width: 4.6rem; }
+.chip { display: inline-block; padding: .05rem .4rem; border-radius: 3px; background: #1d2233; color: var(--dim); font-size: 11px; }
+#templates { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .5rem; }
+#templates button { text-align: left; padding: .5rem .6rem; }
+#templates button b { display: block; color: var(--ac); }
+dialog { background: var(--panel); color: var(--fg); border: 1px solid var(--ac); border-radius: 8px; max-width: 760px; }
+dialog::backdrop { background: rgba(0,0,0,.6); }
+kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; font-size: 11px; }
+@media (max-width: 1100px) { main { grid-template-columns: 170px 1fr 260px; } }
+</style>
+</head>
+<body>
+<header>
+  <b>PULSE · SCENE EDITOR</b>
+  <label class="hint" for="name">name</label><input id="name" size="14" spellcheck="false" placeholder="my-world">
+  <button id="new">New…</button>
+  <button id="undo" title="Ctrl+Z">↶</button><button id="redo" title="Ctrl+Y">↷</button>
+  <span class="grow"></span>
+  <span id="status"></span>
+  <button id="lab" title="open the saved scene in the scene lab">Lab</button>
+  <button id="export" title="download the scene file">Export .js</button>
+  <button id="try" title="show it on your wallpaper now (until Pulse restarts)">Try on wallpaper</button>
+  <button id="save" class="primary" title="Ctrl+S">Save</button>
+</header>
+<main>
+  <aside>
+    <h3>add</h3>
+    <div class="tools" id="tools"></div>
+    <h3>layers <span class="hint">(top = in front)</span></h3>
+    <ul id="layers"></ul>
+    <h3>scene</h3>
+    <div class="row"><label>sky</label><select id="sky"><option value="none">Pulse's real sky</option><option value="accent">its own, accent</option><option value="accent2">its own, accent 2</option><option value="ok">its own, green</option><option value="crit">its own, red</option></select></div>
+    <div class="row"><label>city</label><select id="city"><option value="0">no city behind</option><option value="1">Pulse's far city behind</option></select></div>
+    <p class="hint">Keys: <kbd>Del</kbd> remove · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · arrows move (<kbd>Shift</kbd> more) · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save</p>
+  </aside>
+  <section class="center">
+    <div id="stage"><canvas id="sky-c"></canvas><canvas id="scene-c"></canvas><canvas id="overlay"></canvas></div>
+    <div class="row" style="justify-content:space-between">
+      <span class="hint">Drag to move · drag a corner to resize · the dashed zones are under Pulse's panels · the line is the horizon</span>
+      <span class="hint" id="perf"></span>
+    </div>
+    <div class="demo">
+      <span class="lv"><label><input type="checkbox" id="live"> my live data</label></span>
+      <span><label for="d-cpu">CPU</label><input type="range" id="d-cpu" min="0" max="100" value="45"></span>
+      <span><label for="d-ram">RAM</label><input type="range" id="d-ram" min="0" max="100" value="55"></span>
+      <span><label for="d-net">network</label><input type="range" id="d-net" min="0" max="10" step=".1" value="2"></span>
+      <span><label for="d-hour">hour</label><input type="range" id="d-hour" min="0" max="23.9" step=".1" value="21"></span>
+      <span><label for="d-agents">agents</label><input type="range" id="d-agents" min="0" max="8" value="3"></span>
+      <span><label for="d-rain">rain</label><input type="range" id="d-rain" min="0" max="5" step=".1" value="0"></span>
+      <span><label for="d-motion">motion</label><select id="d-motion"><option>full</option><option>reduced</option></select></span>
+      <span><label for="d-priv">privacy</label><select id="d-priv"><option value="0">off</option><option value="1">on</option></select></span>
+    </div>
+    <div id="clicked" class="hint"></div>
+  </section>
+  <aside class="right" id="inspector"></aside>
+</main>
+<dialog id="dlg">
+  <h3>start from</h3>
+  <div id="templates"></div>
+  <p class="hint">Everything is drawn from the theme's colours, so it fits every Omarchy theme. Demo data only in the editor: what you see is safe to share.</p>
+  <div class="row" style="justify-content:flex-end"><button id="dlgClose">Close</button></div>
+</dialog>
+<script src="scene-design.js"></script>
+<script>
+(function () {
+  "use strict";
+  var Q = new URLSearchParams(location.search), TOKEN = Q.get("token") || "", $ = function (s) { return document.querySelector(s); };
+  var api = function (p, opt) { return fetch(p + (p.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(TOKEN), opt).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); }); };
+  var PD = window.PulseDesign, SOURCES = PD.SOURCES, PROPS = PD.PROPS;
+  var design = { v: 1, sky: "none", city: false, shapes: [] }, sel = null, live = null, theme = PD.THEME, dirty = false;
+  var hist = [], fut = [], mem = { hits: [] }, t0 = performance.now();
+  var NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+  // ---------------------------------------------------------------- the shapes you can add
+  var TOOLS = [
+    ["rect", "▭", "box", { w: 0.12, h: 0.08, round: 0.2 }],
+    ["ellipse", "◯", "circle", { w: 0.08, h: 0.142 }],
+    ["line", "╲", "line", { w: 0.16, h: 0.0, fill: false, line: 3 }],
+    ["star", "✦", "star", { w: 0.06, h: 0.107, points: 5, inner: 0.45 }],
+    ["text", "T", "text", { w: 0.2, h: 0.05, text: "{cpu}% CPU", size: 0.04 }],
+    ["ring", "◔", "gauge", { w: 0.09, h: 0.16, thick: 0.18, bind: [{ prop: "level", src: "cpu", from: 0, to: 1 }] }],
+    ["bars", "▮▮", "bars", { w: 0.22, h: 0.12, series: "cores" }],
+    ["tower", "▥", "building", { w: 0.05, h: 0.25, bind: [{ prop: "level", src: "ram", from: 0, to: 1 }] }],
+    ["wave", "∿", "wave", { w: 0.5, h: 0.1, fill: false, line: 3, freq: 3, bind: [{ prop: "amp", src: "net", from: 0.1, to: 1 }] }],
+    ["particles", "⁘", "particles", { w: 0.4, h: 0.4, dir: "down", count: 60, dot: 2.5 }]
+  ];
+  var uid = function () { return "s" + Math.random().toString(36).slice(2, 8); };
+  function add(type, extra) {
+    var t = TOOLS.filter(function (x) { return x[0] === type; })[0];
+    var sh = Object.assign({ id: uid(), type: type, name: t[2], x: 0.5, y: 0.62, color: "accent", alpha: 1, glow: 0.3, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } },
+                           JSON.parse(JSON.stringify(t[3])), extra || {});
+    snapshot(); design.shapes.push(sh); select(sh.id); changed();
+  }
+  $("#tools").innerHTML = TOOLS.map(function (t) { return '<button data-t="' + t[0] + '"><span>' + t[1] + "</span>" + t[2] + "</button>"; }).join("");
+  $("#tools").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b) add(b.dataset.t); });
+
+  // ---------------------------------------------------------------- templates: a world to start from
+  var TEMPLATES = {
+    blank: ["Blank", "an empty canvas", { sky: "none", shapes: [] }],
+    lanterns: ["Agent lanterns", "a lantern per AI agent, its colour is the agent's state", { sky: "none", shapes: [
+      { id: "l1", type: "line", name: "wire", x: 0.5, y: 0.66, w: 0.5, h: 0, fill: false, line: 2, color: "fg", alpha: 0.35, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } },
+      { id: "l2", type: "ellipse", name: "lantern", x: 0.3, y: 0.7, w: 0.026, h: 0.06, color: "accent", alpha: 0.95, glow: 1, anim: { kind: "bob", speed: 1 }, bind: [], repeat: { by: "agents", spread: true, from: 0.3, to: 0.7, stateColors: true }, click: "{name} · {state}" },
+      { id: "l3", type: "text", name: "count", x: 0.5, y: 0.8, w: 0.2, h: 0.04, text: "{working} working · {waiting} waiting", size: 0.022, color: "fg", alpha: 0.7, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } }] }],
+    cores: ["Core skyline", "a building per CPU core, its windows light with the load", { sky: "none", shapes: [
+      { id: "c1", type: "tower", name: "core", x: 0.32, y: 0.66, w: 0.022, h: 0.17, color: "accent", alpha: 1, glow: 0.2, anim: { kind: "none", speed: 1 }, bind: [{ prop: "level", src: "item", from: 0.05, to: 1 }, { prop: "heat", src: "item", from: 0, to: 1 }], color2: "crit", repeat: { by: "cores", spread: true, from: 0.3, to: 0.7 }, click: "{name}: {item}%" },
+      { id: "c2", type: "wave", name: "network", x: 0.5, y: 0.78, w: 0.45, h: 0.05, fill: false, line: 2, freq: 4, color: "accent2", alpha: 0.9, glow: 0.6, anim: { kind: "none", speed: 1.5 }, bind: [{ prop: "amp", src: "net", from: 0.1, to: 1 }], repeat: { by: "none" } }] }],
+    rain: ["Packet rain", "the network falls as rain, faster with more traffic", { sky: "accent", shapes: [
+      { id: "r1", type: "particles", name: "packets", x: 0.5, y: 0.45, w: 0.5, h: 0.6, dir: "down", count: 80, dot: 2.5, color: "accent", alpha: 0.85, glow: 0.4, anim: { kind: "none", speed: 1 }, bind: [{ prop: "count", src: "net", from: 20, to: 260 }, { prop: "speed", src: "net", from: 0.5, to: 3 }], repeat: { by: "none" } },
+      { id: "r2", type: "ring", name: "cpu gauge", x: 0.5, y: 0.55, w: 0.12, h: 0.21, thick: 0.14, color: "accent2", color2: "crit", alpha: 1, glow: 0.8, anim: { kind: "none", speed: 1 }, bind: [{ prop: "level", src: "cpu", from: 0, to: 1 }, { prop: "heat", src: "cpu", from: 0, to: 1 }], repeat: { by: "none" }, click: "CPU {cpu}% · RAM {ram}%" },
+      { id: "r3", type: "text", name: "time", x: 0.5, y: 0.55, w: 0.1, h: 0.05, text: "{cpu}%", size: 0.035, bold: true, color: "fg", alpha: 0.95, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } }] }],
+    garden: ["Night garden", "fireflies for your agents, flowers for your repos", { sky: "ok", shapes: [
+      { id: "g1", type: "particles", name: "fireflies", x: 0.5, y: 0.6, w: 0.5, h: 0.25, dir: "fireflies", count: 12, dot: 3, color: "warn", alpha: 1, glow: 1, anim: { kind: "none", speed: 1 }, bind: [{ prop: "count", src: "working", from: 3, to: 60 }], repeat: { by: "none" } },
+      { id: "g2", type: "star", name: "flower", x: 0.35, y: 0.82, w: 0.03, h: 0.053, points: 6, inner: 0.4, color: "accent2", alpha: 0.95, glow: 0.5, anim: { kind: "sway", speed: 0.6 }, bind: [{ prop: "w", src: "item", from: 0.015, to: 0.05 }, { prop: "h", src: "item", from: 0.027, to: 0.09 }], repeat: { by: "repos", spread: true, from: 0.35, to: 0.65, stateColors: true }, click: "{name} · {state}" },
+      { id: "g3", type: "rect", name: "ground", x: 0.5, y: 0.9, w: 0.5, h: 0.06, round: 1, color: "ok", alpha: 0.25, glow: 0, anim: { kind: "none", speed: 1 }, bind: [], repeat: { by: "none" } }] }]
+  };
+  $("#templates").innerHTML = Object.keys(TEMPLATES).map(function (k) { return '<button data-k="' + k + '"><b>' + TEMPLATES[k][0] + "</b>" + TEMPLATES[k][1] + "</button>"; }).join("");
+  $("#templates").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    snapshot(); var d = JSON.parse(JSON.stringify(TEMPLATES[b.dataset.k][2]));
+    design = { v: 1, sky: d.sky || "none", city: false, shapes: d.shapes.map(function (s) { s.id = uid(); return s; }) };
+    sel = null; $("#dlg").close(); changed(); syncScene();
+  });
+  $("#new").onclick = function () { $("#dlg").showModal(); };
+  $("#dlgClose").onclick = function () { $("#dlg").close(); };
+
+  // ---------------------------------------------------------------- undo, redo, changes
+  function snapshot() { hist.push(JSON.stringify(design)); if (hist.length > 100) hist.shift(); fut = []; }
+  function undo() { if (!hist.length) return; fut.push(JSON.stringify(design)); design = JSON.parse(hist.pop()); changed(); syncScene(); }
+  function redo() { if (!fut.length) return; hist.push(JSON.stringify(design)); design = JSON.parse(fut.pop()); changed(); syncScene(); }
+  $("#undo").onclick = undo; $("#redo").onclick = redo;
+  function changed() {
+    dirty = true; layers(); inspector();
+    $("#undo").disabled = !hist.length; $("#redo").disabled = !fut.length;
+    try { localStorage.setItem("pulse-editor:" + ($("#name").value || "_"), JSON.stringify(design)); } catch (e) {}
+  }
+  function syncScene() { $("#sky").value = design.sky || "none"; $("#city").value = design.city ? "1" : "0"; }
+  $("#sky").onchange = function () { snapshot(); design.sky = this.value; changed(); };
+  $("#city").onchange = function () { snapshot(); design.city = this.value === "1"; changed(); };
+  function cur() { return design.shapes.filter(function (s) { return s.id === sel; })[0] || null; }
+  function select(id) { sel = id; layers(); inspector(); }
+
+  // ---------------------------------------------------------------- layers
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function colHex(c) { var v = PD.hex(c && c.charAt(0) === "#" ? c : (theme[c] || PD.THEME[c])); return "rgb(" + v.join(",") + ")"; }
+  function layers() {
+    var ul = $("#layers"), list = design.shapes.slice().reverse();
+    ul.innerHTML = list.length ? list.map(function (s) {
+      return '<li data-id="' + s.id + '" class="' + (s.id === sel ? "sel" : "") + '"><span class="sw" style="background:' + colHex(s.color) + '"></span><span class="nm">' + esc(s.name || s.type) + "</span>" +
+        ((s.bind || []).length || (s.repeat || {}).by !== "none" ? '<span class="live" title="moves with your data">●</span>' : "") +
+        '<button data-a="up" title="forward">↑</button><button data-a="down" title="backward">↓</button><button data-a="eye" title="show / hide">' + (s.hidden ? "◌" : "◉") + "</button></li>";
+    }).join("") : '<li class="hint">nothing yet: add a shape, or New… for a template</li>';
+  }
+  $("#layers").addEventListener("click", function (e) {
+    var li = e.target.closest("li[data-id]"); if (!li) return;
+    var id = li.dataset.id, i = design.shapes.findIndex(function (s) { return s.id === id; }), a = e.target.dataset && e.target.dataset.a;
+    if (a === "up" && i < design.shapes.length - 1) { snapshot(); design.shapes.splice(i + 1, 0, design.shapes.splice(i, 1)[0]); changed(); return; }
+    if (a === "down" && i > 0) { snapshot(); design.shapes.splice(i - 1, 0, design.shapes.splice(i, 1)[0]); changed(); return; }
+    if (a === "eye") { snapshot(); design.shapes[i].hidden = !design.shapes[i].hidden; changed(); return; }
+    select(id);
+  });
+
+  // ---------------------------------------------------------------- the inspector: everything about the selected shape
+  var COLORS = [["accent", "accent"], ["accent2", "accent 2"], ["ok", "green (ok)"], ["warn", "amber (warn)"], ["crit", "red (crit)"], ["fg", "text"], ["dim", "dim"], ["bg", "background"]];
+  var ANIMS = [["none", "still"], ["pulse", "pulse"], ["bob", "float up and down"], ["sway", "sway"], ["spin", "spin"], ["blink", "blink"], ["breathe", "breathe"], ["drift", "drift across"]];
+  function opts(list, v) { return list.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === v ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join(""); }
+  function colorField(key, v, allowNone) {
+    var custom = v && v.charAt(0) === "#";
+    return '<select data-k="' + key + '" data-color="1">' + (allowNone ? '<option value="">—</option>' : "") + opts(COLORS, custom ? "" : v) +
+      '<option value="#"' + (custom ? " selected" : "") + ">custom…</option></select>" +
+      (custom ? '<input type="color" data-k="' + key + '" value="' + esc(v) + '">' : "");
+  }
+  function rng(key, v, min, max, step, label) {
+    return '<div class="row"><label>' + label + '</label><input type="range" data-k="' + key + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + v + '"><span class="v">' + (+v).toFixed(step < 1 ? 2 : 0) + "</span></div>";
+  }
+  function inspector() {
+    var box = $("#inspector"), s = cur();
+    if (!s) {
+      box.innerHTML = '<h3>inspector</h3><p class="empty">Select a shape on the stage or in the layers to change it.</p>' +
+        '<h3>how it works</h3><p class="hint">Every shape can <b>follow your data</b>: pick what moves (its height, its colour, how many…) and which data moves it (CPU, the hour, your agents, the rain…). ' +
+        '<b>Repeat</b> makes one copy per agent, repo or CPU core. <b>Click text</b> is what Pulse shows when you click it on the wallpaper; <span class="chip">{cpu}</span> <span class="chip">{name}</span> are filled in live.</p>';
+      return;
+    }
+    var srcOpts = Object.keys(SOURCES).map(function (k) { return [k, SOURCES[k].label]; });
+    var propOpts = Object.keys(PROPS).map(function (k) { return [k, PROPS[k]]; });
+    var h = "<h3>" + esc(s.type) + '</h3><div class="row"><label>name</label><input type="text" data-k="name" value="' + esc(s.name) + '"></div>';
+    if (s.type === "text") h += '<div class="row"><label>text</label><input type="text" data-k="text" value="' + esc(s.text) + '"></div>' + rng("size", s.size || 0.04, 0.01, 0.15, 0.002, "size") +
+      '<div class="row"><label>bold</label><input type="checkbox" data-k="bold"' + (s.bold ? " checked" : "") + "></div>";
+    h += "<h3>place</h3>" + rng("x", s.x, -0.1, 1.1, 0.001, "x") + rng("y", s.y, -0.1, 1.1, 0.001, "y") + rng("w", s.w, 0, 1, 0.001, "width") + rng("h", s.h, 0, 1, 0.001, "height") + rng("rot", s.rot || 0, -180, 180, 1, "rotate");
+    if (s.type === "rect") h += rng("round", s.round || 0, 0, 1, 0.01, "round");
+    if (s.type === "star") h += rng("points", s.points || 5, 3, 12, 1, "points") + rng("inner", s.inner || 0.45, 0.1, 0.95, 0.01, "inner");
+    if (s.type === "ring") h += rng("thick", s.thick || 0.18, 0.04, 0.6, 0.01, "thick") + rng("level", s.level == null ? 0.6 : s.level, 0, 1, 0.01, "level");
+    if (s.type === "tower") h += rng("level", s.level == null ? 0.6 : s.level, 0, 1, 0.01, "windows");
+    if (s.type === "bars") h += '<div class="row"><label>bars</label><select data-k="series">' + opts([["cores", "one per CPU core"], ["agents", "one per agent"], ["repos", "one per repo"], ["level", "one: the level"]], s.series || "cores") + "</select></div>";
+    if (s.type === "wave") h += rng("freq", s.freq || 3, 0.5, 12, 0.5, "waves") + rng("amp", s.amp == null ? 0.3 : s.amp, 0, 1, 0.01, "height");
+    if (s.type === "particles") h += '<div class="row"><label>go</label><select data-k="dir">' + opts([["down", "fall"], ["up", "rise"], ["right", "to the right"], ["left", "to the left"], ["fireflies", "float (fireflies)"]], s.dir || "down") + "</select></div>" +
+      rng("count", s.count || 40, 0, 400, 1, "how many") + rng("dot", s.dot || 2.5, 1, 10, 0.5, "dot size");
+    h += "<h3>look</h3>" + '<div class="row"><label>colour</label>' + colorField("color", s.color || "accent") + "</div>" +
+      '<div class="row"><label>2nd</label>' + colorField("color2", s.color2 || "", true) + '<span class="hint">for “colour → second colour”</span></div>' +
+      rng("alpha", s.alpha == null ? 1 : s.alpha, 0, 1, 0.01, "opacity") + rng("glow", s.glow || 0, 0, 2, 0.05, "glow");
+    if (["rect", "ellipse", "star"].indexOf(s.type) >= 0) h += '<div class="row"><label>style</label><select data-k="fill">' + opts([["1", "filled"], ["0", "outline"]], s.fill === false ? "0" : "1") + "</select></div>";
+    if (s.fill === false || s.type === "line" || s.type === "wave") h += rng("line", s.line || 2, 1, 20, 0.5, "line");
+    h += "<h3>motion</h3>" + '<div class="row"><label>move</label><select data-k="anim.kind">' + opts(ANIMS, (s.anim || {}).kind || "none") + "</select></div>" + rng("anim.speed", (s.anim || {}).speed || 1, 0.1, 4, 0.1, "speed") +
+      '<p class="hint">With motion = reduced Pulse keeps every shape still, by itself.</p>';
+    h += '<h3>follows your data</h3><div id="binds">' + (s.bind || []).map(function (b, i) {
+      return '<div class="bind" data-i="' + i + '"><div class="row"><select data-b="prop">' + opts(propOpts, b.prop) + '</select><button data-b="del" title="remove">×</button></div>' +
+        '<div class="row"><label>with</label><select data-b="src">' + opts(srcOpts, b.src) + "</select></div>" +
+        '<div class="row"><label>from</label><input type="number" step="any" data-b="from" value="' + b.from + '"><label>to</label><input type="number" step="any" data-b="to" value="' + b.to + '"></div></div>';
+    }).join("") + '</div><button id="addBind">+ follow data</button>' +
+      '<p class="hint">The data goes from its low to its high (CPU 0 → 100%, the hour 0 → 24): the property goes from “from” to “to”.</p>';
+    var r = s.repeat || { by: "none" };
+    h += '<h3>repeat</h3><div class="row"><label>one per</label><select data-k="repeat.by">' + opts([["none", "— just one"], ["agents", "AI agent"], ["repos", "Git repo"], ["cores", "CPU core"], ["count", "a fixed number"]], r.by) + "</select></div>";
+    if (r.by && r.by !== "none") {
+      if (r.by === "count") h += rng("repeat.n", r.n || 3, 1, 64, 1, "how many");
+      h += '<div class="row"><label>layout</label><select data-k="repeat.spread">' + opts([["1", "spread across"], ["0", "a step each"]], r.spread ? "1" : "0") + "</select></div>";
+      h += r.spread ? rng("repeat.from", r.from == null ? 0.3 : r.from, 0, 1, 0.01, "from x") + rng("repeat.to", r.to == null ? 0.7 : r.to, 0, 1, 0.01, "to x")
+                    : rng("repeat.dx", r.dx == null ? 0.05 : r.dx, -0.3, 0.3, 0.001, "step x") + rng("repeat.dy", r.dy || 0, -0.3, 0.3, 0.001, "step y");
+      if (r.by !== "count") h += '<div class="row"><label>colours</label><select data-k="repeat.stateColors">' + opts([["1", "by state (working, waiting, failed…)"], ["0", "the shape's colour"]], r.stateColors ? "1" : "0") + "</select></div>";
+      h += '<p class="hint">“each copy\'s own value” in “follows your data” is that agent, repo or core.</p>';
+    }
+    h += '<h3>click</h3><div class="row"><input type="text" data-k="click" placeholder="e.g. {name} · {state}" value="' + esc(s.click || "") + '"></div>' +
+      '<p class="hint"><span class="chip">{cpu}</span> <span class="chip">{ram}</span> <span class="chip">{net}</span> <span class="chip">{time}</span> <span class="chip">{outside}</span> <span class="chip">{agents}</span> <span class="chip">{working}</span> <span class="chip">{commits}</span> <span class="chip">{name}</span> <span class="chip">{state}</span> <span class="chip">{item}</span></p>' +
+      '<div class="row"><button id="dup">Duplicate</button><button id="del">Delete</button></div>';
+    box.innerHTML = h;
+  }
+  function setPath(o, k, v) { var p = k.split("."); for (var i = 0; i < p.length - 1; i++) o = o[p[i]] || (o[p[i]] = {}); o[p[p.length - 1]] = v; }
+  var editSnap = false;
+  $("#inspector").addEventListener("input", function (e) {
+    var s = cur(), el = e.target; if (!s) return;
+    if (!editSnap) { snapshot(); editSnap = true; }
+    if (el.dataset.b) {
+      var bi = +el.closest(".bind").dataset.i, b = s.bind[bi];
+      b[el.dataset.b] = el.type === "number" ? +el.value : el.value;
+      if (el.dataset.b === "prop" || el.dataset.b === "src") { var dflt = defaults(b.prop, s); b.from = dflt[0]; b.to = dflt[1]; inspector(); }
+      changed2(); return;
+    }
+    var k = el.dataset.k; if (!k) return;
+    var v = el.type === "checkbox" ? el.checked : el.type === "range" ? +el.value : el.value;
+    if (el.dataset.color && v === "#") { v = "#ff8800"; setPath(s, k, v); inspector(); changed2(); return; }
+    if (k === "fill") v = v === "1";
+    if (k === "repeat.spread" || k === "repeat.stateColors") v = v === "1";
+    setPath(s, k, v);
+    if (el.type === "range") { var sp = el.parentNode.querySelector(".v"); if (sp) sp.textContent = (+v).toFixed(+el.step < 1 ? 2 : 0); }
+    if (el.tagName === "SELECT") inspector();
+    changed2();
+  });
+  $("#inspector").addEventListener("change", function () { editSnap = false; });
+  function changed2() { dirty = true; layers(); try { localStorage.setItem("pulse-editor:" + ($("#name").value || "_"), JSON.stringify(design)); } catch (e) {} $("#undo").disabled = !hist.length; }
+  function defaults(prop, s) {   // a sensible range for what moves
+    var r3 = function (v) { return Math.round(v * 1000) / 1000; };
+    return ({ x: [s.x - 0.1, s.x + 0.1], y: [s.y + 0.05, s.y - 0.05], w: [s.w * 0.5, s.w * 1.5], h: [s.h * 0.3, s.h * 1.5], alpha: [0.2, 1], rot: [0, 180],
+              glow: [0, 1.5], heat: [0, 1], speed: [0.3, 3], level: [0, 1], count: [5, 200], amp: [0.1, 1] }[prop] || [0, 1]).map(r3);
+  }
+  $("#inspector").addEventListener("click", function (e) {
+    var s = cur(); if (!s) return;
+    if (e.target.id === "addBind") { snapshot(); s.bind = s.bind || []; var p = s.type === "ring" || s.type === "tower" ? "level" : "h"; var d = defaults(p, s); s.bind.push({ prop: p, src: "cpu", from: d[0], to: d[1] }); changed(); }
+    else if (e.target.dataset.b === "del") { snapshot(); s.bind.splice(+e.target.closest(".bind").dataset.i, 1); changed(); }
+    else if (e.target.id === "dup") duplicate();
+    else if (e.target.id === "del") remove();
+  });
+  function duplicate() { var s = cur(); if (!s) return; snapshot(); var c = JSON.parse(JSON.stringify(s)); c.id = uid(); c.x += 0.02; c.y += 0.02; c.name = (s.name || s.type) + " copy"; design.shapes.push(c); select(c.id); changed(); }
+  function remove() { var s = cur(); if (!s) return; snapshot(); design.shapes = design.shapes.filter(function (x) { return x !== s; }); sel = null; changed(); }
+
+  // ---------------------------------------------------------------- the data the preview runs on
+  var agentNames = ["claude", "codex", "grok", "opencode", "aider", "hermes", "gemini", "qwen"], agentStates = ["working", "waiting", "working", "done", "failed", "working", "idle", "working"];
+  function demoState() {
+    var v = function (id) { return +$("#d-" + id).value; }, now = Date.now() / 1000, priv = $("#d-priv").value === "1", hr = v("hour"), cpu = v("cpu");
+    var cores = []; for (var i = 0; i < 12; i++) cores.push(Math.max(0, Math.min(100, cpu + Math.sin(now * 0.7 + i * 1.9) * 18)));
+    var ag = []; for (i = 0; i < v("agents"); i++) ag.push({ name: priv ? "" : agentNames[i], state: agentStates[i], since: now - 300 * (i + 1), text: "" });
+    return { t: now, demo: true, privacy: priv,
+      time: { hour: Math.floor(hr), minute: Math.floor((hr % 1) * 60), second: Math.floor(now % 60), weekday: 1, day: 9, month: 11, year: 2026 },
+      sys: { cpu: cpu, cores: cores, ram: v("ram"), gpu: 20, temp: 40 + cpu / 2, disk: 61, rx: v("net") * 0.8e6, tx: v("net") * 0.2e6, load: ["1.2"] },
+      agents: ag,
+      git: [{ name: priv ? "" : "omarchy-pulse-theme", week: 23, ci: "ok" }, { name: priv ? "" : "dotfiles", week: 6, ci: "run" }, { name: priv ? "" : "homelab", week: 2, ci: "fail" }],
+      weather: { code: v("rain") > 0 ? 61 : 0, temp: 9, day: hr >= 7 && hr < 17 ? 1 : 0, wind: 12, cloud: v("rain") > 0 ? 90 : 10, rain: v("rain") },
+      focus: null, away: false, meeting: false, theme: theme,
+      ui: { quality: "full", motion: $("#d-motion").value, fps: 30 }, events: [], layout: { horizon: 0.745 } };
+  }
+  $("#live").onchange = function () { if (!this.checked) live = null; else pull(); };
+  function pull() { if (!$("#live").checked) return; api("/api/scene-state").then(function (s) { live = s; theme = s.theme && s.theme.accent ? s.theme : theme; }).catch(function () {}); setTimeout(pull, 1000); }
+
+  // ---------------------------------------------------------------- the stage: Pulse's sky, the scene, your selection
+  var skyC = $("#sky-c"), scC = $("#scene-c"), ov = $("#overlay"), g = scC.getContext("2d"), o = ov.getContext("2d"), W = 0, H = 0;
+  function resize() {
+    var r = $("#stage").getBoundingClientRect(), d = Math.min(2, devicePixelRatio || 1);
+    W = Math.round(r.width * d); H = Math.round(r.height * d);
+    [skyC, scC, ov].forEach(function (c) { c.width = W; c.height = H; });
+    sky();
+  }
+  function sky() {   // a sky like Pulse's, the horizon and the zones the panels cover
+    var c = skyC.getContext("2d"), bg = PD.hex(theme.bg), a2 = PD.hex(theme.accent2), hz = H * 0.745;
+    var m = function (a, b, k) { return "rgb(" + [0, 1, 2].map(function (i) { return Math.round(a[i] + (b[i] - a[i]) * k); }).join(",") + ")"; };
+    var s = c.createLinearGradient(0, 0, 0, hz); s.addColorStop(0, m(bg, [0, 0, 0], 0.35)); s.addColorStop(1, m(bg, a2, 0.28));
+    c.fillStyle = s; c.fillRect(0, 0, W, hz);
+    var f = c.createLinearGradient(0, hz, 0, H); f.addColorStop(0, m(bg, a2, 0.2)); f.addColorStop(1, m(bg, [0, 0, 0], 0.5));
+    c.fillStyle = f; c.fillRect(0, hz, W, H - hz);
+  }
+  function guides() {
+    var hz = H * 0.745;
+    o.save(); o.setLineDash([6, 6]); o.strokeStyle = "rgba(255,255,255,.18)"; o.lineWidth = 1;
+    o.fillStyle = "rgba(255,255,255,.035)"; o.fillRect(0, 0, W * 0.22, H); o.fillRect(W * 0.78, 0, W * 0.22, H); o.fillRect(W * 0.3, 0, W * 0.4, H * 0.3);
+    o.strokeRect(0.5, 0.5, W * 0.22, H - 1); o.strokeRect(W * 0.78, 0.5, W * 0.22 - 1, H - 1); o.strokeRect(W * 0.3, 0.5, W * 0.4, H * 0.3);
+    o.fillStyle = "rgba(255,255,255,.28)"; o.font = Math.round(H * 0.018) + "px ui-monospace, monospace"; o.textAlign = "center";
+    o.fillText("panels", W * 0.11, H * 0.04); o.fillText("panels", W * 0.89, H * 0.04); o.fillText("clock", W * 0.5, H * 0.04);
+    o.setLineDash([]); o.strokeStyle = "rgba(122,162,247,.45)"; o.beginPath(); o.moveTo(0, hz); o.lineTo(W, hz); o.stroke();
+    o.fillStyle = "rgba(122,162,247,.6)"; o.textAlign = "left"; o.fillText("horizon", 8, hz - 6);
+    o.restore();
+  }
+  function bounds(s) { return { x: s.x * W - s.w * W / 2, y: s.y * H - s.h * H / 2, w: s.w * W, h: s.h * H }; }
+  function overlay() {
+    o.clearRect(0, 0, W, H); guides();
+    var s = cur(); if (!s) return;
+    var b = bounds(s), pad = 4;
+    o.save(); o.strokeStyle = "#7aa2f7"; o.lineWidth = 1.5; o.setLineDash([5, 4]);
+    o.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2); o.setLineDash([]);
+    handles(b).forEach(function (h) { o.fillStyle = "#0d0f17"; o.fillRect(h[0] - 5, h[1] - 5, 10, 10); o.strokeRect(h[0] - 5, h[1] - 5, 10, 10); });
+    if ((s.repeat || {}).by && s.repeat.by !== "none") { o.fillStyle = "#7aa2f7"; o.font = "12px ui-monospace, monospace"; o.fillText("× one per " + ({ agents: "agent", repos: "repo", cores: "core", count: "copy" }[s.repeat.by]), b.x, b.y - 10); }
+    o.restore();
+  }
+  function handles(b) { var p = 4; return [[b.x - p, b.y - p, "nw"], [b.x + b.w + p, b.y - p, "ne"], [b.x - p, b.y + b.h + p, "sw"], [b.x + b.w + p, b.y + b.h + p, "se"]]; }
+  var costs = [], lastPerf = 0;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    var st = live || demoState(), a = performance.now();
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+    try { PD.draw(g, (now - t0) / 1000, st, { w: W, h: H, horizon: H * 0.745 }, design, mem); $("#status").classList.remove("err"); }
+    catch (e) { $("#status").textContent = "error: " + e.message; $("#status").classList.add("err"); }
+    costs.push(performance.now() - a); if (costs.length > 60) costs.shift();
+    if (now - lastPerf > 1000) { lastPerf = now; var avg = costs.reduce(function (x, y) { return x + y; }, 0) / costs.length;
+      $("#perf").innerHTML = "draw " + avg.toFixed(1) + " ms · " + W + "×" + H + " · " + (avg <= 8 ? '<span style="color:var(--ok)">✓ light enough</span>' : avg <= 16 ? '<span style="color:var(--warn)">! a bit heavy</span>' : '<span style="color:var(--crit)">✗ too heavy for a wallpaper</span>'); }
+    overlay();
+  }
+
+  // ---------------------------------------------------------------- mouse: select, move, resize; a click shows the click text
+  var drag = null;
+  function pos(e) { var r = ov.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; }
+  function hit(p) {
+    for (var i = design.shapes.length - 1; i >= 0; i--) {
+      var s = design.shapes[i]; if (s.hidden) continue;
+      var b = bounds(s), m = 6;
+      if (p[0] >= b.x - m && p[0] <= b.x + b.w + m && p[1] >= b.y - m && p[1] <= b.y + b.h + m) return s;
+    }
+    return null;
+  }
+  ov.addEventListener("pointerdown", function (e) {
+    var p = pos(e), s = cur();
+    if (s) { var hd = handles(bounds(s)).filter(function (h) { return Math.abs(h[0] - p[0]) < 9 && Math.abs(h[1] - p[1]) < 9; })[0];
+      if (hd) { snapshot(); drag = { s: s, mode: hd[2], p: p, o: { x: s.x, y: s.y, w: s.w, h: s.h } }; ov.setPointerCapture(e.pointerId); return; } }
+    var t = hit(p);
+    var said = PD.click(mem, p[0], p[1]); $("#clicked").textContent = said ? "click → " + said : "";
+    if (!t) { select(null); return; }
+    if (t.id !== sel) select(t.id);
+    snapshot(); drag = { s: t, mode: "move", p: p, o: { x: t.x, y: t.y, w: t.w, h: t.h }, moved: false };
+    ov.setPointerCapture(e.pointerId);
+  });
+  ov.addEventListener("pointermove", function (e) {
+    var p = pos(e);
+    if (!drag) { var s = cur(), hd = s && handles(bounds(s)).filter(function (h) { return Math.abs(h[0] - p[0]) < 9 && Math.abs(h[1] - p[1]) < 9; })[0];
+      ov.style.cursor = hd ? (hd[2] === "nw" || hd[2] === "se" ? "nwse-resize" : "nesw-resize") : hit(p) ? "move" : "default"; return; }
+    var dx = (p[0] - drag.p[0]) / W, dy = (p[1] - drag.p[1]) / H, s2 = drag.s, O = drag.o;
+    drag.moved = true;
+    if (drag.mode === "move") {
+      s2.x = +(O.x + dx).toFixed(4); s2.y = +(O.y + dy).toFixed(4);
+      var hzK = 0.745, bot = s2.y + s2.h / 2;   // snap the bottom onto the horizon
+      if (Math.abs(bot - hzK) < 0.008 && !e.altKey) s2.y = +(hzK - s2.h / 2).toFixed(4);
+    } else {
+      var sx = drag.mode.indexOf("e") >= 0 ? 1 : -1, sy = drag.mode.indexOf("s") >= 0 ? 1 : -1;
+      var nw = Math.max(0.004, O.w + dx * sx), nh = Math.max(0, O.h + dy * sy);
+      if (e.shiftKey && O.w && O.h) { var k = Math.max(nw / O.w, nh / O.h); nw = O.w * k; nh = O.h * k; }
+      s2.w = +nw.toFixed(4); s2.h = +nh.toFixed(4);
+      s2.x = +(O.x + (nw - O.w) / 2 * sx).toFixed(4); s2.y = +(O.y + (nh - O.h) / 2 * sy).toFixed(4);
+    }
+  });
+  ov.addEventListener("pointerup", function () { if (drag) { if (!drag.moved) hist.pop(); drag = null; changed(); } });
+
+  // ---------------------------------------------------------------- keys
+  addEventListener("keydown", function (e) {
+    var inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+    if (inField) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") { e.preventDefault(); duplicate(); return; }
+    var s = cur(); if (!s) return;
+    if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); remove(); return; }
+    var st = e.shiftKey ? 0.02 : 0.002, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];
+    if (mv) { e.preventDefault(); snapshot(); s.x = +(s.x + mv[0]).toFixed(4); s.y = +(s.y + mv[1]).toFixed(4); changed(); }
+    if (e.key === "Escape") select(null);
+  });
+
+  // ---------------------------------------------------------------- save, try, export, lab
+  function name() { var n = $("#name").value.trim().toLowerCase(); if (!NAME_RE.test(n)) { status("a name first: a-z, 0-9 and -, like my-world", true); $("#name").focus(); return null; } return n; }
+  function status(t, err) { var s = $("#status"); s.textContent = t; s.classList.toggle("err", !!err); }
+  function save() {
+    var n = name(); if (!n) return Promise.reject();
+    return api("/api/scene-design?name=" + encodeURIComponent(n), { method: "POST", body: JSON.stringify(design) }).then(function (j) {
+      dirty = false; history.replaceState(null, "", "?token=" + encodeURIComponent(TOKEN) + "&scene=" + encodeURIComponent(n));
+      var bad = (j.checks || []).filter(function (c) { return c[0] !== "ok"; });
+      status("saved " + j.path + (bad.length ? " · " + bad.map(function (c) { return c[1]; }).join("; ") : " · ✓ ready to share"));
+    }).catch(function (e) { status("not saved: " + e.message, true); throw e; });
+  }
+  $("#save").onclick = function () { save().catch(function () {}); };
+  $("#try").onclick = function () {
+    save().then(function () { return api("/api/scene-try?name=" + encodeURIComponent(name()), { method: "POST" }); })
+      .then(function (j) { status(j.on ? "on your wallpaper now · scene = \"" + name() + "\" in [pulse] keeps it" : "back to your own scene"); $("#try").textContent = j.on ? "Back to my scene" : "Try on wallpaper"; })
+      .catch(function () {});
+  };
+  $("#export").onclick = function () {
+    var n = name(); if (!n) return;
+    save().then(function () { return api("/api/scene-src?name=" + encodeURIComponent(n)); }).then(function (j) {
+      var a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([j.src], { type: "text/javascript" })); a.download = n + ".js"; a.click();
+    }).catch(function () {});
+  };
+  $("#lab").onclick = function () { var n = name(); if (n) save().then(function () { open("lab.html?token=" + encodeURIComponent(TOKEN) + "&scene=" + encodeURIComponent(n), "_blank"); }).catch(function () {}); };
+  addEventListener("beforeunload", function (e) { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+  // ---------------------------------------------------------------- start: open the scene in the address, or a template
+  addEventListener("resize", resize); resize();
+  api("/api/scene-state").then(function (s) { if (s.theme && s.theme.accent) { theme = s.theme; sky(); } }).catch(function () {});
+  var start = Q.get("scene") || "";
+  $("#name").value = start;
+  function fresh() {
+    var d = null; try { d = JSON.parse(localStorage.getItem("pulse-editor:" + (start || "_")) || "null"); } catch (e) {}
+    if (d && d.shapes) { design = d; status("your unsaved draft is back"); } else $("#dlg").showModal();
+    syncScene(); changed(); dirty = !!(d && d.shapes);
+  }
+  if (start) api("/api/scene-design?name=" + encodeURIComponent(start)).then(function (j) {
+    if (j.design) { design = j.design; syncScene(); changed(); dirty = false; status("opened " + j.path); }
+    else if (j.error === "handwritten") { status(start + " is written by hand: open it in the lab; the editor makes a new one", true); $("#name").value = ""; start = ""; fresh(); }
+    else fresh();
+  }).catch(function () { status("cannot reach Pulse: open this from omarchy-pulse scene editor", true); fresh(); });
+  else fresh();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
