@@ -30,6 +30,11 @@
       resize(); inited = true;
       post({ pulseScene: "ready", name: name, city: !!def.city });
     },
+    // 1.7: ask Pulse for one of its own effects (fireworks, banner, lightning, shooting, tip, launch, flare, chime):
+    // Pulse plays it over the whole wallpaper. A few a minute at most; anything else is ignored.
+    fx: function (kind, text) { post({ pulseScene: "fx", kind: String(kind || ""), text: String(text == null ? "" : text).slice(0, 60) }); },
+    // 1.7: a line of text over the city, like a click's answer
+    say: function (text) { post({ pulseScene: "show", text: String(text == null ? "" : text).slice(0, 120) }); },
     // little helpers every scene needs
     rgba: function (c, a) { c = c || [255, 255, 255]; return "rgba(" + (c[0] | 0) + "," + (c[1] | 0) + "," + (c[2] | 0) + "," + (a == null ? 1 : a) + ")"; },
     mix: function (a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; },

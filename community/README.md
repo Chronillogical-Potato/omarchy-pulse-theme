@@ -14,7 +14,8 @@ Drop-in scripts that turn any service into a Pulse panel. Each folder is one sou
 | [unifi](unifi/) | UniFi WAN rate (stat) and the busiest clients (private table) | `python3`, a UniFi OS API key |
 | [homeassistant](homeassistant/) | Home Assistant entities with the age of their last report (stale sensors turn amber) | `python3`, a long-lived token |
 
-Scenes (whole worlds, not panels) are in [scenes/](scenes/): see [docs/SCENES.md](../docs/SCENES.md).
+Scenes (whole worlds, not panels) are in [scenes/](scenes/), the **Community gallery** of the scene editor (1.7): see
+[docs/PACKAGES.md](../docs/PACKAGES.md) to install one or share yours.
 
 ## Install (any source)
 

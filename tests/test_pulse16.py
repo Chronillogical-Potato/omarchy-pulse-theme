@@ -234,7 +234,7 @@ class NewsRuleTests(unittest.TestCase):
 
 class StaticTests(unittest.TestCase):
     def test_version_and_files(self):
-        self.assertEqual(pulse.VERSION, "1.6.0")
+        self.assertGreaterEqual(tuple(int(x) for x in pulse.VERSION.split(".")), (1, 6, 0))
         for f in ("editor.html", "scene-design.js"):
             self.assertTrue((WEB / f).exists())
         self.assertTrue((path.parent / "agents/opencode-pulse.js").exists())

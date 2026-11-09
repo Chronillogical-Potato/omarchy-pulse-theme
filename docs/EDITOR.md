@@ -9,6 +9,11 @@ What the editor makes is a normal community scene: it runs in the same sandbox a
 you can share it like any other, and you can always open it again in the editor to change it. If you would rather
 write code, see [SCENES.md](SCENES.md); this page is about the editor.
 
+**New in 1.7, "Creator"**: your own **pictures** and **backgrounds** (section 9), **animations** made of keyframes
+(10), **actions**, "when this happens, do that", with Pulse's own effects (11), shapes that follow **your own panels**
+and the sky (6), and **.pulse files** to share a scene and to open other people's, with the **Community** gallery
+(12, 13, 16).
+
 - [1. Open it](#1-open-it)
 - [2. Your first scene in two minutes](#2-your-first-scene-in-two-minutes)
 - [3. The editor, part by part](#3-the-editor-part-by-part)
@@ -17,11 +22,15 @@ write code, see [SCENES.md](SCENES.md); this page is about the editor.
 - [6. Follow your data](#6-follow-your-data)
 - [7. Repeat: one per agent, repo or core](#7-repeat-one-per-agent-repo-or-core)
 - [8. Clicks](#8-clicks)
-- [9. Save, try, export](#9-save-try-export)
-- [10. Recipes](#10-recipes)
-- [11. Good scenes: tips](#11-good-scenes-tips)
-- [12. Share your scene](#12-share-your-scene)
-- [13. Questions and problems](#13-questions-and-problems)
+- [9. Pictures and backgrounds](#9-pictures-and-backgrounds)
+- [10. Animations](#10-animations)
+- [11. Actions: when this happens, do that](#11-actions-when-this-happens-do-that)
+- [12. Save, try, export](#12-save-try-export)
+- [13. Import, and the Community](#13-import-and-the-community)
+- [14. Recipes](#14-recipes)
+- [15. Good scenes: tips](#15-good-scenes-tips)
+- [16. Share your scene](#16-share-your-scene)
+- [17. Questions and problems](#17-questions-and-problems)
 
 ---
 
@@ -53,15 +62,17 @@ in your browser; it needs a mouse, and is made for a screen at least 1280 pixels
 ## 3. The editor, part by part
 
 ```
-┌ name · New… · ↶ ↷ ─────────────────────────────── status · Lab · Export .js · Try on wallpaper · Save ┐
+┌ name · New… · ↶ ↷ ──── status · Lab · Import… · Community · .js · Export .pulse · Try on wallpaper · Save ┐
 │ ADD          │                                                         │ INSPECTOR                   │
 │ box circle   │                  the stage                              │ the selected shape:         │
 │ line star    │   (Pulse's sky, the horizon line, the dashed zones      │ place · look · motion ·     │
 │ text gauge   │    the panels and the clock cover)                      │ follows your data · repeat  │
 │ bars building│                                                         │ · click                     │
-│ wave particles                                                         │                             │
+│ wave particles · picture                                               │ · animation                 │
 │ LAYERS       │ demo data: my live data · CPU · RAM · network · hour ·  │                             │
-│ SCENE        │ agents · rain · motion · privacy                        │                             │
+│ SCENE        │ agents · rain · planes · ISS · your panels · motion ·   │                             │
+│ PICTURES     │ privacy                                                 │                             │
+│ ACTIONS      │                                                         │                             │
 └──────────────┴─────────────────────────────────────────────────────────┴─────────────────────────────┘
 ```
 
@@ -76,9 +87,13 @@ in your browser; it needs a mouse, and is made for a screen at least 1280 pixels
 - **Layers**: every shape, the front one at the top. ↑ and ↓ bring a shape forward or back, ◉ hides it (◌ shows it
   again). A green dot means the shape moves with your data.
 - **Scene**: *Pulse's real sky* (your scene draws only what you add; the real sky, the sun, the moon, the weather and
-  the planes show behind it) or *its own* sky in one of the theme's colours; *Pulse's far city behind* or not.
-- **Demo data**: sliders for CPU, RAM, network, the hour, how many agents, rain; *motion* full or reduced; *privacy*
-  on or off. Tick **my live data** to see your scene with your real data instead.
+  the planes show behind it) or *its own* sky in one of the theme's colours; *Pulse's far city behind* or not; a
+  **picture** as the background, and **colours**: the Omarchy theme's, or a palette of its own (section 9).
+- **Pictures**: the pictures of this scene (section 9). **Actions**: what happens when (section 11).
+- **Demo data**: sliders for CPU, RAM, network, the hour, how many agents, rain, planes overhead, the ISS, **your
+  panels** (from 0 to 100% of each panel's range); *motion* full or reduced; *privacy* on or off. Tick **my live
+  data** to see your scene with your real data instead. Actions fire in the preview too: the effect they ask for is
+  shown in a box over the stage.
 - **Under the stage, right**: how long a frame takes to draw. "✓ light enough" is what you want; a wallpaper runs all
   day next to your work.
 
@@ -102,6 +117,7 @@ with the same name. Leaving the page with changes not saved asks you first.
 | **building** | a tower whose windows light up with a level | windows (the level) |
 | **wave** | a line that waves | waves (how many), height |
 | **particles** | dots that fall, rise, fly across or float like fireflies | go (direction), how many, dot size |
+| **picture** (1.7) | one of your pictures (section 9) | which picture, its own colours or painted in the shape's colour, mirror |
 
 Every shape has **place**: *x* and *y* (its centre, from 0 to 1 across and down the screen), *width*, *height*
 (fractions of the screen) and *rotate* (degrees). Using fractions, the same scene fits a laptop and a 4K monitor.
@@ -147,6 +163,20 @@ This is what makes a scene alive. Select a shape, press **+ follow data**, and s
 | CI failing (repos) | 0 → 3 |
 | focus session, you are away | 0 or 1 |
 | each copy's own value (section 7) | 0 → 1 |
+| minutes, day of the week (0 Monday) | 0 → 60, 0 → 6 |
+| the Sun's height ° (below 0: night), the Moon lit % | −30 → 70, 0 → 100 |
+| planes overhead, Starlink satellites up | 0 → 10, 0 → 20 |
+| the ISS's height ° (0: not up), aurora Kp | 0 → 90, 0 → 9 |
+| minutes to the next launch | 0 → 60 |
+| music playing, in a meeting | 0 or 1 |
+| **your panel: NAME** (1.7) | its own range (below) |
+
+**Your own panels** (1.7): every panel with a number (a `[[source]]` that prints one, `omarchy-pulse push`, Home
+Assistant, the energy of your home...) is in the list as *your panel: NAME*. Its range is the one you set under it
+(**its range**: 0 → 5 for kW, 0 → 2000 for W), or the panel's own when it is a gauge with a min and a max, or 0 → 100.
+That is how a tower grows with your homelab's power draw, a lake fills with your disk, a flag rises with your
+download. Only numbers reach the scene (and, for repeating, the names and states of a list's rows: section 7), never
+the panel's notes or text, and a panel you marked `private = true` is never there.
 
 - **from** and **to**: what the property is when the data is at its low and at its high. CPU 0 → 100 % with height
   from 0.05 to 0.3: a shape from short to tall. Put a bigger "from" than "to" to go the other way (the opacity of a
@@ -163,6 +193,12 @@ temperature. Remove one with **×**. A dot in *Layers* tells you which shapes fo
   agent is there;
 - **Git repo**: a copy for each repository of your Git city;
 - **CPU core**: a copy for each core;
+- **plane** (1.7): a copy for each plane overhead (its value is its height in the sky);
+- **row of your panel** (1.7): a copy for each row of one of your panels with a list, a status or a table: a tower per
+  Proxmox VM, a fish per Docker container, a lamp per Home Assistant light. *By state* colours each copy green, amber or
+  red with its row (a table row that says "up..." is green, "exited..." red); its value is the row's number if it has
+  one, else its state. Pulse's own panels (system, notifications, the car...) and private panels are not in the list;
+  names are empty in privacy mode;
 - **a fixed number**: as many copies as you say (a row of street lamps).
 
 Then the **layout**: *spread across* (from x to x: the copies share the space evenly, however many they are) or *a
@@ -189,24 +225,111 @@ it, these are filled in live:
 | `{agents}` `{working}` `{waiting}` | your agents |
 | `{commits}` | commits this week |
 | `{name}` `{state}` `{item}` | for a repeated shape: that agent's or repo's name, its state, its value in % |
+| `{panel:NAME}` (1.7) | the number of your panel NAME with its unit (`2.3kW`) |
+| `{planes}` `{kp}` `{moon}` (1.7) | planes overhead, the aurora Kp, the Moon lit % |
 
 `{name} · {state}` on a lantern per agent says "claude · omarchy-pulse · working". Names are empty while you share the
 screen or privacy is on, so write clicks that still make sense without them.
 
-## 9. Save, try, export
+## 9. Pictures and backgrounds
+
+**+ import pictures** in *Pictures* (or drop pictures on the page): PNG, JPEG, WebP or SVG. A drawing of your own, a
+photo of your server rack, a whole background. The editor redraws photos at 1920 pixels at most, as WebP, so they stay
+small and lose their metadata (GPS, camera); SVGs are kept as they are, if they have no scripts or links in them. A
+scene can carry 40 pictures, 3 MB together: the status tells you how much you used.
+
+Each picture has three buttons: **+** puts it on the stage as a **picture** shape, **▭** makes it the background,
+**×** removes it (and the shapes that use it). The **picture** tool in *Add* does the same with the last picture, or
+asks you for one.
+
+A **picture shape** is like any other shape: place, opacity, glow, motion, follow your data, repeat, click, animation.
+*Tint → painted in the colour below* fills its shape with the shape's colour: a white drawing becomes accent, amber or
+red with the theme (or with *colour → second colour*, with your data). **Mirror** flips it.
+
+**Background** (in *Scene*): the picture behind the whole scene, *fill the screen* (cut to fit) or *whole picture*, and
+**dim**, to keep the panels readable; its **opacity**, and *top ↕ bottom*: which part of a picture cut to fit
+shows. Pulse's real sky, and what Pulse draws in it (rain, planes, fireworks, the rockets of your actions), is behind the
+background: give it an opacity under 1, or use a picture with a transparent sky, to let them through.
+
+**Colours → its own palette**: eight colours of the scene's own (the background, the text, accent, accent 2, ok, warn,
+crit, dim) instead of the Omarchy theme's. Shapes keep using *accent*, *warn*...: they take the palette's colours. Use
+it when your pictures need their colours; keep the theme's when you can, so the scene follows every theme.
+
+## 10. Animations
+
+Motion (section 5) is a loop that never stops. An **animation** is yours: a few moments (**frames**) that say where the
+shape is, how big and how visible, and Pulse goes smoothly from one to the next.
+
+- **play**: *all the time* (a loop), or *when an action says so* (section 11: the tower shakes when CI fails), *once*
+  or *then keep going*;
+- **seconds**: how long it lasts; **ease**: *smooth* (slow at the ends) or *steady*;
+- **frames**: *at* goes from 0 (the start) to 1 (the end); **→** and **↓** move the shape by a share of the screen
+  (0.1 = a tenth), **size** (1 = as drawn), **opac.** (0 to 1), **°** turns it. Leave a box empty for "as drawn";
+  **+ frame** adds one, **×** removes it;
+- **presets**: *jump*, *fly* (across the screen), *fade*, *grow*, *shake*, *spin*: a start you can change.
+- **▶ play it** tries an animation that waits for an action.
+
+An animation adds to what the shape already does: a building that follows your RAM can still jump. With
+`motion = "reduced"` animations keep still, like every motion.
+
+## 11. Actions: when this happens, do that
+
+**+ action** in *Actions*. An action is **when** something happens, **do** one or more things.
+
+**When**:
+
+- **something happens**: an AI agent starts waiting for you, finishes, fails, or a new one starts; CI fails on a repo,
+  or passes again; a new commit; a new hour; a plane comes overhead; the ISS rises; a rocket lifts off; it starts
+  raining; a focus session starts; you come back; music starts; **a row of your panels turns red**, or **is green
+  again**; **you click** a shape (or any shape); the scene starts; **every N seconds** (5 at least);
+- **a value rises above** or **falls below** a line: any data of section 6, your panels included (*your panel: power
+  rises above 4*). It fires once, on the way across, not all the time while it stays above.
+
+**Do**:
+
+| | |
+|---|---|
+| **Pulse effect** | Pulse's own: fireworks, a banner across the sky, a lightning bolt, a shooting star, a hot-air balloon with your text, a rocket lifting off, a solar flare, a chime, or a line of text over the city. With a text of up to 60 characters, live values too (`CPU {cpu}%`, `{panel:power}`) |
+| **play a shape's animation** | its animation set to *when an action says so* (section 10) |
+| **flash a shape** | in a colour, for some seconds |
+| **show / hide / show or hide a shape** | a shape hidden in *Layers* can appear when its moment comes |
+
+**At most once every N seconds** (10 by default) keeps an action from repeating. Pulse adds its own limits to its
+effects on your wallpaper: one every 4 seconds, the same one every 15, none while a window covers the desktop, and only
+the text with reduced motion. **Try it** in the action plays what it does at once.
+
+In the list, **✎** changes an action, **●** turns it off and on, **×** removes it. Actions work in the editor's preview
+with the demo sliders (move CPU across the line, click a shape), and on your wallpaper with your real data.
+
+## 12. Save, try, export
 
 - **Save** (Ctrl+S): writes `~/.config/omarchy-pulse/scenes/NAME.js` (names: a-z, 0-9 and -), checks it like
   `omarchy-pulse scene check` does, and tells you if it is ready to share.
 - **Try on wallpaper**: saves and shows it on your desktop at once, until Pulse restarts; press it again (*Back to my
   scene*) to go back. To keep it: `scene = "NAME"` in `[pulse]`.
-- **Export .js**: downloads the scene file, to send it or to put it in a pull request.
+- **Export .pulse** (1.7): a file to share, with the scene, its pictures, animations and actions, a preview, your name
+  and a licence ([PACKAGES.md](PACKAGES.md)). Section 16.
+- **.js**: downloads the scene's code file, for the scene lab or to go on by hand in code.
 - **Lab**: opens the scene in the scene lab (more demo data, a PNG and a 6-second video of the scene alone).
-- **New…**: start again from a template or a blank page.
+- **New…**: start again from a template or a blank page (1.7 adds *Homelab city* and *Launch pad*).
 
 The editor never overwrites a scene written by hand: if a hand-written `NAME.js` exists, it asks you for another
 name. Open your scene again any time with `omarchy-pulse scene editor NAME`.
 
-## 10. Recipes
+## 13. Import, and the Community
+
+**Import…** (or drop a `.pulse` file on the page) opens someone's scene: you see its preview, who made it, its licence
+and Pulse's checks. **Open in the editor** puts it on your stage, to change it and **Save** it under your name for it;
+**Install** adds it to your scenes as it is.
+
+**Community** shows the scenes people shared in the project's gallery: a preview of each, who made it, what it shows.
+**Install** adds it to your scenes (`scene = "NAME"` to use it); **Install & edit** opens it here, to make it yours.
+Keep the author's name in the description when you share a scene you changed.
+
+Every scene runs in Pulse's sandbox, so installing one is safe: no network, no access to your files, nothing that runs
+on your computer ([PACKAGES.md, section 5](PACKAGES.md#5-what-is-in-a-pulse-file-and-what-never-is)).
+
+## 14. Recipes
 
 **A lantern for every agent** (the *Agent lanterns* template): a circle, glow 1, motion *float*; repeat one per *AI
 agent*, *spread across* from 0.3 to 0.7, *colours by state*; click `{name} · {state}`. Add a text with
@@ -229,7 +352,31 @@ build is red.
 
 **A focus lamp**: a soft circle whose *glow* follows *focus session* from 0 to 2: it lights up while you concentrate.
 
-## 11. Good scenes: tips
+**A tower that grows with your homelab's power** (1.7, the *homelab-tower* scene in the Community): a picture of a
+rack whose *height* follows *your panel: power* (its range 0 → 5 kW) and whose *y position* follows the same panel, so
+its foot stays on the horizon; particles rising above it, more with more power; a click → it shakes (an animation that
+plays when an action says so) and a banner says `{panel:power}`.
+
+**A rocket for every green build** (1.7): an action *CI passes again* → *Pulse effect: a rocket lifts off*, text
+`deploy ok`.
+
+**Your homelab as a city** (1.7, the *Homelab city* template): a building repeated *one per row of your panel*
+`homelab`, *colours by state*, its windows following *each copy's own value*; an action *a row of your panels turns
+red* → lightning and the building flashes. The *Container aquarium* in the Community does the same with fish.
+
+**A rocket for your builds** (1.7, the *Launch pad* template): a picture of a rocket whose animation plays when an
+action says so; *CI passes again* → play it and Pulse's own launch.
+
+**Your agent is waiting** (1.7): a picture of a bell, hidden; an action *an AI agent starts waiting for you* → *show the
+bell* and *play its animation* (*shake*); another action *you click the bell* → *hide the bell*.
+
+**Midnight** (1.7): *a new hour* fires every hour; for midnight only, use *hour of the day falls below 0.1* →
+*fireworks*: the hour goes from 23.98 back to 0 once a day.
+
+**The night sky** (1.7): a moon picture whose *opacity* follows *the Moon lit %*, a star field whose *how many*
+follows *the Sun's height* from 120 to 0 (more stars when the Sun is low), a plane picture repeated *one per plane*.
+
+## 15. Good scenes: tips
 
 - **Use the floor and the middle.** The side panels and the clock cover the dashed zones; what people see is the
   middle, from a little above the horizon to the bottom.
@@ -238,22 +385,24 @@ build is red.
   that move for nothing. Keep the frame time "✓ light enough" (under 8 ms); particles and many copies cost the most.
 - **It must make sense with no data.** Try 0 agents, privacy on, motion reduced, rain and no rain: the editor's
   sliders are there for that.
-- **Your own art.** No logos, characters or brands of others in a scene you share (section 12).
+- **Your own art.** No logos, characters or brands of others in a scene you share (section 16).
+- **Effects are a treat.** Actions that ask Pulse for fireworks every few minutes wear thin; keep them for what
+  matters (a build back to green, midnight, a rocket).
+- **A panel by name.** A scene that follows `panel:power` needs a panel called `power`: say it in its description.
 
-## 12. Share your scene
+## 16. Share your scene
 
-A scene made with the editor is shared like any community scene ([SCENES.md](SCENES.md#10-sharing-your-scene)):
+1. **Export .pulse**: a title, your name, a licence (MIT, CC0, CC-BY or CC-BY-SA), a few words and tags. The editor
+   makes a preview from the stage and downloads `NAME.pulse`.
+2. Send the file to anyone: they open it with **Import…**.
+3. For the **Community** gallery: put it in `community/scenes/NAME/` in a fork of
+   [piermark/omarchy-pulse-theme](https://github.com/piermark/omarchy-pulse-theme), run
+   `python3 tools/scene-index.py`, and open a pull request with that scene. Once it is merged, it is in everyone's
+   Community tab. Step by step: [PACKAGES.md, section 4](PACKAGES.md#4-put-your-scene-in-the-gallery).
 
-1. **Export .js** (or take `~/.config/omarchy-pulse/scenes/NAME.js`).
-2. In a fork of [piermark/omarchy-pulse-theme](https://github.com/piermark/omarchy-pulse-theme):
-   `community/scenes/NAME/NAME.js`, a `README.md` that says what each shape means, and a screenshot made with the
-   editor's demo data (or the lab's).
-3. Open a pull request with that scene.
+Only what is yours to share: your pictures, or pictures whose licence allows it.
 
-Others install it by copying `NAME.js` into `~/.config/omarchy-pulse/scenes/` and setting `scene = "NAME"`; they can
-open it in their editor and make it their own.
-
-## 13. Questions and problems
+## 17. Questions and problems
 
 **"cannot reach Pulse"**: Pulse is not running. Start it (log in to Omarchy, or `systemctl --user start
 omarchy-pulse`), or `omarchy-pulse serve --demo` to try with demo data.
@@ -269,7 +418,21 @@ with `omarchy-pulse layout edit`.
 **It moves too much / it is heavy**: lower the speeds, use fewer particles and copies, look at the frame time.
 
 **Where is my scene?** `~/.config/omarchy-pulse/scenes/NAME.js`. The design is plain data at the top of the file, the
-code after it draws it; [SCENES.md section 12](SCENES.md#12-the-scene-editor-16) explains the format.
+code after it draws it; [SCENES.md section 12](SCENES.md#12-the-scene-editor-16-and-17) explains the format.
+
+**"too many pictures" / Save refuses the pictures**: a scene carries 3 MB of pictures. Remove some, or use smaller ones
+(a background at 1920 pixels is plenty; an SVG is often tiny).
+
+**My SVG is refused**: it has scripts, events or links to the internet. Save it again as a plain or optimized SVG, or
+as a PNG.
+
+**An action does not fire**: a value must cross the line (from below to above) to fire; it waits its *at most once
+every* time after firing; Pulse's effects wait 4 seconds after any other and do not show while a window covers the
+desktop. *Try it* in the action shows what it does.
+
+**My panel is not in the list**: only panels with a number are (a stat or a gauge), and not the private ones. The list
+comes from Pulse when the editor opens: with `serve --demo` you see the demo panels. A panel you follow but do not have
+yet is still kept in the design.
 
 **I want more than the editor can do**: start from your editor scene in code: [SCENES.md](SCENES.md) explains how a
 scene works, what data it gets and how to draw anything.

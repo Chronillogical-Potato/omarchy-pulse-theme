@@ -82,7 +82,8 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [71. WLED](#71-wled-your-led-strips-16) ·
   [72. News that strikes](#72-news-that-strikes-16) ·
   [73. Backups as trucks, a second monitor, focus, the radar](#73-backups-as-trucks-a-calmer-second-monitor-focus-and-the-radar-16) ·
-  [74. The friends' neighbourhood](#74-the-friends-neighbourhood-16)
+  [74. The friends' neighbourhood](#74-the-friends-neighbourhood-16) ·
+  [75. Creator: pictures, animations, actions, .pulse files and the Community (1.7)](#75-creator-pictures-animations-actions-pulse-files-and-the-community-17)
 - Creating scenes: with the mouse, [docs/EDITOR.md](EDITOR.md) (1.6); in code, [docs/SCENES.md](SCENES.md)
 
 ---
@@ -1258,6 +1259,8 @@ generic one, of no brand.
 | `omarchy-pulse reload` | read `pulse.toml` again now |
 | `omarchy-pulse doctor` | check dependencies, config and sources |
 | `omarchy-pulse scene list \| new NAME \| check NAME \| lab [NAME] \| editor [NAME]` | community scenes, the scene lab and the scene editor (47, 61, docs/SCENES.md) |
+| `omarchy-pulse scene export NAME --author A --license MIT [--title T --description D --preview PNG -o FILE]` | 1.7: a scene as a .pulse file, to share (75, docs/PACKAGES.md) |
+| `omarchy-pulse scene import FILE.pulse [--name N --force] \| gallery \| get NAME` | 1.7: install a .pulse file; the Community gallery; install one from it (75) |
 | `omarchy-pulse term` | (beta) a read-only terminal on the city: scan, ping, status (56) |
 | `omarchy-pulse noc on \| off \| ack` | (beta) NOC mode and its incidents (58) |
 | `omarchy-pulse trap` | (beta) for snmptrapd's traphandle: SNMP traps as bolts (57) |
@@ -2032,7 +2035,7 @@ Delete removes, the arrows move (Shift: more). A draft you did not save comes ba
 A scene made with the editor is a normal community scene: the design is plain data at the top of the file, and the
 code after it draws it. It runs in the same sandbox as every scene (no network, no token), and it shows the time a
 frame takes, so you can see if it is light enough. The editor never overwrites a scene written by hand. More in
-[docs/SCENES.md](SCENES.md#12-the-scene-editor-16).
+[docs/SCENES.md](SCENES.md#12-the-scene-editor-16-and-17). What 1.7 added to the editor is in section 75.
 
 ## 62. All your AI agents, their health, and working together (1.6)
 
@@ -2252,3 +2255,42 @@ city = true           # share your city with them, and see theirs
 Only numbers travel, sealed with the crew's code: how many commits this week, "a commit now", the CI green or red.
 Never a repo's name, a branch, a message or a file. The building of a friend who stops sharing fades away after three
 days. `city = false` (the default when your `pulse.toml` was written before 1.6) sends nothing.
+
+## 75. Creator: pictures, animations, actions, .pulse files and the Community (1.7)
+
+The scene editor (section 61) now makes complete scenes, and they travel as one file. The full guide is
+[EDITOR.md](EDITOR.md) (sections 9 to 16); sharing is [PACKAGES.md](PACKAGES.md).
+
+- **Your pictures**: PNG, JPEG, WebP or SVG, as shapes (tinted with the theme or with their own colours, mirrored,
+  moving with your data like any shape) or as the **background** of the scene, dimmed to keep the panels readable. A
+  scene can also have **its own palette** instead of the Omarchy theme's.
+- **Every value of the engine**: besides CPU, agents, Git and the weather, a shape can follow the Sun's height, the
+  Moon, the planes overhead (or repeat once per plane), the ISS, Starlink, the aurora Kp, the next launch, music,
+  meetings, and **your own panels**: anything a `[[source]]`, a push or Home Assistant gives a number to (`panel:power`:
+  a tower that grows with your homelab's power draw). Only numbers, and never a private panel.
+- **One copy per row of your panel**: a building per Proxmox VM, a fish per Docker container, a lamp per light,
+  green, amber or red with each row; an action when a row turns red, or green again. The *Homelab city* template.
+- **Animations**: keyframes (move, size, opacity, turn) that loop, or play when an action says so; presets jump, fly,
+  fade, grow, shake, spin.
+- **Actions**: *when* something happens (an agent waits for you, CI fails or passes, a commit, a plane, the ISS, a
+  launch, rain, a click on a shape, every N seconds, a value crossing a line) *do* something: play an animation, flash,
+  show or hide a shape, or ask Pulse for one of its effects (fireworks, a banner, lightning, a shooting star, a
+  balloon with your text, a rocket, a solar flare, a chime). Pulse keeps its effects rare: one every 4 seconds, the
+  same one every 15, none while a window covers the desktop.
+- **.pulse files**: **Export .pulse** makes one file with the scene, its pictures, animations and actions, a preview,
+  your name and a licence (MIT, CC0, CC-BY, CC-BY-SA). **Import…** (or drop it on the editor) opens one: open it in
+  the editor to change it, or install it.
+- **The Community**: the editor's **Community** button shows the scenes people shared in the project
+  (`community/scenes/`), with **Install** and **Install & edit**. To add yours: one pull request with your `.pulse`
+  file (PACKAGES.md, section 4).
+
+```bash
+omarchy-pulse scene export my-world --author "Your Name" --license MIT    # my-world.pulse
+omarchy-pulse scene import my-world.pulse                                 # install one
+omarchy-pulse scene gallery                                               # the Community
+omarchy-pulse scene get homelab-tower                                     # install one from it
+```
+
+Safe by design: a package is data, or code that runs in the sandbox; it never carries commands or `[[source]]`
+scripts, which are shared only as reviewed pull requests. Pictures are checked byte by byte (an SVG with scripts or
+links is refused), and gallery packages must match the reviewed index.

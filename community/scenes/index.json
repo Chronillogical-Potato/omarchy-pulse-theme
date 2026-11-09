@@ -1,0 +1,105 @@
+{
+ "format": "omarchy-pulse-gallery",
+ "v": 1,
+ "scenes": [
+  {
+   "name": "agent-bell",
+   "title": "Agent bell",
+   "author": "Marco Porro",
+   "license": "MIT",
+   "description": "A lantern for each AI agent, coloured by its state. When one starts waiting for you, a bell appears, rings and chimes; click it (or answer the agent) and it goes away. Lightning when an agent fails, a shooting star when one finishes.",
+   "tags": [
+    "agents",
+    "ai"
+   ],
+   "kind": "design",
+   "pulse": "1.7.0",
+   "created": "2026-11-09",
+   "size": 8103,
+   "sha256": "291d6e543c31ed7246c775b575a5e1d273e753b469f85bcb4becf8233694f14e",
+   "preview": "agent-bell/preview.webp",
+   "actions": 5,
+   "pictures": 1
+  },
+  {
+   "name": "container-aquarium",
+   "title": "Container aquarium",
+   "author": "Marco Porro",
+   "license": "MIT",
+   "description": "A fish for every container of your docker panel (the docker community source), green when it is up, amber when unhealthy, red when it stopped. Bubbles follow your network. A container goes down: the glass flashes red and lightning strikes. Click a fish: its name.",
+   "tags": [
+    "docker",
+    "homelab",
+    "containers"
+   ],
+   "kind": "design",
+   "pulse": "1.7.0",
+   "created": "2026-11-09",
+   "size": 9162,
+   "sha256": "ead14417797c1949c6f667877fb9a93aba31fd4f4f7f60c580671aacf07f8c42",
+   "preview": "container-aquarium/preview.webp",
+   "actions": 2,
+   "pictures": 1
+  },
+  {
+   "name": "green-build-rocket",
+   "title": "Green build rocket",
+   "author": "Marco Porro",
+   "license": "MIT",
+   "description": "A rocket of your own on its launch pad. CI passes again: it lifts off with Pulse's own rocket. CI fails: it flashes red, and the light on the tower turns red while a build is failing. Smoke follows your agents at work; stars come out when the Sun goes down. Click it to launch it.",
+   "tags": [
+    "ci",
+    "git",
+    "rocket"
+   ],
+   "kind": "design",
+   "pulse": "1.7.0",
+   "created": "2026-11-09",
+   "size": 8394,
+   "sha256": "88fc343f9e0e593b0e1f614f4e6ce4ab5a322c04a74e605addd0f6beb71cc4b0",
+   "preview": "green-build-rocket/preview.webp",
+   "actions": 3,
+   "pictures": 1
+  },
+  {
+   "name": "homelab-tower",
+   "title": "Homelab tower",
+   "author": "Marco Porro",
+   "license": "MIT",
+   "description": "A server rack that grows with the power your homelab draws (a panel called \"power\"), with heat rising off it and a beacon on top. Click it: it shakes and says the power. CI fails: it flashes red. Over 4 kW: a balloon tells you.",
+   "tags": [
+    "homelab",
+    "power",
+    "example"
+   ],
+   "kind": "design",
+   "pulse": "1.7.0",
+   "created": "2026-11-09",
+   "size": 12157,
+   "sha256": "67fb64cac3077c6a2fdc45fa6540ad77a39a88852a51ded6784c791fc5b5582e",
+   "preview": "homelab-tower/preview.webp",
+   "actions": 4,
+   "pictures": 1
+  },
+  {
+   "name": "moonlit-garden",
+   "title": "Moonlit garden",
+   "author": "Marco Porro",
+   "license": "MIT",
+   "description": "A night garden: a flower for every repo, its colour the CI, its size the commits of the week; fireflies for the agents at work; a Moon as bright as the real one; stars when the Sun is down. Fireworks at midnight, a shooting star when the ISS passes over.",
+   "tags": [
+    "night",
+    "git",
+    "sky"
+   ],
+   "kind": "design",
+   "pulse": "1.7.0",
+   "created": "2026-11-09",
+   "size": 8356,
+   "sha256": "79658db34c5522b23bf205ff2630dc989a4015b110b72ec0c265ec70a1b57ab3",
+   "preview": "moonlit-garden/preview.webp",
+   "actions": 3,
+   "pictures": 1
+  }
+ ]
+}
