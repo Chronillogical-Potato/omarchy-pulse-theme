@@ -87,8 +87,17 @@ Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author
   your VMs and containers are habitat pods. The hour is yours: butterscotch by day, a blue sunset, Phobos and the
   Earth at night. Your weather arrives translated: rain is a dust storm, wind raises dust devils, snow is frost.
   ([section 80](docs/GUIDE.md#80-mars-another-world-18))
+- **The first scene from the community: blackout-room**, by Anatolii ([tolixx](https://github.com/tolixx)), made for a
+  homelab in Kyiv that rides out power cuts on battery stations. A server room on a street at night: when the grid
+  goes down the houses go dark, but the rack keeps blinking on its batteries. It follows three panels, `grid`, `ups`
+  and `watts` (with NUT, three lines of `upsc`). Install it from **Community** in the editor.
+  ([community/scenes/blackout-room](community/scenes/blackout-room/))
 - **Rain with depth and planes you can read.** Near and far drops, rings where they land (as much rain as there
   really is); every plane overhead has a tag with its flight, route, height and speed.
+- **A rocket and a Starlink train you can recognise.** A real launch is a Falcon 9 or a Starship climbing from your
+  horizon: pad smoke, shock diamonds, the twilight plume, the booster falling back, a tag with its name and T+. The
+  Starlink satellites really overhead glide in a row joined by a faint thread, with a tag that counts them.
+  ([section 76](docs/GUIDE.md#76-the-look-18))
 
 ## New in 1.7
 
