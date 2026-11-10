@@ -45,7 +45,8 @@ scene = "lanterns"
 ```
 
 Pulse switches within a few seconds. Want to read a complete scene first? `extras/pulse/web/scenes/pond.js` (about
-120 lines, commented) is the example that comes with Pulse.
+120 lines, commented) is the example that comes with Pulse; `monolith.js` and `mars.js` (1.8; mars
+paints its own sky) are bigger ones: they use the whole state and adapt how rich they draw to the PC.
 
 ## 2. How a scene works
 

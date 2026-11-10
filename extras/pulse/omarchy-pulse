@@ -84,6 +84,7 @@ import secrets
 import shutil
 import signal
 import socket
+import shlex
 import subprocess
 import sys
 import threading
@@ -97,7 +98,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 HOME = Path.home()
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy-pulse"
 CONF = CONF_DIR / "pulse.toml"
@@ -3718,6 +3719,8 @@ class Hub:
                     "updates": self.updates_public() if (self.conf("updates", default={}) or {}).get("enabled", True) is not False else None,
                     "layout": self.layout_public(), "layoutEdit": self.layout_edit,
                     "friends": self.friends_public(),
+                    "datacenter": {"groups": self.datacenter_state(), "labels": self.conf("datacenter", "labels", default=True) is not False,
+                                   "alerts": self.conf("datacenter", "alerts", default=True) is not False},
                     "lan": [{**d, "name": "" if self.privacy() else d["name"], "ip": "" if self.privacy() else d["ip"]}
                             for d in self.lan["devices"]],
                     "scene": self.scene_state() if scene_path(self.scene_kind()) else None,
@@ -3752,7 +3755,8 @@ class Hub:
                            "sound": sound_conf(self.conf("sound", default={}) or {}, self.in_meeting, self.privacy()),
                            "sphere": self.conf("pulse", "sphere", default="real"),
                            "cars": self.conf("lan", "cars", default=True) is not False,
-                           "eyes": self.conf("presence", "eyes", default=True) is not False}}
+                           "eyes": self.conf("presence", "eyes", default=True) is not False,
+                           "polish": self.conf("pulse", "polish", default=True) is not False}}
 
     def wallpaper_ui(self) -> dict | None:
         f = wallpaper_path(self.conf("pulse", "wallpaper", default=""))
@@ -3852,6 +3856,43 @@ class Hub:
 
     ROWS_SKIP = BUILTIN_IDS | {"car", "doorbell", "pulse.toml", "motion"}
 
+    @staticmethod
+    def panel_rows(d: dict, priv: bool = False) -> list:
+        """The rows of a panel with a list, a status or a table: [{name, level, value}] (32 at most). Never notes or
+        text; names empty while private. A table row [name, status]: "up 3d" is ok, "exited" crit."""
+        rows = []
+        if not isinstance(d, dict) or not (isinstance(d.get("items"), list) or isinstance(d.get("rows"), list)):
+            return rows
+        for it in (d.get("items") or d.get("rows") or [])[:32]:
+            if isinstance(it, dict):
+                v = it.get("value")
+                rows.append({"name": "" if priv else str(it.get("title") or "")[:40], "level": it.get("level") if it.get("level") in LEVELS else "",
+                             "value": v if isinstance(v, (int, float)) and not isinstance(v, bool) else None})
+            elif isinstance(it, (list, tuple)) and it:
+                st = str(it[1] if len(it) > 1 else "").lower()
+                lv = ("warn" if "unhealthy" in st or "restarting" in st or "paused" in st else "ok" if st.startswith(("up", "running", "ok", "online"))
+                      else "crit" if st.startswith(("exited", "dead", "down", "stopped", "failed", "offline", "error")) else "")
+                rows.append({"name": "" if priv else str(it[0])[:40], "level": lv, "value": None})
+        return rows
+
+    def datacenter_state(self) -> list:
+        """1.8: your datacenter as a district of the city: [datacenter] panels = ["proxmox", "docker"] -> one building for
+        every row of those panels (a VM, a container, a host), in the colour of its state. Off until you name a panel;
+        private panels are never in it, names are empty while you share the screen."""
+        ids = self.conf("datacenter", "panels", default=[]) or (["homelab", "containers"] if self.demo else [])
+        if not isinstance(ids, list):
+            return []
+        priv, out, left = self.privacy(), [], 36
+        for pid in [str(x)[:40] for x in ids[:6]]:
+            w = self.widgets.get(pid)
+            if not w or w.get("private") or pid in self.ROWS_SKIP:
+                continue
+            rows = self.panel_rows(w.get("data") or {}, priv)[:left]
+            if rows:
+                left -= len(rows)
+                out.append({"id": pid, "title": "" if priv else str(w.get("title") or pid)[:24], "rows": rows})
+        return out
+
     def scene_panels(self, priv: bool = False) -> dict:
         """1.7: your panels ([[source]], push, Home Assistant...), so a shape can follow them: the number of a stat or a
         gauge {id: {value, min, max, unit}}, and the rows of a list, a status or a table {id: {rows: [{name, level,
@@ -3868,18 +3909,8 @@ class Hub:
                 if isinstance(d.get("min"), (int, float)) and isinstance(d.get("max"), (int, float)):
                     e["min"], e["max"] = d["min"], d["max"]
                 out[wid] = e
-            elif wid not in self.ROWS_SKIP and (isinstance(d.get("items"), list) or isinstance(d.get("rows"), list)):
-                rows = []
-                for it in (d.get("items") or d.get("rows") or [])[:32]:
-                    if isinstance(it, dict):
-                        v = it.get("value")
-                        rows.append({"name": "" if priv else str(it.get("title") or "")[:40], "level": it.get("level") if it.get("level") in LEVELS else "",
-                                     "value": v if isinstance(v, (int, float)) and not isinstance(v, bool) else None})
-                    elif isinstance(it, (list, tuple)) and it:   # a table row [name, status]: "up 3d" is green, "exited" red
-                        st = str(it[1] if len(it) > 1 else "").lower()
-                        lv = ("warn" if "unhealthy" in st or "restarting" in st or "paused" in st else "ok" if st.startswith(("up", "running", "ok", "online"))
-                              else "crit" if st.startswith(("exited", "dead", "down", "stopped", "failed", "offline", "error")) else "")
-                        rows.append({"name": "" if priv else str(it[0])[:40], "level": lv, "value": None})
+            elif wid not in self.ROWS_SKIP:
+                rows = self.panel_rows(d, priv)
                 if rows:
                     out[wid] = {"rows": rows}
         return out
@@ -4592,6 +4623,190 @@ def scene_check(src: str) -> list:
 # actions, a preview and who made it under which licence. Importing one is safe: a scene runs in its sandbox (no network,
 # no token, no files) and its actions only ask Pulse for its own effects. What could run on your computer (commands,
 # [[source]] scripts) is never part of a package: they are shared as pull requests, reviewed by a person.
+# ---- 1.8: "describe your world": an AI agent writes the design (data, checked like any other); Pulse only reads it
+DESIGN_TYPES = ("rect", "ellipse", "line", "star", "text", "ring", "bars", "tower", "wave", "particles", "image")
+DESIGN_SRC = ("cpu", "ram", "gpu", "temp", "disk", "net", "hour", "minute", "second", "weekday", "outside", "rain", "wind", "cloud",
+              "daylight", "sun", "moon", "planes", "iss", "starlink", "kp", "launch", "agents", "working", "waiting", "failed",
+              "commits", "cifail", "music", "focus", "meeting", "away", "item")
+DESIGN_PROPS = ("x", "y", "w", "h", "alpha", "rot", "glow", "heat", "speed", "level", "count", "amp")
+DESIGN_EVENTS = ("agent-waiting", "agent-done", "agent-failed", "agent-new", "ci-fail", "ci-ok", "commit", "hour", "plane", "iss",
+                 "launch", "rain", "focus", "back", "music", "row-crit", "row-ok", "click", "start", "every")
+DESIGN_FX = ("fireworks", "banner", "lightning", "shooting", "tip", "launch", "flare", "chime", "text")
+DESIGN_COLORS = ("bg", "fg", "accent", "accent2", "ok", "warn", "crit", "dim")
+
+
+def design_from_text(txt: str) -> dict:
+    """The design in an agent's reply: the JSON object, with or without words and code fences around it."""
+    txt = str(txt or "")
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", txt, re.S)
+    cand = [m.group(1)] if m else []
+    i, j = txt.find("{"), txt.rfind("}")
+    if 0 <= i < j:
+        cand.append(txt[i:j + 1])
+    for c in cand:
+        try:
+            d = json.loads(c)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and isinstance(d.get("design"), dict):   # a whole package, or {"design": ...}
+            d = d["design"]
+        if isinstance(d, dict) and isinstance(d.get("shapes"), list):
+            return d
+    raise ValueError("no design in the reply: it must be one JSON object with a \"shapes\" list")
+
+
+def design_fix(d: dict) -> tuple[dict, list]:
+    """A design written by hand or by an agent, made safe to draw: what the engine does not know is dropped or set to a
+    default, and said. Returns (design, notes). Never raises for a detail; design_clean still has the last word."""
+    notes, shapes, ids = [], [], set()
+    num = lambda v, lo, hi, dv: max(lo, min(hi, float(v))) if isinstance(v, (int, float)) and not isinstance(v, bool) else dv   # noqa: E731
+    for n, sh in enumerate((d.get("shapes") or [])[:200]):
+        if not isinstance(sh, dict) or sh.get("type") not in DESIGN_TYPES:
+            notes.append(f"shape {n + 1}: unknown type {str((sh or {}).get('type') if isinstance(sh, dict) else sh)[:20]!r}, dropped")
+            continue
+        sh = dict(sh)
+        sid = re.sub(r"[^A-Za-z0-9_-]", "-", str(sh.get("id") or f"s{n + 1}"))[:32] or f"s{n + 1}"
+        while sid in ids:
+            sid += "x"
+        ids.add(sid)
+        sh["id"] = sid
+        sh["name"] = str(sh.get("name") or sh["type"])[:60]
+        sh["x"], sh["y"] = num(sh.get("x"), -0.2, 1.2, 0.5), num(sh.get("y"), -0.2, 1.2, 0.6)
+        sh["w"], sh["h"] = num(sh.get("w"), 0, 1.5, 0.1), num(sh.get("h"), 0, 1.5, 0.1)
+        sh["alpha"], sh["glow"] = num(sh.get("alpha"), 0, 1, 1), num(sh.get("glow"), 0, 3, 0)
+        for ck in ("color", "color2"):
+            if ck in sh and sh[ck] not in DESIGN_COLORS:
+                notes.append(f"{sid}: colour {str(sh[ck])[:16]!r} is not a theme colour, using accent")
+                sh[ck] = "accent"
+        sh.setdefault("color", "accent")
+        an = sh.get("anim") if isinstance(sh.get("anim"), dict) else {}
+        sh["anim"] = {"kind": an.get("kind") if an.get("kind") in ("none", "pulse", "spin", "bob", "sway", "blink", "breathe", "drift") else "none",
+                      "speed": num(an.get("speed"), 0, 10, 1)}
+        binds = []
+        for b in (sh.get("bind") or [])[:8] if isinstance(sh.get("bind"), list) else []:
+            src = str((b or {}).get("src") or "") if isinstance(b, dict) else ""
+            if isinstance(b, dict) and b.get("prop") in DESIGN_PROPS and (src in DESIGN_SRC or re.match(r"^panel:[A-Za-z0-9_.-]{1,40}$", src)) \
+                    and all(isinstance(b.get(k), (int, float)) for k in ("from", "to")):
+                binds.append({k: b[k] for k in ("prop", "src", "from", "to", "lo", "hi") if k in b and (k in ("prop", "src") or isinstance(b[k], (int, float)))})
+            else:
+                notes.append(f"{sid}: a binding it cannot follow ({str(b)[:50]}), dropped")
+        sh["bind"] = binds
+        rp = sh.get("repeat") if isinstance(sh.get("repeat"), dict) else {}
+        if rp.get("by") not in ("none", "agents", "repos", "cores", "planes", "panel", "count", None):
+            notes.append(f"{sid}: it cannot repeat by {str(rp.get('by'))[:16]!r}, one copy")
+            rp = {}
+        sh["repeat"] = {**rp, "by": rp.get("by") or "none"}
+        for tk in ("text", "click"):
+            if tk in sh:
+                sh[tk] = str(sh[tk])[:120]
+        if sh["type"] == "image" and str(sh.get("asset")) not in (d.get("assets") or {}):
+            notes.append(f"{sid}: its picture {str(sh.get('asset'))[:20]!r} is not in assets, dropped")
+            ids.discard(sid)
+            continue
+        ks = sh.get("keys")
+        if ks is not None:
+            fr = [{k: f[k] for k in ("t", "dx", "dy", "scale", "alpha", "rot") if isinstance(f.get(k), (int, float))}
+                  for f in (ks.get("frames") or [])[:24] if isinstance(f, dict)] if isinstance(ks, dict) else []
+            if len(fr) >= 2:
+                sh["keys"] = {"start": "action" if ks.get("start") == "action" else "loop", "loop": bool(ks.get("loop", ks.get("start") != "action")),
+                              "dur": num(ks.get("dur"), 0.2, 60, 2), "ease": "linear" if ks.get("ease") == "linear" else "smooth", "frames": fr}
+            else:
+                sh.pop("keys", None)
+        shapes.append(sh)
+    acts = []
+    for n, a in enumerate((d.get("actions") or [])[:40] if isinstance(d.get("actions"), list) else []):
+        w, do = (a.get("when"), a.get("do")) if isinstance(a, dict) else (None, None)
+        ok = isinstance(w, dict) and isinstance(do, list) and (
+            w.get("type") == "event" and w.get("event") in DESIGN_EVENTS or
+            w.get("type") in ("above", "below") and isinstance(w.get("value"), (int, float)) and
+            (w.get("src") in DESIGN_SRC or re.match(r"^panel:[A-Za-z0-9_.-]{1,40}$", str(w.get("src") or ""))))
+        dos = []
+        for x in (do or [])[:8] if ok else []:
+            if isinstance(x, dict) and x.get("type") == "fx" and x.get("fx") in DESIGN_FX:
+                dos.append({"type": "fx", "fx": x["fx"], "text": str(x.get("text") or "")[:60]})
+            elif isinstance(x, dict) and x.get("type") in ("play", "flash", "show", "hide", "toggle") and str(x.get("shape")) in ids:
+                e = {"type": x["type"], "shape": str(x["shape"])}
+                if x["type"] == "flash":
+                    e["color"] = x.get("color") if x.get("color") in DESIGN_COLORS else "warn"
+                    e["secs"] = num(x.get("secs"), 0.3, 30, 3)
+                dos.append(e)
+        if not ok or not dos:
+            notes.append(f"action {n + 1}: nothing Pulse can do with it, dropped")
+            continue
+        if w.get("event") == "click" and w.get("shape") and str(w["shape"]) not in ids:
+            w = {k: v for k, v in w.items() if k != "shape"}
+        if w.get("event") == "every":
+            w = {**w, "secs": num(w.get("secs"), 5, 86400, 60)}
+        acts.append({"id": re.sub(r"[^A-Za-z0-9_-]", "", str(a.get("id") or f"a{n + 1}"))[:16] or f"a{n + 1}", "when": w, "do": dos,
+                     "cooldown": num(a.get("cooldown"), 1, 3600, 10)})
+    out = {"v": 2, "sky": d.get("sky") if d.get("sky") in DESIGN_COLORS else "none", "city": bool(d.get("city")), "shapes": shapes,
+           "assets": d.get("assets") if isinstance(d.get("assets"), dict) else {}, "actions": acts}
+    for k in ("background", "palette"):
+        if isinstance(d.get(k), dict):
+            out[k] = d[k]
+    if not shapes:
+        raise ValueError("no shape Pulse can draw in it")
+    return out, notes
+
+
+def design_save(name: str, design: dict) -> dict:
+    """Writes a design as one of YOUR scenes (never over a scene that comes with Pulse or one written by hand)."""
+    if not SCENE_NAME.match(name or "") or name in BUILTIN_SCENES:
+        return {"error": "a name: a-z, 0-9 and -, not a built-in scene", "code": 400}
+    f = USER_SCENES / f"{name}.js"
+    if (WEB / "scenes" / f"{name}.js").exists() and not f.exists():
+        return {"error": "a scene that comes with Pulse has this name: choose another", "code": 409}
+    if f.exists() and design_of(f.read_text(encoding="utf-8", errors="replace")) is None:
+        return {"error": "a scene written by hand has this name: choose another", "code": 409}
+    try:
+        src = design_scene(name, design)
+    except (ValueError, TypeError) as e:
+        return {"error": str(e), "code": 400}
+    if len(src.encode()) > SCENE_MAX:
+        return {"error": "too big", "code": 400}
+    USER_SCENES.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".js.tmp")
+    tmp.write_text(src, encoding="utf-8")
+    tmp.replace(f)
+    return {"path": "~/" + str(f.relative_to(HOME)) if HOME in f.parents else str(f), "checks": scene_check(src)}
+
+
+def scene_guide() -> str:
+    try:
+        return (WEB / "scene-guide.md").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def describe_prompt(text: str, panels: dict | None = None) -> str:
+    """The whole request for an agent: the guide, the user's panels (ids, units, row names: no values), what they asked."""
+    lines = []
+    for pid, p in sorted((panels or {}).items())[:40]:
+        if "rows" in p:
+            names = ", ".join(r.get("name") or "?" for r in p["rows"][:8])
+            lines.append(f"- `{pid}`: a list with {len(p['rows'])} rows ({names}...): repeat by panel")
+        else:
+            rng = f", from {p['min']} to {p['max']}" if "min" in p else ""
+            lines.append(f"- `panel:{pid}`: a number{' in ' + p['unit'] if p.get('unit') else ''}{rng}")
+    return (scene_guide().rstrip() + "\n\n## The user's own panels\n\n" + ("\n".join(lines) if lines else "(none: use Pulse's own data)") +
+            "\n\n## The request\n\nMake this scene. Reply with the JSON design only.\n\n> " + " ".join(str(text or "").split())[:1200] + "\n")
+
+
+def describe_run(text: str, panels: dict | None, cmd: str) -> tuple[dict, list]:
+    """Runs YOUR agent ([creator] agent = "claude -p", your own command, like a [[source]]) with the request on its
+    standard input and reads the design from what it prints. Up to 3 minutes."""
+    try:
+        r = subprocess.run(shlex.split(cmd), input=describe_prompt(text, panels), capture_output=True, text=True, timeout=180)
+    except (OSError, ValueError) as e:
+        raise ValueError(f"your agent did not start ({cmd.split()[0] if cmd.split() else cmd}: {e})") from None
+    except subprocess.TimeoutExpired:
+        raise ValueError("your agent took more than 3 minutes") from None
+    if r.returncode != 0 and not r.stdout.strip():
+        raise ValueError("your agent failed: " + (r.stderr.strip().splitlines() or ["no output"])[-1][:200])
+    d, notes = design_fix(design_from_text(r.stdout))
+    return design_clean(d), notes
+
+
 PKG_FORMAT = "omarchy-pulse-scene"
 PKG_MAX = 6 * 1024 * 1024
 PKG_LICENSES = ("MIT", "CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0")
@@ -6897,31 +7112,29 @@ def make_handler(hub: Hub, tok: str, port: int):
                 self._send(200, json.dumps(hub.ack(urllib.parse.unquote(u.path[9:]))).encode())
                 return
             if u.path == "/api/scene-design":   # 1.6: the scene editor saves (only into your scenes folder)
-                name = q.get("name", "")
-                if not SCENE_NAME.match(name) or name in BUILTIN_SCENES:
-                    self._send(400, b'{"error":"a name: a-z, 0-9 and -, not a built-in scene"}')
-                    return
-                f = USER_SCENES / f"{name}.js"
-                if (WEB / "scenes" / f"{name}.js").exists() and not f.exists():
-                    self._send(409, b'{"error":"a scene that comes with Pulse has this name: choose another"}')
-                    return
-                if f.exists() and design_of(f.read_text(encoding="utf-8", errors="replace")) is None:
-                    self._send(409, b'{"error":"a scene written by hand has this name: choose another"}')
-                    return
                 try:
-                    src = design_scene(name, json.loads(body or b"{}"))
-                except (ValueError, TypeError) as e:
+                    res = design_save(q.get("name", ""), json.loads(body or b"{}"))
+                except ValueError as e:
+                    res = {"error": str(e), "code": 400}
+                self._send(res.pop("code", 200), json.dumps(res).encode())
+                return
+            if u.path in ("/api/scene-prompt", "/api/scene-from-text", "/api/scene-describe"):   # 1.8: describe your world
+                txt = body.decode("utf-8", "replace")
+                panels = hub.scene_panels(hub.privacy())
+                agent = str(hub.conf("creator", "agent", default="") or "").strip()
+                try:
+                    if u.path == "/api/scene-prompt":
+                        self._send(200, json.dumps({"prompt": describe_prompt(txt, panels), "agent": bool(agent)}).encode())
+                    elif u.path == "/api/scene-from-text":   # the reply of any agent, pasted: read and checked
+                        d, notes = design_fix(design_from_text(txt))
+                        self._send(200, json.dumps({"design": design_clean(d), "notes": notes}).encode())
+                    elif not agent:
+                        self._send(409, json.dumps({"error": "no agent", "prompt": describe_prompt(txt, panels)}).encode())
+                    else:
+                        d, notes = describe_run(txt, panels, agent)
+                        self._send(200, json.dumps({"design": d, "notes": notes}).encode())
+                except ValueError as e:
                     self._send(400, json.dumps({"error": str(e)}).encode())
-                    return
-                if len(src.encode()) > SCENE_MAX:
-                    self._send(400, b'{"error":"too big"}')
-                    return
-                USER_SCENES.mkdir(parents=True, exist_ok=True)
-                tmp = f.with_suffix(".js.tmp")
-                tmp.write_text(src, encoding="utf-8")
-                tmp.replace(f)
-                shown = "~/" + str(f.relative_to(HOME)) if HOME in f.parents else str(f)
-                self._send(200, json.dumps({"path": shown, "checks": scene_check(src)}).encode())
                 return
             if u.path in ("/api/package-check", "/api/package-install"):   # 1.7: a .pulse file opened in the editor
                 try:
@@ -7775,6 +7988,56 @@ def cmd_scene(args: list) -> int:
             print("\n  not installed: " + res["error"])
             return 1
         print(f"\n  installed {res['path']}\n  use it: [pulse] scene = \"{res['name']}\" · change it: omarchy-pulse scene editor {res['name']}")
+        return 0
+    if sub == "guide":   # 1.8: what an AI agent needs to know to write a scene
+        print(scene_guide())
+        return 0
+    if sub in ("prompt", "describe", "make"):
+        def live_panels() -> dict:
+            try:
+                req = urllib.request.Request(f"http://127.0.0.1:{port_of()}/api/scene-state", headers={"X-Pulse-Token": token()})
+                return json.loads(urllib.request.urlopen(req, timeout=2).read()).get("panels") or {}
+            except Exception:   # noqa: BLE001
+                return {}
+        rest = [a for i, a in enumerate(args[1:]) if not a.startswith("--") and (i == 0 or args[i] not in ("--from", "--agent"))]
+        if sub == "prompt":   # the request to give to any agent: omarchy-pulse scene prompt "a harbour..." | your-agent
+            if not rest:
+                print('usage: omarchy-pulse scene prompt "what you want to see"')
+                return 2
+            print(describe_prompt(" ".join(rest), live_panels()))
+            return 0
+        name = rest[0] if rest else ""
+        if not SCENE_NAME.match(name) or name in BUILTIN_SCENES:
+            print('usage: omarchy-pulse scene describe NAME "what you want to see" [--agent "claude -p"] [--try]\n'
+                  '       omarchy-pulse scene make NAME --from REPLY.json | -   (a design an agent wrote; - reads it from the pipe)')
+            return 2
+        try:
+            if sub == "describe":
+                agent = opt("--agent") or str((load_config().get("creator") or {}).get("agent") or "")
+                if not agent or len(rest) < 2:
+                    print('your agent: [creator] agent = "claude -p" in pulse.toml (any command that reads the request and prints the reply),\n'
+                          'or: omarchy-pulse scene prompt "..." | your-agent | omarchy-pulse scene make ' + name + " --from -")
+                    return 2
+                print(f"asking {agent.split()[0]}... (up to 3 minutes)")
+                d, notes = describe_run(" ".join(rest[1:]), live_panels(), agent)
+            else:
+                src_f = opt("--from") or "-"
+                txt = sys.stdin.read() if src_f == "-" else Path(src_f).expanduser().read_text(encoding="utf-8", errors="replace")
+                d, notes = design_fix(design_from_text(txt))
+                d = design_clean(d)
+        except (ValueError, OSError) as e:
+            print(f"  ✗ {e}")
+            return 1
+        res = design_save(name, d)
+        for n in notes:
+            print(f"  ! {n}")
+        if "error" in res:
+            print(f"  ✗ {res['error']}")
+            return 1
+        print(f"  ✓ {res['path']} · {len(d['shapes'])} shapes, {len(d['actions'])} actions")
+        if "--try" in args:
+            quiet_client("/api/scene-try?name=" + name)
+        print(f'  see it: omarchy-pulse scene editor {name} · use it: [pulse] scene = "{name}"')
         return 0
     if sub == "gallery":
         try:

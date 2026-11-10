@@ -312,6 +312,10 @@ with the demo sliders (move CPU across the line, click a shape), and on your wal
 - **.js**: downloads the scene's code file, for the scene lab or to go on by hand in code.
 - **Lab**: opens the scene in the scene lab (more demo data, a PNG and a 6-second video of the scene alone).
 - **New…**: start again from a template or a blank page (1.7 adds *Homelab city* and *Launch pad*).
+- **✨ Describe…** (1.8): write what you want to see and an AI agent draws it on the stage: with your own agent
+  (`[creator] agent = "claude -p"` in `pulse.toml`), or *Copy the request*, paste it into any AI and paste its reply
+  back. What comes back is data that Pulse checks; what it does not know is left out, and the status tells you.
+  Then it is a scene like any other: change it, save it, share it ([GUIDE.md, section 78](GUIDE.md#78-describe-your-world-18)).
 
 The editor never overwrites a scene written by hand: if a hand-written `NAME.js` exists, it asks you for another
 name. Open your scene again any time with `omarchy-pulse scene editor NAME`.

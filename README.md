@@ -1,6 +1,6 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-**Version 1.7** · [what's new](#new-in-17) · [the scene editor](docs/EDITOR.md) · [share and install scenes](docs/PACKAGES.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+**Version 1.8** · [what's new](#new-in-18) · [the scene editor](docs/EDITOR.md) · [share and install scenes](docs/PACKAGES.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
 
 ![Omarchy Pulse 1.5: the noir scene, a futuristic megacity at night with the agent's face on the big screen, candles for what expires, the energy river, robots on the floor (demo data)](preview.png)
 
@@ -14,6 +14,9 @@
 
 Your desktop, alive. Pulse turns the Omarchy wallpaper into a live scene made of your own data:
 
+- **new in 1.8**: a city that looks like one (one real light, volume, mist, reflections), **your datacenter as a
+  district** (a hall per VM or container, lightning when one goes down) and **✨ Describe your world**: say what you
+  want and your AI agent draws the scene ([what's new](#new-in-18))
 - **new in 1.7, "Creator"**: the scene editor makes **complete scenes**: your own **pictures** and **backgrounds**,
   **animations**, **actions** ("when CI passes, launch a rocket"), shapes that follow **your own panels** (one per VM,
   per container...) and the sky;
@@ -56,6 +59,36 @@ or anything you push from a script. Camera feeds, AI briefs, Home Assistant, ser
 
 Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author of
 [OmarchyTV](https://github.com/piermark/omarchytv) (the Live screen of OmarchyTV, now on your desktop).
+
+## New in 1.8
+
+**A city that looks like one, your datacenter in it, and scenes made by describing them.**
+
+- **The look.** The real Sun and Moon light the whole scene: the side of every tower that looks at them, a path of
+  glints on the floor, beams at dusk. Towers have volume, roofs and reflections; a far city in three depths whose
+  windows come on as the Sun goes down; mist between the buildings; clouds with a body; a sky that changes without
+  steps. Everything shows the same data in the same place, the weather follows the real one as before, and
+  `polish = false` brings back the plain look. ([section 76](docs/GUIDE.md#76-the-look-18))
+- **Your datacenter is a district of the city.** `[datacenter] panels = ["proxmox", "docker"]`: a hall for every VM,
+  container or host, its lights in the colour of its state. One goes down: lightning strikes it and its name crosses
+  the sky. ([section 77](docs/GUIDE.md#77-your-datacenter-is-a-district-of-the-city-18))
+- **Describe your world.** In the editor, **✨ Describe…**: write "a harbour where every container is a ship" and your
+  AI agent draws the scene, ready to finish and share. With your own agent (`[creator] agent = "claude -p"`) or by
+  pasting the request into any AI. A scene is data that Pulse checks, never code.
+  ([section 78](docs/GUIDE.md#78-describe-your-world-18))
+- **A new scene: monolith.** `scene = "monolith"`: a crystal tower floating over a mirror lake is your machine (a
+  band per CPU core, its heart as warm as the CPU, rings for memory and disk); your AI agents are the shards that
+  orbit it, your repos the pylons on the shore, your VMs and containers a swarm of cubes. It asks Pulse for a rocket
+  when a build turns green, a chime when an agent needs you, lightning when a service goes down, and it chooses by
+  itself how rich to draw, from an old laptop to a fast PC in 4K. ([section 79](docs/GUIDE.md#79-monolith-a-scene-that-comes-with-pulse-18))
+- **Another world: mars.** `scene = "mars"`: a colony on Mars with its own sky and its own colours, nothing like the
+  neon city. The dome is your machine (a light per CPU core, a reactor as warm as the CPU, two tanks for memory and
+  disk), your AI agents are rovers, your repos are launch pads (when a build goes back to green, the rocket leaves),
+  your VMs and containers are habitat pods. The hour is yours: butterscotch by day, a blue sunset, Phobos and the
+  Earth at night. Your weather arrives translated: rain is a dust storm, wind raises dust devils, snow is frost.
+  ([section 80](docs/GUIDE.md#80-mars-another-world-18))
+- **Rain with depth and planes you can read.** Near and far drops, rings where they land (as much rain as there
+  really is); every plane overhead has a tag with its flight, route, height and speed.
 
 ## New in 1.7
 
@@ -352,7 +385,7 @@ lighter on the PC), **noir** (a futuristic megacity at night, a big screen inste
 sed -i 's/^scene = .*/scene = "noir"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm | noir | hacker
 ```
 
-Or a **community scene**, a whole world someone made in one file: `pond` comes with Pulse, `omarchy-pulse scene list`
+Or a **community scene**, a whole world someone made in one file: `pond`, `monolith` and `mars` (1.8) come with Pulse, `omarchy-pulse scene list`
 shows the ones you have. **Make your own with the mouse** in the scene editor (1.6: `omarchy-pulse scene editor`,
 [docs/EDITOR.md](docs/EDITOR.md)), or in code ([docs/SCENES.md](docs/SCENES.md)). **Install other people's** from
 the editor's Community tab, or share yours as a `.pulse` file (1.7, [docs/PACKAGES.md](docs/PACKAGES.md)).

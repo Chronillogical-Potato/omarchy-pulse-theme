@@ -31,6 +31,9 @@ banner_every = 45                # minutes, more or less; a new Omarchy release 
 agents_as = "drones"             # your AI agents (Claude Code, Codex, Grok, Hermes...): "drones" in the sky | "robots" on the floor | "both"
 celebrate = true                 # fireworks when an agent finishes, a focus ends or an alert is back to green
 sun = true                       # the sky follows the real sun (dawn, day, dusk, night)
+polish = true                    # 1.8: the look: one light for the whole scene (the real Sun or Moon lights the towers and
+                                 # the floor), buildings with volume, mist, a far city whose windows come on at dusk,
+                                 # clouds with a body. false = the plain look of 1.7
 infra_weather = true             # 1.5: a panel in trouble brings a cloud over the city, a storm when it is critical
 hacker_style = "phosphor"        # 1.5, scene = "hacker": "phosphor" (green terminal) | "noir" (neon rain, signs, cars in the air)
 wallpaper = ""                   # 1.5.1: your own picture under the panels ("~/Pictures/city.jpg"), or "omarchy" for
@@ -152,6 +155,21 @@ enabled = false                  # 1.6: your WLED LED strips glow with the spher
 # hosts = ["192.168.1.60"]       # alert, a rainbow for fireworks); on your network only
 brightness = 128
 alerts = true
+
+# 1.8: your datacenter is a district of the city. Name the panels whose rows are your machines (a status, a list or a
+# table: Proxmox VMs, Docker containers, Uptime Kuma, your hosts): one hall for each row, its lights in the colour of
+# its state. When one goes down lightning strikes it and its name crosses the sky; when it is back, a few sparks.
+# [datacenter]
+# panels = ["proxmox", "docker"]   # the ids of your panels (the name of a [[source]]); nothing is drawn without it
+# labels = true                    # the panel's name under its halls, and the name of what is down
+# alerts = true                    # the lightning and the sparks
+
+# 1.8: describe your world. The scene editor's "Describe…" (or omarchy-pulse scene describe NAME "...") gives your
+# request to YOUR AI agent, which writes the scene: data that Pulse checks, never code. Any command that reads the
+# request on its standard input and prints the reply works. Without it, the editor gives you the request to paste
+# into any AI.
+# [creator]
+# agent = "claude -p"
 
 [city]
 enabled = true                   # every focus you finish (10 minutes or more) builds a building in your district;

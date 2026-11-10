@@ -112,6 +112,7 @@ body.drop::after { content: "drop a .pulse file to open it"; position: fixed; in
   <b>PULSE · SCENE EDITOR</b>
   <label class="hint" for="name">name</label><input id="name" size="14" spellcheck="false" placeholder="my-world">
   <button id="new">New…</button>
+  <button id="describe" title="say what you want to see: your AI agent draws it, you finish it here">✨ Describe…</button>
   <button id="undo" title="Ctrl+Z">↶</button><button id="redo" title="Ctrl+Y">↷</button>
   <span class="grow"></span>
   <span id="status"></span>
@@ -177,6 +178,17 @@ body.drop::after { content: "drop a .pulse file to open it"; position: fixed; in
   <div id="templates"></div>
   <p class="hint">Everything is drawn from the theme's colours, so it fits every Omarchy theme. Demo data only in the editor: what you see is safe to share.</p>
   <div class="row" style="justify-content:flex-end"><button id="dlgClose">Close</button></div>
+</dialog>
+<dialog id="descDlg" style="width:min(760px,94vw)">
+  <h3>describe your world</h3>
+  <p class="hint">Say what you want to see and what it should show of your data. An AI agent writes the scene (it is data that Pulse checks, never code), and it lands on the stage for you to finish.</p>
+  <textarea id="descText" rows="4" style="width:100%" maxlength="1200" placeholder="a harbour at night: every Docker container is a ship, red when it is down; a lighthouse that turns faster with the CPU; fireworks when CI passes"></textarea>
+  <div class="row"><button id="descGo" class="primary">Make it with my agent</button><span class="hint" id="descAgent"></span></div>
+  <h3>or with any AI</h3>
+  <div class="row"><button id="descCopy">1 · Copy the request</button><span class="hint">paste it into Claude, ChatGPT, Gemini, a local model…</span></div>
+  <textarea id="descReply" rows="4" style="width:100%" placeholder="2 · paste its reply here"></textarea>
+  <ul class="checks" id="descNotes"></ul>
+  <div class="row" style="justify-content:flex-end"><button id="descClose">Close</button><button id="descUse">3 · Use the reply</button></div>
 </dialog>
 <dialog id="expDlg">
   <h3>export a .pulse file</h3>
@@ -531,6 +543,13 @@ body.drop::after { content: "drop a .pulse file to open it"; position: fixed; in
     var b = bounds(s), pad = 4;
     o.save(); o.strokeStyle = "#7aa2f7"; o.lineWidth = 1.5; o.setLineDash([5, 4]);
     o.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2); o.setLineDash([]);
+    // 1.8: where it is drawn right now (its data, its copies, its animation move it): a thin outline around each one
+    var moved = false; (mem.hits || []).forEach(function (h) {
+      if (h[5] !== s.id) return;
+      if (Math.abs(h[0] - h[2] - b.x) + Math.abs(h[1] - h[3] - b.y) + Math.abs(h[2] * 2 - b.w) + Math.abs(h[3] * 2 - b.h) < 8) return;
+      moved = true; o.save(); o.strokeStyle = "rgba(158,206,106,.85)"; o.lineWidth = 1; o.setLineDash([2, 3]); o.strokeRect(h[0] - h[2] - 2, h[1] - h[3] - 2, h[2] * 2 + 4, h[3] * 2 + 4); o.restore();
+    });
+    if (moved) { o.fillStyle = "rgba(158,206,106,.9)"; o.font = "11px ui-monospace, monospace"; o.fillText("green: where your data puts it now", b.x - pad, b.y + b.h + pad + 28); }
     handles(b).forEach(function (h) { o.fillStyle = "#0d0f17"; o.fillRect(h[0] - 5, h[1] - 5, 10, 10); o.strokeRect(h[0] - 5, h[1] - 5, 10, 10); });
     if ((s.repeat || {}).by && s.repeat.by !== "none") { o.fillStyle = "#7aa2f7"; o.font = "12px ui-monospace, monospace"; o.fillText("× one per " + ({ agents: "agent", repos: "repo", cores: "core", planes: "plane", panel: "row of " + (s.repeat.panel || "a panel"), count: "copy" }[s.repeat.by]), b.x, b.y - 10); }
     o.restore();
@@ -983,6 +1002,40 @@ body.drop::after { content: "drop a .pulse file to open it"; position: fixed; in
     var im = fl.filter(function (f) { return /^image\/(png|jpeg|webp|svg\+xml)$/.test(f.type); });
     if (im.length) { var dt = new DataTransfer(); im.forEach(function (f) { dt.items.add(f); }); picFor = ""; $("#picFile").files = dt.files; $("#picFile").onchange(); }
   });
+
+  // ---------------------------------------------------------------- 1.8: describe your world (an agent writes the design)
+  function descLoad(j, how) {
+    if (dirty && design.shapes.length && !confirm("Put it on the stage? What you have there and did not save is lost.")) return;
+    snapshot(); design = j.design; design.assets = design.assets || {}; design.actions = design.actions || []; meta = {}; sel = null;
+    $("#descDlg").close(); syncScene(); changed();
+    status("made " + how + ": " + design.shapes.length + " shapes, " + design.actions.length + " actions" + ((j.notes || []).length ? " · " + j.notes.length + " thing(s) Pulse could not use were left out" : "") + " · give it a name and Save");
+  }
+  function descErr(e) { $("#descNotes").innerHTML = checksHtml([["crit", e.message || String(e)]]); }
+  $("#describe").onclick = function () {
+    $("#descNotes").innerHTML = ""; $("#descDlg").showModal(); $("#descText").focus();
+    api("/api/scene-prompt", { method: "POST", body: "" }).then(function (j) {
+      $("#descGo").disabled = !j.agent;
+      $("#descAgent").textContent = j.agent ? "the one in [creator] agent of pulse.toml" : 'none yet: [creator] agent = "claude -p" in pulse.toml (any command that reads the request and prints the reply)';
+    }).catch(function () {});
+  };
+  $("#descClose").onclick = function () { $("#descDlg").close(); };
+  $("#descGo").onclick = function () {
+    var tx = $("#descText").value.trim(), b = this; if (!tx) { $("#descText").focus(); return; }
+    b.disabled = true; $("#descNotes").innerHTML = checksHtml([["info", "your agent is drawing… (up to 3 minutes)"]]);
+    api("/api/scene-describe", { method: "POST", body: tx }).then(function (j) { descLoad(j, "by your agent"); }).catch(descErr).then(function () { b.disabled = false; });
+  };
+  $("#descCopy").onclick = function () {
+    var tx = $("#descText").value.trim(); if (!tx) { $("#descText").focus(); return; }
+    api("/api/scene-prompt", { method: "POST", body: tx }).then(function (j) {
+      var done = function () { $("#descNotes").innerHTML = checksHtml([["ok", "the request is copied (" + Math.round(j.prompt.length / 1000) + "k characters): paste it into your AI, then its reply here"]]); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(j.prompt).then(done, function () { $("#descReply").value = j.prompt; $("#descReply").select(); $("#descNotes").innerHTML = checksHtml([["warn", "copy it from the box below (Ctrl+C), then replace it with the reply"]]); });
+      else { $("#descReply").value = j.prompt; $("#descReply").select(); }
+    }).catch(descErr);
+  };
+  $("#descUse").onclick = function () {
+    var tx = $("#descReply").value.trim(); if (!tx) { $("#descReply").focus(); return; }
+    api("/api/scene-from-text", { method: "POST", body: tx }).then(function (j) { descLoad(j, "from the reply"); }).catch(descErr);
+  };
 
   // ---------------------------------------------------------------- the Community gallery
   var gal = null;
