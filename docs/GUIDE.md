@@ -83,7 +83,12 @@ privacy, tuning and troubleshooting. The short version is in the [README](../REA
   [72. News that strikes](#72-news-that-strikes-16) ·
   [73. Backups as trucks, a second monitor, focus, the radar](#73-backups-as-trucks-a-calmer-second-monitor-focus-and-the-radar-16) ·
   [74. The friends' neighbourhood](#74-the-friends-neighbourhood-16) ·
-  [75. Creator: pictures, animations, actions, .pulse files and the Community (1.7)](#75-creator-pictures-animations-actions-pulse-files-and-the-community-17)
+  [75. Creator: pictures, animations, actions, .pulse files and the Community (1.7)](#75-creator-pictures-animations-actions-pulse-files-and-the-community-17) ·
+  [76. The look (1.8)](#76-the-look-18) ·
+  [77. Your datacenter is a district of the city (1.8)](#77-your-datacenter-is-a-district-of-the-city-18) ·
+  [78. Describe your world (1.8)](#78-describe-your-world-18) ·
+  [79. Monolith, a scene that comes with Pulse (1.8)](#79-monolith-a-scene-that-comes-with-pulse-18) ·
+  [80. Mars, another world (1.8)](#80-mars-another-world-18)
 - Creating scenes: with the mouse, [docs/EDITOR.md](EDITOR.md) (1.6); in code, [docs/SCENES.md](SCENES.md)
 
 ---
@@ -146,7 +151,7 @@ your own (section 47).
 To change the scene, edit `scene` in `~/.config/omarchy-pulse/pulse.toml`, or in one line:
 
 ```
-sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm | noir | hacker | pond
+sed -i 's/^scene = .*/scene = "orbit"/' ~/.config/omarchy-pulse/pulse.toml    # sphere | skyline | orbit | calm | noir | hacker | pond | monolith | mars
 ```
 
 The live wallpaper switches by itself within about 3 seconds (`omarchy-pulse reload` to do it now). Check the
@@ -1261,6 +1266,8 @@ generic one, of no brand.
 | `omarchy-pulse scene list \| new NAME \| check NAME \| lab [NAME] \| editor [NAME]` | community scenes, the scene lab and the scene editor (47, 61, docs/SCENES.md) |
 | `omarchy-pulse scene export NAME --author A --license MIT [--title T --description D --preview PNG -o FILE]` | 1.7: a scene as a .pulse file, to share (75, docs/PACKAGES.md) |
 | `omarchy-pulse scene import FILE.pulse [--name N --force] \| gallery \| get NAME` | 1.7: install a .pulse file; the Community gallery; install one from it (75) |
+| `omarchy-pulse scene describe NAME "what you want" [--agent "claude -p"] [--try]` | 1.8: your AI agent writes the scene (78) |
+| `omarchy-pulse scene prompt "what you want" \| make NAME --from REPLY \| guide` | 1.8: the request for any AI; a scene from its reply; the guide agents read (78) |
 | `omarchy-pulse term` | (beta) a read-only terminal on the city: scan, ping, status (56) |
 | `omarchy-pulse noc on \| off \| ack` | (beta) NOC mode and its incidents (58) |
 | `omarchy-pulse trap` | (beta) for snmptrapd's traphandle: SNMP traps as bolts (57) |
@@ -1728,6 +1735,8 @@ omarchy-pulse scene check myscene        # is it ready to share?
 ```toml
 [pulse]
 scene = "pond"      # the example that comes with Pulse: every AI agent a fish, every repo a water lily
+# scene = "monolith" # 1.8: a crystal tower over a mirror lake: your machine, your agents, your repos, your services (79)
+# scene = "mars"     # 1.8: a colony on Mars with its own sky: rovers, launch pads, pods, dust storms (80)
 ```
 
 **Safe by design.** A scene runs alone in a sandboxed frame with no network at all, no token, no access to Pulse, to
@@ -2294,3 +2303,170 @@ omarchy-pulse scene get homelab-tower                                     # inst
 Safe by design: a package is data, or code that runs in the sandbox; it never carries commands or `[[source]]`
 scripts, which are shared only as reviewed pull requests. Pictures are checked byte by byte (an SVG with scripts or
 links is refused), and gallery packages must match the reviewed index.
+
+## 76. The look (1.8)
+
+Pulse looks more like a place. Nothing changes in what it shows or how it behaves: the same scenes, the same data in
+the same spots. What changes is the light and the depth.
+
+- **One light.** The real Sun by day and the real Moon by night (as bright as it is lit) light the scene from where
+  they are in your sky: the side of every tower that looks at them catches their colour, and their light lies on the
+  floor as a path of glints. A low Sun sends its beams across the sky and its glow along the horizon.
+- **Buildings, not cards.** The towers of your CPU cores have a side that goes back toward the horizon, a roof with a
+  mast, a tank or the air conditioning, a lit ground floor, and their reflection on the wet floor. Their height and
+  their windows still follow each core and your RAM.
+- **A far city.** Three rows of buildings, paler with the distance, with setbacks, spires and slanted roofs; their
+  windows come on as the Sun goes down. Mist drifts between them, thicker at dawn, at night and in fog.
+- **A sky without steps.** Night, twilight and day blend with the Sun's real height, and the sky fades into its new
+  colour instead of jumping. Clouds have a body, lit from the side of the Sun or the Moon. How many clouds there are,
+  where the wind takes them, the rain, the snow and the storms follow the real weather exactly as before.
+- **Rain with depth.** Far drops are thin and slow and end near the horizon, near ones are long and bright; where
+  they land a ring opens on the wet floor, and heavy rain veils the far city. How hard it rains is still the real
+  rain (mm/h and the kind of rain); snow has depth too.
+- **Planes you can read.** Every real plane over you has a tag: the flight and the aircraft, its route with the
+  cities, how high, how fast and where it is heading, on a plate with a line to the plane. Still hidden while you
+  share the screen.
+- **A rocket you can recognise.** When a real launch lifts off, a Falcon 9 (white, the black interstage, legs, grid
+  fins, the fairing) or a Starship (steel, flaps) climbs from your horizon: smoke rolls off the pad, the flame has a
+  white heart and shock diamonds, the trail is smoke that widens and fades; in twilight the plume opens like a
+  jellyfish, as it really does; after ten seconds the booster comes off and falls back while the second stage goes
+  on. A tag carries its name and the time since liftoff.
+- **A Starlink train you can see.** The satellites really in your sky glide instead of jumping, a faint thread joins
+  those that fly in a row, each one glints and the first is the brightest; the tag says how many and which way.
+
+It costs almost nothing (what never moves is painted once). `polish = false` in `[pulse]` brings back the plain look;
+a PC that struggles drops the mist and the beams by itself; your own wallpaper and the noir scene are not touched;
+with `motion = "reduced"` nothing new moves.
+
+## 77. Your datacenter is a district of the city (1.8)
+
+```toml
+[datacenter]
+panels = ["proxmox", "docker"]   # the ids of your panels
+```
+
+Every row of those panels is a hall in front of the city: a Proxmox VM, a Docker container, a host of Uptime Kuma, a
+light of Home Assistant. Any panel with a status, a list or a table works (the community sources in `community/` give
+you most of them). Its racks' lights are green, amber or red with the row; the taller halls are the rows with the
+bigger number, when they have one.
+
+- **It goes down**: its lights go out, a red beacon turns on its roof, lightning strikes it and its name crosses the
+  sky (one bolt every 20 seconds at most). Its name stays above it while it is down or in trouble.
+- **It is back**: a few green sparks.
+- `labels = false` hides the names; `alerts = false` keeps the district without lightning and sparks.
+
+Private panels are never drawn, and while you share the screen (or in privacy mode) there are no names. Nothing is
+drawn until you name a panel. Up to 36 halls. In the scene editor the same rows are *repeat → row of your panel*
+(section 75).
+
+## 78. Describe your world (1.8)
+
+Say what you want to see, and an AI agent writes the scene. A scene is data that Pulse checks, never code, so this is
+safe with any AI: what Pulse does not know is left out and you are told.
+
+**In the editor**: **✨ Describe…**, write your idea ("a harbour at night: every Docker container is a ship, red when
+it is down; a lighthouse that turns faster with the CPU; fireworks when CI passes"), then:
+
+- **Make it with my agent**, if you set one:
+
+  ```toml
+  [creator]
+  agent = "claude -p"     # any command that reads the request on its standard input and prints the reply
+  ```
+
+- or **Copy the request**, paste it into any AI (Claude, ChatGPT, Gemini, a local model), and paste its reply back:
+  **Use the reply**.
+
+The scene lands on the stage: move things, change colours, add actions, **Save**, **Export .pulse** to share it.
+
+**From a terminal**:
+
+```bash
+omarchy-pulse scene describe harbour "a harbour where every container is a ship" --try
+omarchy-pulse scene prompt "a harbour..." | your-agent | omarchy-pulse scene make harbour --from -
+omarchy-pulse scene guide        # what the agent reads: the whole format, in one page
+```
+
+The request holds the guide of the format, the names of your panels (their ids, units and row names, never their
+values, and never a private panel) and your words. Your agent is your own command, run by you, like a `[[source]]`;
+Pulse sends nothing anywhere by itself. For agents that work in your repo there is the same guide in
+`extras/pulse/web/scene-guide.md`.
+
+## 79. Monolith, a scene that comes with Pulse (1.8)
+
+```toml
+[pulse]
+scene = "monolith"
+```
+
+A crystal the size of a tower floats over a mirror lake, under Pulse's real sky (the Sun, the Moon, the weather, the
+planes are Pulse's, as always). Everything in it is something of yours:
+
+| You see | It is |
+|---|---|
+| the monolith's bands | your CPU cores, from the top: the busier, the brighter; red above 90% |
+| the colour of its heart | the CPU temperature: the theme's accent when cool, amber, then red |
+| its two rings | memory (inside) and disk (outside): the lit arc is how full |
+| the light it drops on the water | the load |
+| the shards that orbit it | your AI agents: fast with a trail while working, big and amber with a `!` when one waits for you, green when done, red and fallen on the shore when failed |
+| the pylons on the shore | your repos: the beam is as tall as the week's commits, green, amber (running) or red with the CI; it flares at every commit; an amber dot for changes not committed |
+| the cubes on the water | the rows of your panels that have a state (VMs, containers, hosts): green, amber, red and blinking |
+| rings on the lake | the network |
+| a ring closing around it | a focus session, as the time goes |
+| the bands dancing | music is playing |
+| an aurora | the real Kp is 4 or more, at night |
+
+It asks Pulse for its effects, rarely: a rocket when a build turns green again, a chime when an agent starts waiting
+for you, lightning when a service goes down and a shooting star when it is back, a balloon when the aurora is strong
+(Kp 6), fireworks at midnight. Click anything to read it. In a meeting, or when you are away, it all glows lower.
+
+**It fits the PC.** The scene measures how long a frame takes and draws in one of four ways: *light* (flat lights, no
+reflection: an old laptop), *medium*, *high* (the reflection in the lake, the aurora, trails), *ultra* (more of
+everything, on a fast PC). It goes down at once when the PC struggles and up slowly when there is room; with
+`quality = "half"` it stays at medium at most. Every size is a share of the screen, so it is as sharp at 1366×768 as
+in 4K. Click the monolith: the last words say how it is drawing. With `motion = "reduced"` it stands still.
+
+It is a scene in code, in the sandbox like every scene: `extras/pulse/web/scenes/monolith.js` is commented from top to
+bottom, to read or to start your own from (`omarchy-pulse scene lab monolith`).
+
+## 80. Mars, another world (1.8)
+
+```toml
+[pulse]
+scene = "mars"
+```
+
+A colony on Mars. Unlike every other scene it does not use your theme's colours and it paints its own sky: it is
+meant to look like nothing else in Pulse. The panels and the clock stay yours, on top. Everything in it is something
+of yours:
+
+| You see | It is |
+|---|---|
+| the dome | your machine. The lights on its wall are the CPU cores (the busier, the brighter; red above 90%); the reactor inside goes from blue to amber to red with the temperature; the greenhouse is fuller when the machine is cool |
+| the two tanks | memory and disk, as full as they are (red above 90%) |
+| the antenna | the network: the busier, the more it sends to orbit |
+| the rovers | your AI agents: one that works drives and raises dust (with a headlight at night), one that waits for you stops and blinks amber with a `!`, a green tick when done, tilted and smoking when failed |
+| the launch pads | your repos (six at most): crates for the week's commits, the beacon on the tower green, amber (running, and the rocket vents) or red with the CI; it flares at every commit; an amber light for changes not committed. **When a build goes back to green, its rocket leaves** |
+| the pods | the rows of your panels that have a state (VMs, containers, hosts), twelve at most: the window is green, amber, or red and blinking |
+| a green arc over the dome | a focus session, as the time goes |
+| the wall's lights dancing | music is playing |
+
+**The hour is yours.** The Sun is as high as it really is where you are: by day the sky is butterscotch, at sunset
+the Sun is small and the sky around it is blue (on Mars it really is), at night there are the stars, Phobos crossing
+fast, Deimos, and the Earth as a blue star with the Moon beside it.
+
+**Your weather, translated.** Rain is a dust storm, as strong as the rain; wind raises dust devils far away; snow is
+frost falling; clouds are thin streaks of ice; a strong solar storm (the real Kp, 5 or more) makes the night sky
+glow.
+
+Pulse's own fireworks, rockets and rain are behind this world's sky, so Mars answers with its own: a rocket leaves a
+pad when a build turns green, when a real launch lifts off on Earth and at midnight ("a new sol"); a chime and a line
+of text when a rover starts waiting for you or a pod goes down. Click anything to read it. In a meeting, or when you
+are away, the lights are lower.
+
+**It fits the PC**, as monolith does: four ways of drawing (*light*, *medium*, *high*, *ultra*) chosen from how long
+a frame takes, medium at most with `quality = "half"`, every size a share of the screen (sharp from 1366×768 to 4K),
+still with `motion = "reduced"`. Click the dome: the last words say how it is drawing.
+
+The code is `extras/pulse/web/scenes/mars.js`, commented, to read or to start your own from
+(`omarchy-pulse scene lab mars`).

@@ -27,6 +27,8 @@ be opened with **Import…** in the editor, or `omarchy-pulse scene import FILE.
 | [agent-bell](agent-bell/) | a lantern per AI agent; a bell rings when one is waiting for you | Marco Porro |
 | [homelab-tower](homelab-tower/) | a server rack that grows with the power your homelab draws (a panel called `power`); click it, and it shakes and tells you | Marco Porro |
 | [blackout-room](blackout-room/) | a server room on a street at night: the houses go dark in a power cut, the rack keeps blinking on its batteries (panels `grid`, `ups`, `watts`) | Anatolii (tolixx) |
+| monolith (comes with Pulse, 1.8) | a crystal tower over a mirror lake: your machine, your agents as orbiting shards, your repos as pylons, your services as cubes | Marco Porro |
+| mars (comes with Pulse, 1.8) | a colony on Mars with its own sky: the dome is your machine, rovers for your agents, a launch pad per repo, pods for your services, dust storms for your rain | Marco Porro |
 | pond (comes with Pulse) | a night pond: every AI agent a fish, every repo a water lily with its CI as the flower | Marco Porro |
 
 `index.json` is the list the editor reads; `tools/scene-index.py` writes it.
