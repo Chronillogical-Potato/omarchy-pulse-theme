@@ -22,6 +22,27 @@
    "pictures": 1
   },
   {
+   "name": "blackout-room",
+   "title": "Blackout room",
+   "author": "Anatolii (tolixx)",
+   "license": "MIT",
+   "description": "A server room on a dark street. The houses' windows and the line from the pole follow the grid (a panel called grid: the share of your UPSes on grid power, 0-100), the battery bank follows a panel called ups (in %), the meter on the roof your draw (watts, 0-500 W). Power cut: the street goes dark, lightning, \"on battery\"; the rack keeps blinking, greener on a full battery, redder as it drains.",
+   "tags": [
+    "homelab",
+    "power",
+    "ups",
+    "blackout"
+   ],
+   "kind": "design",
+   "pulse": "1.7.0",
+   "created": "2026-11-10",
+   "size": 80249,
+   "sha256": "a8b1ac8ccff064c95acf3f4fc1a40dea8cabb559d45745df272ca707b637d68e",
+   "preview": "blackout-room/preview.png",
+   "actions": 4,
+   "pictures": 2
+  },
+  {
    "name": "container-aquarium",
    "title": "Container aquarium",
    "author": "Marco Porro",

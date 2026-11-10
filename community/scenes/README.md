@@ -26,6 +26,7 @@ be opened with **Import…** in the editor, or `omarchy-pulse scene import FILE.
 | [moonlit-garden](moonlit-garden/) | a flower per repo, fireflies for your agents, the real Moon, fireworks at midnight | Marco Porro |
 | [agent-bell](agent-bell/) | a lantern per AI agent; a bell rings when one is waiting for you | Marco Porro |
 | [homelab-tower](homelab-tower/) | a server rack that grows with the power your homelab draws (a panel called `power`); click it, and it shakes and tells you | Marco Porro |
+| [blackout-room](blackout-room/) | a server room on a street at night: the houses go dark in a power cut, the rack keeps blinking on its batteries (panels `grid`, `ups`, `watts`) | Anatolii (tolixx) |
 | pond (comes with Pulse) | a night pond: every AI agent a fish, every repo a water lily with its CI as the flower | Marco Porro |
 
 `index.json` is the list the editor reads; `tools/scene-index.py` writes it.
