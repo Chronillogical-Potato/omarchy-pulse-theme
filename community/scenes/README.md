@@ -14,6 +14,9 @@ omarchy-pulse scene gallery              # what is here
 omarchy-pulse scene get homelab-tower    # install one
 ```
 
+A `.pulse` file you downloaded: `omarchy-pulse scene import ~/Downloads/NAME.pulse` (the path to the file, wherever it
+is: the paths in this folder only exist inside a copy of the repository).
+
 Then `scene = "NAME"` in `[pulse]` of `~/.config/omarchy-pulse/pulse.toml`. A `.pulse` file from this folder can also
 be opened with **Import…** in the editor, or `omarchy-pulse scene import FILE.pulse`.
 

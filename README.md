@@ -1,6 +1,6 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-**Version 1.8** · [what's new](#new-in-18) · [the scene editor](docs/EDITOR.md) · [share and install scenes](docs/PACKAGES.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+**Version 1.8** · [what's new](#new-in-18) · [try it in ten minutes](#try-18-in-ten-minutes) · [the scene editor](docs/EDITOR.md) · [share and install scenes](docs/PACKAGES.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
 
 ![Omarchy Pulse 1.5: the noir scene, a futuristic megacity at night with the agent's face on the big screen, candles for what expires, the energy river, robots on the floor (demo data)](preview.png)
 
@@ -90,7 +90,8 @@ Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author
 - **The first scene from the community: blackout-room**, by Anatolii ([tolixx](https://github.com/tolixx)), made for a
   homelab in Kyiv that rides out power cuts on battery stations. A server room on a street at night: when the grid
   goes down the houses go dark, but the rack keeps blinking on its batteries. It follows three panels, `grid`, `ups`
-  and `watts` (with NUT, three lines of `upsc`). Install it from **Community** in the editor.
+  and `watts` (with NUT, three lines of `upsc`). Install it with `omarchy-pulse scene get blackout-room`, or from
+  **Community** in the editor: [step by step below](#6-a-scene-from-the-community-blackout-room).
   ([community/scenes/blackout-room](community/scenes/blackout-room/))
 - **Rain with depth and planes you can read.** Near and far drops, rings where they land (as much rain as there
   really is); every plane overhead has a tag with its flight, route, height and speed.
@@ -98,6 +99,99 @@ Made for **Omarchy 4.5**. By [Marco Porro](https://x.com/MarcoPorro), the author
   horizon: pad smoke, shock diamonds, the twilight plume, the booster falling back, a tag with its name and T+. The
   Starlink satellites really overhead glide in a row joined by a faint thread, with a tag that counts them.
   ([section 76](docs/GUIDE.md#76-the-look-18))
+
+### Try 1.8 in ten minutes
+
+Each step is on its own; none changes your panels or your sources. Every `pulse.toml` below is
+`~/.config/omarchy-pulse/pulse.toml`: Pulse reads it again by itself within a few seconds, no restart.
+
+**0. Update.** The same two lines as the install, from a terminal on the PC:
+
+```bash
+omarchy-theme-install https://github.com/piermark/omarchy-pulse-theme
+~/.config/omarchy/themes/pulse/extras/install-live
+omarchy-pulse doctor           # the first line says Omarchy Pulse 1.8.0
+```
+
+**1. The new look.** Nothing to do: your city now has one real light, volume, mist and reflections. Wait for the rain,
+a plane over you (its tag says the flight, route, height and speed) or a real launch (the rocket and its T+). To
+compare, `polish = false` under `[pulse]` brings back the 1.7 look; remove it to go back.
+
+**2. Two new worlds.** Under `[pulse]`:
+
+```toml
+scene = "mars"         # a colony on Mars: the dome is your PC, rovers are your AI agents, launch pads your repos
+# scene = "monolith"   # a crystal over a mirror lake: your cores, your agents as shards, your repos as pylons
+```
+
+Click anything to read it; clicking the dome or the crystal also says how rich it is drawing on your PC (*light* to
+*ultra*). Back to your city: `scene = "skyline"` (or the one you had).
+
+**3. Your datacenter in the city.** If you have panels with a status (Proxmox, Docker, Uptime Kuma, Home Assistant,
+from [community sources](#community-sources)), name them:
+
+```toml
+[datacenter]
+panels = ["proxmox", "docker"]   # the names of your [[source]] panels in pulse.toml
+```
+
+Every VM or container becomes a hall in front of the city; when one goes down, lightning strikes it.
+([section 77](docs/GUIDE.md#77-your-datacenter-is-a-district-of-the-city-18))
+
+**4. Describe your world.** `omarchy-pulse scene editor` → **✨ Describe…** → write what you want ("a harbour where
+every container is a ship"). With `[creator] agent = "claude -p"` (any AI command) it is drawn for you; without it,
+**Copy the request**, paste it into any AI and paste the reply back. Then **Save** and **Try on wallpaper**.
+([section 78](docs/GUIDE.md#78-describe-your-world-18))
+
+**5. Racing, rockets, Starlink.** Nothing to set: they follow the real sky over you. `omarchy-pulse sky` says when the
+next Starlink train passes and the next launch.
+
+#### 6. A scene from the community: blackout-room
+
+The first scene someone else made for Pulse: Anatolii ([tolixx](https://github.com/tolixx)) drew it for his homelab in
+Kyiv, which rides out power cuts on battery stations. A server room on a street at night: with the grid the houses are
+lit and current runs along the line from the pole; in a power cut the street goes dark, lightning strikes, "on
+battery" appears and the rack keeps blinking on its batteries, greener when they are full, redder as they drain.
+
+**Install it** (one line; or in the editor: **Community** → blackout-room → **Install**):
+
+```bash
+omarchy-pulse scene get blackout-room
+```
+
+and put it on the wallpaper, under `[pulse]` in `pulse.toml`:
+
+```toml
+scene = "blackout-room"
+```
+
+**Give it your data.** It follows three panels, each a number: `grid` (how much of your power comes from the grid,
+0 to 100), `ups` (the battery, in %) and `watts` (what your homelab draws, the meter is full at 500 W). With no
+panels yet every value is 0, so you see the street in a power cut. With one UPS on NUT:
+
+```toml
+[[source]]
+name = "grid"
+command = "upsc myups@localhost ups.status | grep -q OL && echo 100 || echo 0"
+every = 30
+
+[[source]]
+name = "ups"
+command = "upsc myups@localhost battery.charge"
+every = 60
+
+[[source]]
+name = "watts"
+command = "upsc myups@localhost ups.realpower"
+every = 60
+```
+
+**No UPS? Try it anyway** with three fixed numbers: `command = "echo 100"` for `grid`, `"echo 96"` for `ups`,
+`"echo 240"` for `watts`. Then change the grid to `"echo 0"`: within half a minute the power goes out. Put it back to
+`"echo 100"`: a chime, "the grid is back". Click the room for the watts and the battery.
+
+Back to your city: `scene = "skyline"` (or the one you had). Want yours in everyone's gallery too?
+[How to send a scene, in four steps](docs/PACKAGES.md#4-put-your-scene-in-the-gallery).
 
 ## New in 1.7
 
