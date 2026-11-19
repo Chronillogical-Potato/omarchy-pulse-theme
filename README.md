@@ -1,6 +1,6 @@
 # Omarchy Pulse — a live wallpaper for Omarchy
 
-**Version 1.8** · **new: [Pulse native 1.0](#pulse-native-10-the-same-wallpaper-in-rust)**, drawn on the GPU without a browser · [what's new](#new-in-18) · [try it in ten minutes](#try-18-in-ten-minutes) · [the scene editor](docs/EDITOR.md) · [share and install scenes](docs/PACKAGES.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
+**Version 1.8.1** · **new: [Pulse native 1.0](#pulse-native-10-the-same-wallpaper-in-rust)**, drawn on the GPU without a browser · [what's new](#new-in-18) · [try it in ten minutes](#try-18-in-ten-minutes) · [the scene editor](docs/EDITOR.md) · [share and install scenes](docs/PACKAGES.md) · [create a scene](docs/SCENES.md) · [the guide](docs/GUIDE.md) · [every command](docs/GUIDE.md#36-every-command)
 
 ![Omarchy Pulse 1.5: the noir scene, a futuristic megacity at night with the agent's face on the big screen, candles for what expires, the energy river, robots on the floor (demo data)](preview.png)
 
@@ -184,7 +184,7 @@ Each step is on its own; none changes your panels or your sources. Every `pulse.
 ```bash
 omarchy-theme-install https://github.com/piermark/omarchy-pulse-theme
 ~/.config/omarchy/themes/pulse/extras/install-live
-omarchy-pulse doctor           # the first line says Omarchy Pulse 1.8.0
+omarchy-pulse doctor           # the first line says Omarchy Pulse 1.8.1
 ```
 
 **1. The new look.** Nothing to do: your city now has one real light, volume, mist and reflections. Wait for the rain,
